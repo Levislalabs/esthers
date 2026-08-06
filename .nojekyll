@@ -1,0 +1,5 @@
+Tells GitHub Pages to serve these files as-is instead of running them
+through Jekyll. This is a plain static site with no build step, so Jekyll
+has nothing to do and skipping it makes deploys faster and avoids it
+quietly ignoring any file or folder that happens to start with an
+underscore.
