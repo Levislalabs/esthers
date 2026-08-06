@@ -1,10 +1,10 @@
 # esthers
 
-Esther's Architectural Sheet Metal — Materials & Colour Configurator.
+Esther's Sheet Metal — company site and materials configurator.
 
-A single-page, dependency-free configurator for chimney caps, flashing and
-architectural sheet metal. Pick a material, browse its official colour
-collection, then send the specification through as a quote request.
+A single-page, dependency-free site for a custom architectural sheet metal
+shop in Burnaby, BC. Leads with the work and the services, then hands the
+visitor a full materials and colour configurator that feeds a quote request.
 
 ## Running it
 
@@ -19,6 +19,9 @@ python3 -m http.server 8000    # then visit http://localhost:8000
 
 | Section | Behaviour |
 | --- | --- |
+| Hero + credibility | The pitch alongside a photograph of real work, followed by four verifiable facts about the shop. |
+| Our work | Gallery of recent fabrication. Every image is an **image slot** — see below. |
+| Process | The four steps from measurement to delivery, and what the customer needs to supply at each. |
 | Material selector | Eight materials on a snap-scrolling rail. Selecting one re-renders the spec panel, swaps the colour collection, updates what the quote request carries, and cascades an accent colour through the page. |
 | Spec panel | Gauges, finish description, applications, warranty, thickness, durability, cost category and maintenance for each material, plus feature pills for PVDF / aluminum / copper / zinc. |
 | Colour grid | Opened by **View Available Colours**. Live search, colour-family filters, favourites (persisted to `localStorage`), and hover states that enlarge the swatch and sweep its specular highlight. |
@@ -47,6 +50,7 @@ else needs to change.
 ```
 index.html
 assets/css/base.css            design tokens, typography, shell chrome
+assets/css/home.css            hero, credibility strip, work gallery, process
 assets/css/configurator.css    selector, colour grid, patina, compare, services, quote
 assets/js/util.js              colour maths, DOM helpers, icon set
 assets/js/data/colours.js      the five colour collections + patina/zinc data
@@ -57,6 +61,19 @@ assets/js/app.js               state and wiring
 
 Scripts are plain `<script>` tags sharing a `window.CM` namespace rather than ES
 modules, so the page also works when opened directly from the filesystem.
+
+## Photographs
+
+Drop files into `assets/img/` using the names listed in
+[`assets/img/README.md`](assets/img/README.md) and they appear automatically.
+
+Until a file is present its slot renders a labelled plate naming the missing
+file, so the layout never collapses and no broken-image icon is ever shown.
+That fallback is driven by `buildImageSlots()` in `assets/js/app.js`, which
+checks `naturalWidth` rather than trusting the load event alone.
+
+Only publish photographs the business owns. A supplier's product render or an
+image found online is usually someone else's copyright.
 
 ## Quote requests
 

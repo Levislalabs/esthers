@@ -26,8 +26,7 @@
 .patina__step-label,
 .attr__label,
 .attr__hint,
-.meter__note,
-.hero__stat .mono-label { display: block; }
+.meter__note { display: block; }
 
 /* =====================================================================
    1. MATERIAL SELECTOR RAIL

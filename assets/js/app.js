@@ -959,6 +959,30 @@
     if (node) node.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
+  /*
+   * Photographs are dropped into assets/img/ by hand. Until a file exists the
+   * slot shows a labelled plate naming the missing file, so the layout holds
+   * and nobody sees a broken-image icon.
+   */
+  function buildImageSlots() {
+    $$('[data-slot]').forEach(function (slot) {
+      var img = $('img', slot);
+      if (!img) return;
+
+      var fail = function () { slot.setAttribute('data-missing', 'true'); };
+      var pass = function () { slot.removeAttribute('data-missing'); };
+
+      if (img.complete) {
+        /* naturalWidth is 0 for an image that finished loading and failed */
+        if (img.naturalWidth === 0) fail(); else pass();
+      }
+      img.addEventListener('error', fail);
+      img.addEventListener('load', function () {
+        if (img.naturalWidth > 0) pass();
+      });
+    });
+  }
+
   function buildReveal() {
     var nodes = $$('.reveal');
     if (!('IntersectionObserver' in window) || U.prefersReducedMotion()) {
@@ -1036,13 +1060,13 @@
     wireFavourites();
     updateFavCount();
     renderDrawer();
+    buildImageSlots();
     buildReveal();
 
     /* force:true so the first paint runs the full render path */
     selectMaterial(state.materialId, { force: true });
 
     $('#hero-cta').addEventListener('click', function () { scrollToId('materials'); });
-    $('#hero-cta-2').addEventListener('click', function () { scrollToId('compare'); });
   }
 
   if (document.readyState === 'loading') {

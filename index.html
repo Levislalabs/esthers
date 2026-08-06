@@ -3,11 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Esther's — Materials &amp; Colour Configurator</title>
-<meta name="description" content="Configure chimney caps, flashing and architectural sheet metal in SMP steel, PVDF steel, aluminum, copper and zinc. Browse the official Cascadia Metals Classic and Signature colour collections and preview any finish in real time.">
+<title>Esther's Sheet Metal — Custom Architectural Sheet Metal, Burnaby BC</title>
+<meta name="description" content="Custom architectural sheet metal fabricated in Burnaby, British Columbia since 1995. Chimney caps, flashing, coping and roof accessories in copper, zinc, aluminum and painted steel — with a full materials and colour configurator.">
 <meta name="theme-color" content="#0a0b0c">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0b0c'/%3E%3Cpath d='M6 20 16 9l10 11z' fill='none' stroke='%239aafc4' stroke-width='2'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="assets/css/base.css">
+<link rel="stylesheet" href="assets/css/home.css">
 <link rel="stylesheet" href="assets/css/configurator.css">
 </head>
 <body>
@@ -21,11 +22,11 @@
     </a>
 
     <nav class="topnav" aria-label="Sections">
-      <a href="#materials">Materials</a>
+      <a href="#work">Our Work</a>
       <a href="#services">Services</a>
-      <a href="#patina">Copper Patina</a>
-      <a href="#zinc">Zinc</a>
+      <a href="#materials">Materials</a>
       <a href="#compare">Compare</a>
+      <a href="#process">Process</a>
     </nav>
 
     <div class="topbar__meta">
@@ -43,43 +44,158 @@
 
   <!-- =============================================================== hero -->
   <section class="hero">
-    <div class="shell hero__inner">
-      <p class="eyebrow">Materials &amp; Colour Configurator</p>
-      <h1 class="display">Choose the metal.<br><em>Then choose the colour.</em></h1>
-      <p class="lede">
-        Eight materials and five official colour collections, with the full spec sheet on every one.
-        Work out exactly what your chimney cap, flashing detail or coping run should be made of —
-        then send us the specification and we will quote it.
-      </p>
+    <div class="shell hero__grid">
 
-      <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:34px">
-        <button class="btn btn--primary" id="hero-cta" type="button">
-          <span>Start configuring</span>
-          <span class="btn__arrow"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M4 12h15m-5.5-6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-        </button>
-        <button class="btn" id="hero-cta-2" type="button"><span>Compare all materials</span></button>
+      <div class="hero__copy">
+        <p class="eyebrow">Custom Architectural Sheet Metal</p>
+        <h1 class="display">Made to fit <em>one chimney.</em></h1>
+        <p class="lede">
+          Every cap, flashing and coping run that leaves our shop is cut and formed for the building
+          it is going on. Copper, zinc, aluminum and painted steel — brake-formed in Burnaby, delivered
+          across the Lower Mainland.
+        </p>
+
+        <div class="hero__actions">
+          <a class="btn btn--primary" href="#quote">
+            <span>Request a quote</span>
+            <span class="btn__arrow"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M4 12h15m-5.5-6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          </a>
+          <button class="btn" id="hero-cta" type="button"><span>Explore materials &amp; colours</span></button>
+        </div>
+
+        <p class="hero__since">
+          Fabricating since 1995 · Burnaby, British Columbia<br>
+          Member, Homebuilders Association Vancouver &amp; CHBA
+        </p>
       </div>
 
-      <div class="hero__stats">
-        <div class="hero__stat">
-          <strong>8</strong>
-          <span class="mono-label">Materials</span>
+      <figure class="hero__figure slot" data-slot>
+        <img src="assets/img/work-enclosure.jpg" alt="Large louvered chimney enclosure in dark anthracite finish, installed on a stone chimney." loading="eager" width="1600" height="2000">
+        <div class="slot__ph">
+          <svg class="slot__ph-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8.5" cy="10" r="1.6" fill="currentColor"/><path d="m4 17 5-5 4 4 3-2.5 4 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+          <span class="slot__ph-label">Hero photograph</span>
+          <span class="slot__ph-file">assets/img/work-enclosure.jpg</span>
         </div>
-        <div class="hero__stat">
-          <strong>39</strong>
-          <span class="mono-label">Classic SMP colours</span>
+        <figcaption class="hero__figure-cap">
+          <strong>Louvered chimney enclosure</strong>
+          Anthracite finish over a stone chimney — full louvre bands on all four faces with a flat crown.
+        </figcaption>
+      </figure>
+
+    </div>
+  </section>
+
+  <!-- ======================================================== credibility -->
+  <section class="section--tight">
+    <div class="shell">
+      <div class="creds reveal">
+        <div class="cred">
+          <span class="cred__label">Since 1995</span>
+          <p class="cred__value">Thirty years at the brake</p>
+          <p class="cred__note">A custom shop, not a catalogue. If it can be drawn, it can be formed.</p>
         </div>
-        <div class="hero__stat">
-          <strong>23</strong>
-          <span class="mono-label">Signature PVDF colours</span>
+        <div class="cred">
+          <span class="cred__label">Two shops</span>
+          <p class="cred__value">Plus a mobile profiler</p>
+          <p class="cred__note">Each location has its own specialization, and the profiler comes to the job site when the run has to be made on site.</p>
         </div>
-        <div class="hero__stat">
-          <strong>9</strong>
-          <span class="mono-label">Fabrication services</span>
+        <div class="cred">
+          <span class="cred__label">Materials</span>
+          <p class="cred__value">Copper, zinc, aluminum, painted steel</p>
+          <p class="cred__note">Light gauge architectural metals in the full Cascadia Classic and Signature colour ranges.</p>
+        </div>
+        <div class="cred">
+          <span class="cred__label">Who we work with</span>
+          <p class="cred__value">Builders, roofers, architects</p>
+          <p class="cred__note">Most of our work arrives as a detail drawing or a site measurement from a trade partner.</p>
         </div>
       </div>
     </div>
   </section>
+
+  <!-- =============================================================== work -->
+  <section class="section" id="work">
+    <div class="shell">
+      <div class="section-head reveal">
+        <p class="eyebrow">Our Work</p>
+        <h2 class="headline">Recent fabrication</h2>
+        <p class="lede">
+          A few pieces off the floor and on the roof. Everything here was drawn, cut and formed for a
+          specific chimney — the dimensions, the louvre spacing and the crown profile all change from
+          one job to the next.
+        </p>
+      </div>
+
+      <div class="work-grid reveal">
+
+        <figure class="work">
+          <div class="work__frame slot" data-slot>
+            <img src="assets/img/work-louvre-shop.jpg" alt="Louvered chimney cap with a hipped crown, photographed in the yard before delivery." loading="lazy" width="1600" height="900">
+            <div class="slot__ph">
+              <svg class="slot__ph-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8.5" cy="10" r="1.6" fill="currentColor"/><path d="m4 17 5-5 4 4 3-2.5 4 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+              <span class="slot__ph-label">Shop photograph</span>
+              <span class="slot__ph-file">assets/img/work-louvre-shop.jpg</span>
+            </div>
+          </div>
+          <figcaption>
+            <span class="work__title">Louvered cap, hipped crown</span>
+            <span class="work__meta">In the yard before delivery</span>
+          </figcaption>
+        </figure>
+
+        <figure class="work">
+          <div class="work__frame slot" data-slot>
+            <img src="assets/img/work-louvre-cap.jpg" alt="Louvered chimney cap with a hipped crown installed on a tile roof." loading="lazy" width="1200" height="900">
+            <div class="slot__ph">
+              <svg class="slot__ph-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8.5" cy="10" r="1.6" fill="currentColor"/><path d="m4 17 5-5 4 4 3-2.5 4 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+              <span class="slot__ph-label">Installed cap</span>
+              <span class="slot__ph-file">assets/img/work-louvre-cap.jpg</span>
+            </div>
+          </div>
+          <figcaption>
+            <span class="work__title">Louvered cap on tile</span>
+            <span class="work__meta">Draft with weather exclusion</span>
+          </figcaption>
+        </figure>
+
+        <figure class="work">
+          <div class="work__frame slot" data-slot>
+            <img src="assets/img/work-cove-cap.jpg" alt="Cove-profile chimney cap with a flared bell shape on a stone chimney." loading="lazy" width="1200" height="900">
+            <div class="slot__ph">
+              <svg class="slot__ph-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8.5" cy="10" r="1.6" fill="currentColor"/><path d="m4 17 5-5 4 4 3-2.5 4 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+              <span class="slot__ph-label">Cove profile cap</span>
+              <span class="slot__ph-file">assets/img/work-cove-cap.jpg</span>
+            </div>
+          </div>
+          <figcaption>
+            <span class="work__title">Cove-profile cap</span>
+            <span class="work__meta">Flared bell over stone</span>
+          </figcaption>
+        </figure>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================== services -->
+  <section class="section" id="services">
+    <div class="shell">
+      <div class="section-head reveal">
+        <p class="eyebrow">What We Fabricate</p>
+        <h2 class="headline">Services</h2>
+        <p class="lede">
+          Everything below is made in our own shop, in the material and finish you specify. If your
+          project needs something that is not on this list, ask — most of what we build started as a
+          drawing someone brought us.
+        </p>
+      </div>
+    </div>
+
+    <div class="shell">
+      <div class="services reveal" id="services-grid"></div>
+    </div>
+  </section>
+
 
   <!-- ========================================================== materials -->
   <section class="section selector" id="materials">
@@ -235,22 +351,56 @@
     </div>
   </section>
 
-  <!-- =========================================================== services -->
-  <section class="section" id="services">
+  <!-- ============================================================ process -->
+  <section class="section" id="process">
     <div class="shell">
       <div class="section-head reveal">
-        <p class="eyebrow">What We Fabricate</p>
-        <h2 class="headline">Services</h2>
+        <p class="eyebrow">How It Works</p>
+        <h2 class="headline">From measurement to roof</h2>
         <p class="lede">
-          Everything below is made in our own shop, in the material and finish you specify. If your
-          project needs something that is not on this list, ask — most of what we build started as a
-          drawing someone brought us.
+          Custom work goes wrong in the handover, not the fabrication. This is the order we do things
+          in, and what we need from you at each step.
         </p>
       </div>
-    </div>
 
-    <div class="shell">
-      <div class="services reveal" id="services-grid"></div>
+      <div class="process reveal">
+        <div class="step">
+          <span class="step__num">01</span>
+          <h3 class="step__title">Measure</h3>
+          <p class="step__body">
+            Send us site measurements or a detail drawing. For chimney work we need the outside
+            dimensions at the crown, the flue count and heights, and the roof pitch. If you would
+            rather we measured it, say so on the quote request.
+          </p>
+        </div>
+        <div class="step">
+          <span class="step__num">02</span>
+          <h3 class="step__title">Specify</h3>
+          <p class="step__body">
+            Pick the material and gauge, then the colour. The configurator on this page exists for
+            exactly this step — it carries your selection straight into the quote so we are pricing
+            the finish you actually looked at.
+          </p>
+        </div>
+        <div class="step">
+          <span class="step__num">03</span>
+          <h3 class="step__title">Fabricate</h3>
+          <p class="step__body">
+            Cut, brake-formed and assembled in the shop. Louvre spacing, crown profile and skirt
+            depth are set per job, not pulled from a stock size. Where a run has to be formed on
+            site, the mobile profiler comes to you.
+          </p>
+        </div>
+        <div class="step">
+          <span class="step__num">04</span>
+          <h3 class="step__title">Deliver</h3>
+          <p class="step__body">
+            Wrapped and delivered across the Lower Mainland, ready for your roofer to set. Field
+            cuts and scratches should be touched up on install — the material pages on this site
+            cover the maintenance each finish needs.
+          </p>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -398,10 +548,14 @@
   <div class="shell">
     <div class="site-footer__grid">
       <div>
-        <span class="brand__mark" style="font-size:1.35rem">Esther&rsquo;s</span>
+        <span class="brand__mark" style="font-size:1.35rem">Esther&rsquo;s Sheet Metal</span>
         <p class="colours__disclaimer" style="margin-top:14px;max-width:44ch">
-          Custom chimney caps, architectural flashing and sheet metal fabrication. Colour collections shown
-          are the Cascadia Metals Classic (SMP) and Signature (PVDF) ranges.
+          Custom architectural sheet metal since 1995. Chimney caps, flashing, coping and roof
+          accessories in copper, zinc, aluminum and painted steel. Burnaby, British Columbia —
+          serving the Lower Mainland.
+        </p>
+        <p class="colours__disclaimer" style="margin-top:14px;max-width:44ch">
+          Colour collections shown are the Cascadia Metals Classic (SMP) and Signature (PVDF) ranges.
         </p>
       </div>
       <div>
@@ -428,7 +582,7 @@
     </div>
 
     <div class="site-footer__legal">
-      <span>&copy; <span id="year">2026</span> Esther&rsquo;s Architectural Sheet Metal.</span>
+      <span>&copy; <span id="year">2026</span> Esther&rsquo;s Sheet Metal Ltd.</span>
       <span>
         Colours are on-screen approximations. Screen rendering, gloss level and lighting all shift
         perceived colour — always confirm against a physical metal chip before ordering.

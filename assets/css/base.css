@@ -204,14 +204,8 @@ h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 300; margin: 0; 
 
 /* ------------------------------------------------------------------ hero */
 
-.hero {
-  position: relative;
-  min-height: min(88vh, 820px);
-  display: flex;
-  align-items: center;
-  padding-block: clamp(80px, 12vw, 150px);
-  overflow: hidden;
-}
+/* Layout lives in home.css; this file keeps only the ambient wash and the
+   gradient treatment on the emphasised words. */
 
 /* Slow-drifting radial wash — reads as raking light across metal */
 .hero::before {
@@ -232,8 +226,6 @@ h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 300; margin: 0; 
   to   { transform: translate3d(3%, -3%, 0) scale(1.09); }
 }
 
-.hero__inner { position: relative; z-index: 1; max-width: 900px; }
-.hero .display { margin-bottom: 26px; }
 .hero .display em {
   font-style: normal;
   background: linear-gradient(96deg, #ffffff 0%, var(--accent) 52%, #7d8a96 100%);
@@ -242,23 +234,6 @@ h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 300; margin: 0; 
   color: transparent;
 }
 
-.hero__stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: clamp(28px, 5vw, 64px);
-  margin-top: 52px;
-  padding-top: 32px;
-  border-top: 1px solid var(--line);
-}
-.hero__stat strong {
-  display: block;
-  font-family: var(--font-display);
-  font-size: clamp(1.7rem, 3vw, 2.5rem);
-  font-weight: 300;
-  letter-spacing: -0.03em;
-  line-height: 1;
-  margin-bottom: 9px;
-}
 
 /* --------------------------------------------------------------- buttons */
 
@@ -274,6 +249,8 @@ h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 300; margin: 0; 
   border: 1px solid var(--line-strong);
   background: var(--bg-elevated);
   color: var(--ink);
+  /* .btn is used on <a> as well as <button> */
+  text-decoration: none;
   transition: transform var(--dur-fast) var(--ease),
               background var(--dur-fast) var(--ease),
               border-color var(--dur-fast) var(--ease),
