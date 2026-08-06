@@ -14,10 +14,14 @@ broken image, so the layout never collapses.
 
 ## Guidance
 
-- **Landscape 3:2 or 4:3** for the gallery, **portrait or landscape** both work
-  for the hero — it is cropped with `object-fit: cover`.
-- **Export at roughly 1600px on the long edge**, quality 80. Anything larger is
-  wasted on screen and slows the page down.
+- The gallery crops to **1:1** and the hero to **4:5**, both with
+  `object-fit: cover`, so any aspect ratio works — but the subject should sit
+  near the centre or it will be cropped out.
+- **Export as real JPEG at roughly 1600px on the long edge**, quality 80.
+  Larger is wasted on screen; smaller gets upscaled and looks soft.
+- **Check the file is actually a JPEG**, not a PNG renamed to `.jpg`. Browsers
+  cope, but a PNG photograph is five to ten times the file size for no visible
+  gain — the first upload here was 4.1MB of PNG that compressed to 535KB.
 - **Keep the originals somewhere else.** These are the web-sized copies.
 - Filenames are lowercase with hyphens. `.jpg` is expected; if you use `.webp`
   or `.png`, update the `src` in `index.html` to match.

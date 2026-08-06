@@ -137,15 +137,17 @@
    3. FEATURED WORK
    ===================================================================== */
 
+/* Three across rather than one wide lead tile: the source photographs are
+   between 700 and 1080px on the long edge, so a full-bleed tile would be
+   upscaled and soft. At three columns every tile renders under its native
+   resolution. */
 .work-grid {
   display: grid;
   grid-template-columns: 1fr;
   gap: clamp(16px, 2vw, 24px);
 }
-@media (min-width: 700px)  { .work-grid { grid-template-columns: repeat(2, 1fr); } }
-
-/* First tile spans both columns — the shop shot has the most detail in it */
-@media (min-width: 700px) { .work-grid > :first-child { grid-column: 1 / -1; } }
+@media (min-width: 640px)  { .work-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 1000px) { .work-grid { grid-template-columns: repeat(3, 1fr); } }
 
 .work {
   margin: 0;
@@ -157,13 +159,15 @@
 }
 .work:hover { border-color: var(--line-strong); transform: translateY(-3px); }
 
+/* Square frames: the three photographs are landscape, portrait and square,
+   and a 1:1 crop treats all of them evenly instead of gutting one. */
 .work__frame {
   position: relative;
-  aspect-ratio: 4 / 3;
+  aspect-ratio: 1 / 1;
   overflow: hidden;
   background: var(--bg-raised);
 }
-.work-grid > :first-child .work__frame { aspect-ratio: 16 / 9; }
+@media (max-width: 639px) { .work__frame { aspect-ratio: 4 / 3; } }
 
 .work__frame img {
   width: 100%;
