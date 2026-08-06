@@ -321,15 +321,66 @@ CM.comparison = {
   ]
 };
 
-/* Products available in the live colour visualizer. */
-CM.products = [
-  { id: 'custom-cap',   name: 'Custom Chimney Cap',        blurb: 'Hand-fabricated multi-flue cap with hipped crown and full skirt.' },
-  { id: 'standing-cap', name: 'Standing Seam Chimney Cap', blurb: 'Raised-rib crown with mechanically seamed pans.' },
-  { id: 'louvered-cap', name: 'Louvered Chimney Cap',      blurb: 'Screened louvre bands for draft with weather and animal exclusion.' },
-  { id: 'flat-cap',     name: 'Flat-Top Chimney Cap',      blurb: 'Low-profile flat crown on posts — contemporary detailing.' },
-  { id: 'arch-flash',   name: 'Architectural Flashing',    blurb: 'Exposed profile flashing with hemmed drip and kick.' },
-  { id: 'counter-flash',name: 'Counter Flashing',          blurb: 'Reglet-set counter flashing stepped into masonry coursing.' },
-  { id: 'wall-cap',     name: 'Wall Cap',                  blurb: 'Two-slope wall cap with hemmed edges and concealed cleat.' },
-  { id: 'coping',       name: 'Coping',                    blurb: 'Parapet coping with continuous cleat and standing joint covers.' },
-  { id: 'roof-acc',     name: 'Roof Accessories',          blurb: 'Ridge vent, pipe boot collar and valley trim in matching finish.' }
+/*
+ * Services offered. The index is shown in the UI — it reads as a catalogue
+ * of nine, not a sequence, so nothing depends on the order beyond display.
+ */
+CM.services = [
+  {
+    id: 'chimney-caps',
+    name: 'Custom Chimney Caps',
+    body: 'Precision-fabricated chimney caps in steel, copper and zinc. Flat-top, louvered and ' +
+          'pyramid profiles — built to shed water and protect your investment.'
+  },
+  {
+    id: 's-lock',
+    name: 'S-Lock Flashing System',
+    body: 'Our signature interlocking flashing profile. Fewer screw penetrations means fewer ' +
+          'opportunities for water seepage — superior protection with a cleaner look.'
+  },
+  {
+    id: 'copper-gutter',
+    name: 'Copper Gutter Systems',
+    body: 'Distributor for Euracraft Tecu copper gutter systems — 18 oz European-style gutters in ' +
+          '5" and 6". Fully soldered seams, classic architectural appeal.'
+  },
+  {
+    id: 'aluminum-flashing',
+    name: 'Aluminum Flashing',
+    body: 'Corrosion-resistant aluminum wall and roof flashing. Ideal for coastal and industrial ' +
+          'environments.'
+  },
+  {
+    id: 'standing-seam',
+    name: 'Standing Seam Components',
+    body: 'Custom standing seam chimney enclosures, roof accessories and architectural trim pieces.'
+  },
+  {
+    id: 'commercial',
+    name: 'Commercial Sheet Metal',
+    body: 'Large-scale fabrication for commercial projects. HVAC enclosures, ductwork and custom ' +
+          'assemblies.'
+  },
+  {
+    id: 'decorative',
+    name: 'Decorative Metal Fabrication',
+    body: 'Ornamental metalwork including screens, railings, fascias and architectural accents.'
+  },
+  {
+    id: 'roof-accessories',
+    name: 'Roof Accessories',
+    body: 'Crickets, darts, scupper heads, drip edges and all custom roof-mounted accessories.'
+  },
+  {
+    id: 'restoration',
+    name: 'Historic Restoration Metal',
+    body: 'Period-appropriate metalwork for restoration projects. We replicate historic profiles ' +
+          'using modern techniques.'
+  }
 ];
+
+/* Where quote requests are addressed. Change this one line to reroute them. */
+CM.quoteEmail = 'quotes@esthers.example';
+
+CM.projectTypes = ['Residential', 'Commercial', 'Historic restoration', 'Not sure yet'];
+CM.timelines = ['As soon as possible', 'Within 1–3 months', 'Within 3–6 months', 'Planning / budgeting stage'];

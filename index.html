@@ -22,10 +22,10 @@
 
     <nav class="topnav" aria-label="Sections">
       <a href="#materials">Materials</a>
+      <a href="#services">Services</a>
       <a href="#patina">Copper Patina</a>
       <a href="#zinc">Zinc</a>
       <a href="#compare">Compare</a>
-      <a href="#visualizer">Visualizer</a>
     </nav>
 
     <div class="topbar__meta">
@@ -34,6 +34,7 @@
         <span id="fav-count-value">0</span>
         <span class="visually-hidden">saved colours</span>
       </button>
+      <a class="btn btn--primary btn--nav" href="#quote">Request Quote</a>
     </div>
   </div>
 </header>
@@ -46,9 +47,9 @@
       <p class="eyebrow">Materials &amp; Colour Configurator</p>
       <h1 class="display">Choose the metal.<br><em>Then choose the colour.</em></h1>
       <p class="lede">
-        Eight materials, five official colour collections, and a live preview that re-lights the moment you
-        pick a finish. Configure a chimney cap, a flashing detail or a coping run the way you would
-        configure a car — and see exactly what it will look like before anything is fabricated.
+        Eight materials and five official colour collections, with the full spec sheet on every one.
+        Work out exactly what your chimney cap, flashing detail or coping run should be made of —
+        then send us the specification and we will quote it.
       </p>
 
       <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:34px">
@@ -74,7 +75,7 @@
         </div>
         <div class="hero__stat">
           <strong>9</strong>
-          <span class="mono-label">Products previewed live</span>
+          <span class="mono-label">Fabrication services</span>
         </div>
       </div>
     </div>
@@ -234,52 +235,158 @@
     </div>
   </section>
 
-  <!-- ========================================================= visualizer -->
-  <section class="section" id="visualizer">
+  <!-- =========================================================== services -->
+  <section class="section" id="services">
     <div class="shell">
       <div class="section-head reveal">
-        <p class="eyebrow">Colour Visualizer</p>
-        <h2 class="headline">See the finish before it is fabricated</h2>
+        <p class="eyebrow">What We Fabricate</p>
+        <h2 class="headline">Services</h2>
         <p class="lede">
-          Pick a product, then pick a colour. Every face, edge highlight, seam and reflection re-renders
-          from the selected finish — including the metallic flake behaviour on Champagne, Copper Penny,
-          Silver and Weathered Zinc.
+          Everything below is made in our own shop, in the material and finish you specify. If your
+          project needs something that is not on this list, ask — most of what we build started as a
+          drawing someone brought us.
+        </p>
+      </div>
+    </div>
+
+    <div class="shell">
+      <div class="services reveal" id="services-grid"></div>
+    </div>
+  </section>
+
+  <!-- ============================================================== quote -->
+  <section class="section" id="quote">
+    <div class="shell">
+      <div class="section-head reveal">
+        <p class="eyebrow">Request a Quote</p>
+        <h2 class="headline">Tell us what you need</h2>
+        <p class="lede">
+          Anything you have picked in the configurator comes along with the request, so we are quoting
+          the same material and finish you were looking at. The more you can tell us about dimensions
+          and site conditions, the tighter the number we can give you.
         </p>
       </div>
 
-      <div class="viz reveal">
-        <div class="viz__stage" id="viz-stage-wrap">
-          <div class="viz__badge">
-            <span class="viz__badge-chip paint" id="viz-badge-chip"></span>
-            <span>
-              <span class="viz__badge-text" id="viz-badge-name"></span>
-              <span class="viz__badge-sub" id="viz-badge-sub"></span>
-            </span>
-          </div>
-          <div id="viz-stage" style="height:100%"></div>
-          <span class="viz__hint">Live preview</span>
-        </div>
+      <div class="quote reveal">
 
-        <div class="viz__side">
-          <div>
-            <p class="mono-label" style="margin-bottom:12px">Product</p>
-            <div class="viz__products" id="viz-products" role="group" aria-label="Product to preview"></div>
-            <p class="viz__blurb" id="viz-blurb" style="margin-top:14px"></p>
-          </div>
-
-          <div>
-            <div class="viz__palette-head">
-              <p class="mono-label" id="viz-palette-name">Palette</p>
-              <span class="mono-label" style="opacity:.7">Tap to apply</span>
+        <!-- ------------------------------------------ what's attached -->
+        <aside class="quote__aside">
+          <div class="quote__card">
+            <p class="quote__card-title">Attached to this request</p>
+            <div class="quote__spec">
+              <div class="quote__spec-row" id="quote-material">
+                <span class="quote__spec-chip paint" id="quote-material-chip"></span>
+                <span>
+                  <span class="quote__spec-label">Material</span>
+                  <span class="quote__spec-value" id="quote-material-value"></span>
+                </span>
+              </div>
+              <div class="quote__spec-row" id="quote-colour">
+                <span class="quote__spec-chip paint" id="quote-colour-chip"></span>
+                <span>
+                  <span class="quote__spec-label">Selected colour</span>
+                  <span class="quote__spec-value" id="quote-colour-value"></span>
+                </span>
+              </div>
+              <div class="quote__spec-row">
+                <span>
+                  <span class="quote__spec-label">Collection</span>
+                  <span class="quote__spec-value" id="quote-collection-value"></span>
+                </span>
+              </div>
             </div>
-            <div class="viz__palette" id="viz-palette" role="group" aria-label="Colour palette"></div>
           </div>
 
-          <div class="viz__meta">
-            <span>Material <strong id="viz-meta-material"></strong></span>
-            <span>Collection <strong id="viz-meta-finish"></strong></span>
+          <div class="quote__card">
+            <p class="quote__card-title">Saved colours</p>
+            <div id="quote-favs"></div>
           </div>
-        </div>
+        </aside>
+
+        <!-- ---------------------------------------------------- form -->
+        <form class="quote__form" id="quote-form" novalidate>
+          <div class="field-grid">
+
+            <div class="field">
+              <label class="field__label" for="q-name">Name <span class="field__req">required</span></label>
+              <input id="q-name" name="name" type="text" autocomplete="name" placeholder="Jordan Ellis">
+              <span class="field__error">Please tell us who to address the quote to.</span>
+            </div>
+
+            <div class="field">
+              <label class="field__label" for="q-email">Email <span class="field__req">required</span></label>
+              <input id="q-email" name="email" type="email" autocomplete="email" placeholder="you@example.com">
+              <span class="field__error">We need a valid email address to send the quote to.</span>
+            </div>
+
+            <div class="field">
+              <label class="field__label" for="q-phone">Phone <span class="field__optional">optional</span></label>
+              <input id="q-phone" name="phone" type="tel" autocomplete="tel" placeholder="(604) 555-0134">
+            </div>
+
+            <div class="field">
+              <label class="field__label" for="q-location">Project location <span class="field__optional">optional</span></label>
+              <input id="q-location" name="location" type="text" placeholder="City or postal code">
+            </div>
+
+            <div class="field">
+              <label class="field__label" for="q-project-type">Project type</label>
+              <select id="q-project-type" name="projectType"></select>
+            </div>
+
+            <div class="field">
+              <label class="field__label" for="q-timeline">Timeline</label>
+              <select id="q-timeline" name="timeline"></select>
+            </div>
+
+            <div class="field field--wide">
+              <label class="field__label" for="q-material">Material preference <span class="field__optional">we can advise</span></label>
+              <select id="q-material" name="material"></select>
+            </div>
+
+            <div class="field field--wide">
+              <span class="field__label">What do you need made?</span>
+              <div class="svc-picker" id="svc-picker"></div>
+            </div>
+
+            <div class="field field--wide">
+              <label class="field__label" for="q-details">Project details <span class="field__req">required</span></label>
+              <textarea id="q-details" name="details"
+                placeholder="Flue count and dimensions, chimney size, roof pitch, exposure, access, and anything else that affects the build."></textarea>
+              <span class="field__error">A sentence or two about the project helps us quote it properly.</span>
+            </div>
+
+          </div>
+
+          <div class="quote__actions">
+            <button class="btn btn--primary" type="submit">
+              <span>Send quote request</span>
+              <span class="btn__arrow"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M4 12h15m-5.5-6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            </button>
+            <button class="btn btn--ghost" type="button" id="quote-copy"><span>Copy as text</span></button>
+            <p class="quote__note">
+              This opens the request in your email app so you can see exactly what is being sent
+              before it leaves. No details are stored by this page.
+            </p>
+          </div>
+
+          <!-- shown after the request is composed -->
+          <div class="quote__done">
+            <span class="quote__done-mark">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.6 4.6L19 7.4" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
+            <h3 class="subhead">Your request is ready to send</h3>
+            <p>
+              We have handed it to your email app with everything filled in. If nothing opened, copy the
+              request instead and send it to us however you like — we read every one.
+            </p>
+            <div class="quote__done-actions">
+              <button class="btn btn--ghost" type="button" id="quote-copy-done"><span>Copy the request</span></button>
+              <button class="btn btn--ghost" type="button" id="quote-reset"><span>Start another request</span></button>
+            </div>
+          </div>
+        </form>
+
       </div>
     </div>
   </section>
@@ -308,13 +415,14 @@
         </ul>
       </div>
       <div>
-        <h4>Products</h4>
+        <h4>Services</h4>
         <ul>
-          <li>Custom &amp; standing seam chimney caps</li>
-          <li>Louvered &amp; flat-top caps</li>
-          <li>Architectural &amp; counter flashing</li>
-          <li>Wall caps &amp; coping</li>
-          <li>Roof accessories</li>
+          <li>Custom chimney caps</li>
+          <li>S-Lock flashing system</li>
+          <li>Copper gutter systems</li>
+          <li>Standing seam components</li>
+          <li>Commercial &amp; decorative fabrication</li>
+          <li>Historic restoration metal</li>
         </ul>
       </div>
     </div>

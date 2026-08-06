@@ -19,7 +19,7 @@
     favOnly: false,
     favourites: U.store.get(FAV_KEY, []),
     selected: null,      /* { collection, name, hex, metallic } */
-    product: 'custom-cap',
+    quoteText: '',
     patina: 0,
     patinaAuto: false
   };
@@ -91,7 +91,7 @@
 
     renderDetail();
     renderColours({ resetSelection: true });
-    renderVisualizerPalette();
+    renderQuoteSummary();
     focusCompareColumn(id);
 
     /* Bring the rail card into view when selection is driven from elsewhere. */
@@ -254,10 +254,10 @@
     buildFilters();
 
     if (opts && opts.resetSelection) {
-      /* Keep the visualizer on a valid colour for the new collection. */
+      /* Keep the quote summary on a valid colour for the new collection. */
       var first = coll.colours[0];
       state.selected = { collection: coll.id, name: first.name, hex: first.hex, metallic: !!first.metallic };
-      renderVisualizer();
+      renderQuoteSummary();
     }
     renderSwatches();
   }
@@ -303,7 +303,7 @@
       var btn = el('button', {
         class: 'swatch__btn', type: 'button',
         'aria-pressed': String(!!selected),
-        title: 'Apply ' + c.name + ' to the visualizer',
+        title: 'Add ' + c.name + ' to your quote request',
         onclick: function () { applyColour(coll.id, c); }
       }, [paint, meta]);
 
@@ -347,8 +347,8 @@
       var b = $('.swatch__btn', card);
       if (b) b.setAttribute('aria-pressed', String(on));
     });
-    renderVisualizer();
-    toast(c.hex, c.metallic, c.name + ' applied to the visualizer');
+    renderQuoteSummary();
+    toast(c.hex, c.metallic, c.name + ' added to your quote request');
   }
 
   /* ------------------------------------------------------- favourites */
@@ -373,6 +373,7 @@
 
     updateFavCount();
     renderDrawer();
+    renderQuoteSummary();
     if (state.favOnly) renderSwatches();
     toast(c.hex, c.metallic, added ? c.name + ' saved to favourites' : c.name + ' removed from favourites');
   }
@@ -421,8 +422,8 @@
         el('span', { class: 'fav-row__actions' }, [
           el('button', {
             class: 'fav-row__btn', type: 'button',
-            title: 'Preview in the visualizer',
-            'aria-label': 'Preview ' + r.colour.name + ' in the visualizer',
+            title: 'Use this colour on the quote request',
+            'aria-label': 'Use ' + r.colour.name + ' on the quote request',
             html: U.icon('eye'),
             onclick: function () {
               /* Jump the configurator to a material that carries this colour. */
@@ -432,7 +433,7 @@
               if (target) selectMaterial(target.id, { scrollIntoView: true });
               applyColour(r.collection.id, r.colour);
               closeDrawer();
-              scrollToId('visualizer');
+              scrollToId('quote');
             }
           }),
           el('button', {
@@ -694,87 +695,259 @@
   }
 
   /* ===================================================================
-     COLOUR VISUALIZER
+     SERVICES
      =================================================================== */
 
-  function buildVisualizer() {
-    var list = $('#viz-products');
-    if (!list) return;
-    list.innerHTML = '';
-
-    CM.products.forEach(function (p) {
-      list.appendChild(el('button', {
-        class: 'viz-product', type: 'button',
-        'data-product': p.id,
-        'aria-pressed': String(p.id === state.product),
-        onclick: function () {
-          state.product = p.id;
-          $$('#viz-products .viz-product').forEach(function (b) {
-            b.setAttribute('aria-pressed', String(b.dataset.product === p.id));
-          });
-          renderVisualizer();
-        }
-      }, [el('span', { text: p.name })]));
-    });
-
-    renderVisualizerPalette();
-    renderVisualizer();
-  }
-
-  function renderVisualizerPalette() {
-    var wrap = $('#viz-palette');
+  function buildServices() {
+    var wrap = $('#services-grid');
     if (!wrap) return;
-    var coll = collection();
     wrap.innerHTML = '';
 
-    $('#viz-palette-name').textContent = coll.name;
-
-    coll.colours.forEach(function (c) {
-      var on = state.selected && state.selected.collection === coll.id && state.selected.name === c.name;
-      wrap.appendChild(el('button', {
-        class: 'viz-chip paint' + (c.metallic ? ' paint--metallic' : ''),
-        type: 'button',
-        'data-colour': c.name,
-        'aria-pressed': String(!!on),
-        'aria-label': c.name,
-        title: c.name + ' · ' + c.hex,
-        style: { '--c': c.hex },
-        onclick: function () { applyColour(coll.id, c); }
-      }));
+    CM.services.forEach(function (svc, i) {
+      wrap.appendChild(el('article', { class: 'service' }, [
+        el('p', { class: 'service__index', text: String(i + 1).padStart(2, '0') }),
+        el('h3', { class: 'service__name', text: svc.name }),
+        el('p', { class: 'service__body', text: svc.body }),
+        el('button', {
+          class: 'service__cta', type: 'button',
+          onclick: function () { requestQuoteFor(svc.id); }
+        }, [
+          el('span', { text: 'Request a quote' }),
+          el('span', { html: U.icon('arrow') })
+        ])
+      ]));
     });
   }
 
-  function renderVisualizer() {
-    var stage = $('#viz-stage');
-    if (!stage) return;
+  /* Tick the matching service and drop the visitor into the form. */
+  function requestQuoteFor(serviceId) {
+    var box = $('#quote-form input[name="service"][value="' + serviceId + '"]');
+    if (box && !box.checked) box.checked = true;
+    scrollToId('quote');
+    window.setTimeout(function () {
+      var name = $('#q-name');
+      if (name && window.innerWidth > 760) name.focus({ preventScroll: true });
+    }, 620);
+  }
 
-    var sel = state.selected;
-    if (!sel) {
-      var coll = collection();
-      sel = state.selected = {
-        collection: coll.id, name: coll.colours[0].name,
-        hex: coll.colours[0].hex, metallic: !!coll.colours[0].metallic
-      };
+  /* ===================================================================
+     QUOTE REQUEST
+     =================================================================== */
+
+  function buildQuote() {
+    var picker = $('#svc-picker');
+    if (!picker) return;
+
+    picker.innerHTML = '';
+    CM.services.forEach(function (svc) {
+      picker.appendChild(el('label', { class: 'svc-check' }, [
+        el('input', { type: 'checkbox', name: 'service', value: svc.id }),
+        el('span', { class: 'svc-check__box', html: U.icon('check') }),
+        el('span', { text: svc.name })
+      ]));
+    });
+
+    fillSelect($('#q-project-type'), CM.projectTypes, 'Select a project type');
+    fillSelect($('#q-timeline'), CM.timelines, 'Select a timeline');
+    fillSelect($('#q-material'), CM.materials.map(function (m) { return m.name; }), 'No preference yet');
+
+    $('#quote-form').addEventListener('submit', submitQuote);
+    $('#quote-reset').addEventListener('click', resetQuote);
+    $('#quote-copy').addEventListener('click', copyQuote);
+    $('#quote-copy-done').addEventListener('click', copyQuote);
+
+    /* Clear the invalid state as soon as the visitor starts fixing it. */
+    $$('#quote-form input, #quote-form select, #quote-form textarea').forEach(function (input) {
+      input.addEventListener('input', function () {
+        var field = input.closest('.field');
+        if (field) field.classList.remove('is-invalid');
+      });
+    });
+
+    renderQuoteSummary();
+  }
+
+  function fillSelect(node, options, placeholder) {
+    if (!node) return;
+    node.innerHTML = '';
+    node.appendChild(el('option', { value: '', text: placeholder }));
+    options.forEach(function (o) {
+      node.appendChild(el('option', { value: o, text: o }));
+    });
+  }
+
+  /*
+   * The left rail mirrors what the request will actually carry: the material
+   * on screen, the colour last selected, and every saved favourite.
+   */
+  function renderQuoteSummary() {
+    var m = material();
+    var coll = collection();
+
+    var matRow = $('#quote-material');
+    if (matRow) {
+      $('#quote-material-value').textContent = m.name;
+      $('#quote-collection-value').textContent = coll.name;
+      var chip = $('#quote-material-chip');
+      chip.className = 'quote__spec-chip paint';
+      chip.style.setProperty('--c', m.swatch);
     }
 
-    stage.innerHTML = CM.render.product(state.product, sel.hex, sel.metallic);
+    var colourRow = $('#quote-colour');
+    if (colourRow) {
+      var sel = state.selected;
+      if (sel) {
+        colourRow.style.display = '';
+        $('#quote-colour-value').textContent = sel.name + ' · ' + sel.hex;
+        var cchip = $('#quote-colour-chip');
+        cchip.className = 'quote__spec-chip paint' + (sel.metallic ? ' paint--metallic' : '');
+        cchip.style.setProperty('--c', sel.hex);
+      } else {
+        colourRow.style.display = 'none';
+      }
+    }
 
-    var chip = $('#viz-badge-chip');
-    chip.className = 'viz__badge-chip paint' + (sel.metallic ? ' paint--metallic' : '');
-    chip.style.setProperty('--c', sel.hex);
-    $('#viz-badge-name').textContent = sel.name;
+    var favWrap = $('#quote-favs');
+    if (!favWrap) return;
+    favWrap.innerHTML = '';
+    var records = state.favourites.map(favRecord).filter(Boolean);
 
-    var prod = CM.products.filter(function (p) { return p.id === state.product; })[0];
-    $('#viz-badge-sub').textContent = (prod ? prod.name : '') + ' · ' + sel.hex;
-    $('#viz-blurb').textContent = prod ? prod.blurb : '';
-
-    $('#viz-meta-material').textContent = material().name;
-    $('#viz-meta-finish').textContent = collection().name;
-
-    /* Sync chip + swatch selection state without a full re-render. */
-    $$('#viz-palette .viz-chip').forEach(function (b) {
-      b.setAttribute('aria-pressed', String(b.dataset.colour === sel.name));
+    if (!records.length) {
+      favWrap.appendChild(el('p', { class: 'quote__empty',
+        text: 'No saved colours yet. Tap the heart on any swatch and it will be attached to your request.' }));
+      return;
+    }
+    var list = el('div', { class: 'quote__fav-list' });
+    records.forEach(function (r) {
+      list.appendChild(el('span', { class: 'quote__fav' }, [
+        el('span', {
+          class: 'quote__fav-chip paint' + (r.colour.metallic ? ' paint--metallic' : ''),
+          style: { '--c': r.colour.hex }
+        }),
+        el('span', { text: r.colour.name })
+      ]));
     });
+    favWrap.appendChild(list);
+  }
+
+  function markInvalid(input, invalid) {
+    var field = input.closest('.field');
+    if (field) field.classList.toggle('is-invalid', invalid);
+    return !invalid;
+  }
+
+  function validateQuote() {
+    var ok = true;
+    var firstBad = null;
+
+    [['#q-name', function (v) { return v.trim().length > 1; }],
+     ['#q-email', function (v) { return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim()); }],
+     ['#q-details', function (v) { return v.trim().length > 9; }]
+    ].forEach(function (pair) {
+      var input = $(pair[0]);
+      var good = pair[1](input.value);
+      markInvalid(input, !good);
+      if (!good) { ok = false; if (!firstBad) firstBad = input; }
+    });
+
+    if (firstBad) firstBad.focus();
+    return ok;
+  }
+
+  /*
+   * There is no server behind this page, so "send" composes the request into
+   * an email the visitor's client opens, and offers the same text on the
+   * clipboard as a fallback. Nothing is silently swallowed.
+   */
+  function buildQuoteText() {
+    var form = $('#quote-form');
+    var val = function (id) { return ($(id).value || '').trim(); };
+
+    var services = $$('#svc-picker input:checked').map(function (b) {
+      var svc = CM.services.filter(function (s) { return s.id === b.value; })[0];
+      return svc ? svc.name : b.value;
+    });
+
+    var favs = state.favourites.map(favRecord).filter(Boolean).map(function (r) {
+      return r.colour.name + ' (' + r.collection.name + ', ' + r.colour.hex + ')';
+    });
+
+    var lines = [
+      'QUOTE REQUEST',
+      '',
+      'Name:      ' + val('#q-name'),
+      'Email:     ' + val('#q-email'),
+      'Phone:     ' + (val('#q-phone') || '—'),
+      'Location:  ' + (val('#q-location') || '—'),
+      '',
+      'Project type: ' + (val('#q-project-type') || '—'),
+      'Timeline:     ' + (val('#q-timeline') || '—'),
+      'Services:     ' + (services.length ? services.join(', ') : '—'),
+      '',
+      'Material preference: ' + (val('#q-material') || '—'),
+      'Viewing in configurator: ' + material().name + ' — ' + collection().name
+    ];
+
+    if (state.selected) {
+      lines.push('Selected colour: ' + state.selected.name + ' (' + state.selected.hex + ')');
+    }
+    if (favs.length) {
+      lines.push('', 'Saved colours:');
+      favs.forEach(function (f) { lines.push('  · ' + f); });
+    }
+
+    lines.push('', 'Project details:', val('#q-details'));
+    lines.push('', '— Sent from the Esther\'s materials configurator');
+
+    if (form) { /* keeps the linter honest about the unused binding */ }
+    return lines.join('\n');
+  }
+
+  function submitQuote(ev) {
+    ev.preventDefault();
+    if (!validateQuote()) {
+      toast('#d4574f', false, 'Check the highlighted fields');
+      return;
+    }
+
+    var body = buildQuoteText();
+    var subject = 'Quote request — ' + $('#q-name').value.trim();
+    var href = 'mailto:' + CM.quoteEmail +
+               '?subject=' + encodeURIComponent(subject) +
+               '&body=' + encodeURIComponent(body);
+
+    state.quoteText = body;
+    $('#quote-form').classList.add('is-sent');
+    window.location.href = href;
+  }
+
+  function resetQuote() {
+    var form = $('#quote-form');
+    form.reset();
+    form.classList.remove('is-sent');
+    $$('#quote-form .field').forEach(function (f) { f.classList.remove('is-invalid'); });
+    scrollToId('quote');
+  }
+
+  function copyQuote() {
+    var text = state.quoteText || buildQuoteText();
+    var done = function () { toast(material().accent, false, 'Request copied to your clipboard'); };
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, fallbackCopy);
+    } else {
+      fallbackCopy();
+    }
+
+    function fallbackCopy() {
+      var ta = el('textarea', { style: { position: 'fixed', opacity: '0', top: '0' } });
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); done(); }
+      catch (e) { toast('#d4574f', false, 'Could not copy — select the text manually'); }
+      document.body.removeChild(ta);
+    }
   }
 
   /* ===================================================================
@@ -841,6 +1014,7 @@
       U.store.set(FAV_KEY, state.favourites);
       updateFavCount();
       renderDrawer();
+      renderQuoteSummary();
       renderSwatches();
     });
 
@@ -853,7 +1027,8 @@
 
   function init() {
     buildRail();
-    buildVisualizer();
+    buildServices();
+    buildQuote();
     buildPatina();
     buildZinc();
     buildCompare();

@@ -301,6 +301,13 @@ h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 300; margin: 0; 
 }
 .btn--accent:hover { background: var(--accent); color: #0a0b0c; border-color: transparent; }
 
+/* Compact variant for the topbar CTA */
+.btn--nav {
+  padding: 9px 18px;
+  font-size: 13px;
+  text-decoration: none;
+}
+
 .btn--ghost { background: transparent; border-color: var(--line); color: var(--ink-muted); }
 .btn--ghost:hover { color: var(--ink); border-color: var(--line-strong); background: var(--bg-raised); }
 
