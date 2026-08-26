@@ -8,7 +8,7 @@ broken image, so the layout never collapses.
 | Filename | Shot |
 | --- | --- |
 | `work-enclosure.jpg` | Large louvered chimney enclosure installed on a stone chimney, dark anthracite finish. Used as the hero image. |
-| `work-louvre-shop.jpg` | Louvered cap with hipped crown photographed in the yard before delivery — mill-finish louvre blades against a dark crown. |
+| `work-louvre-shop.jpg` | Louvered cap with hipped crown photographed in the yard before pickup — mill-finish louvre blades against a dark crown. |
 | `work-louvre-cap.jpg` | Louvered chimney cap with a hipped crown installed on a tile roof. |
 | `work-cove-cap.jpg` | Cove-profile (flared bell) chimney cap on a stone chimney, with vent grommets. |
 

@@ -21,7 +21,7 @@ python3 -m http.server 8000    # then visit http://localhost:8000
 | --- | --- |
 | Hero + credibility | The pitch alongside a photograph of real work, followed by four verifiable facts about the shop. |
 | Our work | Gallery of recent fabrication. Every image is an **image slot** — see below. |
-| Process | The four steps from measurement to delivery, and what the customer needs to supply at each. |
+| Process | The four steps from measurement to pickup, and what the customer needs to supply at each. |
 | Material selector | Eight materials on a snap-scrolling rail. Selecting one re-renders the spec panel, swaps the colour collection, updates what the quote request carries, and cascades an accent colour through the page. |
 | Spec panel | Gauges, finish description, applications, warranty, thickness, durability, cost category and maintenance for each material, plus feature pills for PVDF / aluminum / copper / zinc. |
 | Colour grid | Opened by **View Available Colours**. Live search, colour-family filters, favourites (persisted to `localStorage`), and hover states that enlarge the swatch and sweep its specular highlight. |

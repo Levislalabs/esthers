@@ -133,7 +133,7 @@ CM.materials = [
       { label: 'Warranty', value: '30–40 year film, fade & chalk covered', detail: 'Full architectural warranty package; often paired with a project-specific finish warranty.' },
       { label: 'Thickness', value: '0.0299" / 0.76 mm', detail: 'Maximum stiffness in painted steel. Stays flat across long unsupported runs.' },
       { label: 'Durability', value: 'Excellent', detail: 'Best combination of impact resistance and coating performance in the steel range.' },
-      { label: 'Cost Category', value: '$$$$ — Specification grade', detail: 'Highest cost of the steel options; competitive with aluminum on a delivered basis.' },
+      { label: 'Cost Category', value: '$$$$ — Specification grade', detail: 'Highest cost of the steel options; competitive with aluminum on an installed basis.' },
       { label: 'Maintenance', value: 'Very low — rinse, no recoating', detail: 'Annual rinse, twice yearly in coastal exposure. Inspect sealed joints at five-year intervals.' }
     ]
   },
