@@ -454,18 +454,21 @@
 
             <div class="field field--wide">
               <span class="field__label" id="q-materials-label">Material
-                <span class="field__optional">pick as many as the project needs</span></span>
+                <span class="field__optional">add a line per colour</span></span>
               <div class="multi" id="q-materials">
                 <button class="multi__toggle" type="button" id="q-materials-toggle"
                         aria-expanded="false" aria-controls="q-materials-panel"
                         aria-labelledby="q-materials-label q-materials-value">
-                  <span class="multi__value" id="q-materials-value">Choose one or more materials</span>
+                  <span class="multi__value" id="q-materials-value">Add a material</span>
                   <svg class="multi__caret" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9.5 6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </button>
                 <div class="multi__panel" id="q-materials-panel" role="group"
                      aria-labelledby="q-materials-label" hidden></div>
               </div>
               <div class="matcolours" id="q-material-colours"></div>
+              <p class="field__hint" id="q-materials-empty">
+                Add the same material more than once if the job needs it in two colours.
+              </p>
             </div>
 
             <div class="field field--wide">

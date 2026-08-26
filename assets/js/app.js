@@ -770,9 +770,12 @@
   }
 
   /*
-   * Material picker. Projects regularly mix two materials, so this is a
-   * checkbox group behind a disclosure button rather than a single select.
+   * Material picker. The same material can appear more than once, because a
+   * job often takes one gauge in two colours, so this adds line items rather
+   * than toggling a fixed set of checkboxes. Each line owns its own colour.
    */
+  var lineSeq = 0;
+
   function buildMaterialPicker() {
     var panel = $('#q-materials-panel');
     var toggle = $('#q-materials-toggle');
@@ -780,12 +783,11 @@
 
     panel.innerHTML = '';
     CM.materials.forEach(function (m) {
-      panel.appendChild(el('label', { class: 'multi__opt' }, [
-        el('input', {
-          type: 'checkbox', name: 'material', value: m.id,
-          onchange: syncMaterialLabel
-        }),
-        el('span', { class: 'multi__opt-box', html: U.icon('check') }),
+      panel.appendChild(el('button', {
+        class: 'multi__opt', type: 'button',
+        onclick: function () { addMaterialLine(m.id); }
+      }, [
+        el('span', { class: 'multi__opt-add', html: U.icon('plus') }),
         el('span', { class: 'multi__chip paint', style: { '--c': m.swatch } }),
         el('span', { text: m.name })
       ]));
@@ -803,7 +805,7 @@
       if (ev.key === 'Escape') { setMaterialPanel(false); toggle.focus(); }
     });
 
-    syncMaterialLabel();
+    syncMaterialLines();
   }
 
   function setMaterialPanel(open) {
@@ -814,78 +816,70 @@
     toggle.setAttribute('aria-expanded', String(open));
   }
 
-  function selectedMaterials() {
-    return $$('#q-materials-panel input:checked').map(function (b) {
-      var m = CM.materials.filter(function (x) { return x.id === b.value; })[0];
-      return m ? m.name : b.value;
+  /*
+   * Adds one line. The panel deliberately stays open so a visitor wanting the
+   * same gauge in three colours can click it three times.
+   */
+  function addMaterialLine(materialId, presetColour) {
+    var wrap = $('#q-material-colours');
+    var m = CM.materials.filter(function (x) { return x.id === materialId; })[0];
+    if (!wrap || !m) return;
+
+    var coll = CM.collections[m.collection];
+    var id = 'line-' + (++lineSeq);
+    var chip = el('span', { class: 'matcolour__chip paint' });
+
+    var sel = el('select', {
+      'data-material': m.id,
+      id: id + '-colour',
+      'aria-label': 'Colour for ' + m.name,
+      onchange: function () { paintChip(chip, coll, this.value); }
     });
+    sel.appendChild(el('option', { value: '', text: 'Colour not decided yet' }));
+    coll.colours.forEach(function (c) {
+      sel.appendChild(el('option', { value: c.name, text: c.name }));
+    });
+
+    /* Seed from the argument, else from a colour picked while browsing. */
+    var seed = presetColour;
+    if (seed === undefined && state.colourChosen && state.selected &&
+        state.selected.collection === coll.id) {
+      seed = state.selected.name;
+    }
+    if (seed) sel.value = seed;
+    paintChip(chip, coll, sel.value);
+
+    var row = el('div', { class: 'matcolour', 'data-line': id }, [
+      el('span', { class: 'matcolour__name', text: m.name }),
+      el('span', { class: 'matcolour__pick' }, [chip, sel]),
+      el('button', {
+        class: 'matcolour__remove', type: 'button',
+        'aria-label': 'Remove this ' + m.name + ' line',
+        html: U.icon('close'),
+        onclick: function () { row.remove(); syncMaterialLines(); }
+      }),
+      el('span', { class: 'matcolour__note', text: coll.name })
+    ]);
+
+    wrap.appendChild(row);
+    syncMaterialLines();
+    if (window.innerWidth > 760) sel.focus();
   }
 
-  function syncMaterialLabel() {
-    var names = selectedMaterials();
+  /* Keeps the empty-state hint and the toggle label honest. */
+  function syncMaterialLines() {
+    var rows = $$('#q-material-colours .matcolour');
+    var hint = $('#q-materials-empty');
     var value = $('#q-materials-value');
     var wrap = $('#q-materials');
-    if (!value) return;
 
-    wrap.classList.toggle('has-selection', names.length > 0);
-    if (!names.length) {
-      value.textContent = 'Choose one or more materials';
-    } else if (names.length <= 2) {
-      value.textContent = names.join(' and ');
-    } else {
-      value.textContent = names.length + ' materials selected';
+    if (hint) hint.hidden = rows.length > 0;
+    if (wrap) wrap.classList.toggle('has-selection', rows.length > 0);
+    if (value) {
+      value.textContent = rows.length
+        ? 'Add another material  (' + rows.length + ' added)'
+        : 'Add a material';
     }
-    renderMaterialColours();
-  }
-
-  /*
-   * Each ticked material gets its own colour list, because a project mixing
-   * 24ga SMP with copper is choosing from two entirely different collections.
-   * Existing choices survive a re-render so ticking a second material never
-   * clears the first one's colour.
-   */
-  function renderMaterialColours() {
-    var wrap = $('#q-material-colours');
-    if (!wrap) return;
-
-    var previous = {};
-    $$('.matcolour select', wrap).forEach(function (sel) {
-      previous[sel.dataset.material] = sel.value;
-    });
-
-    wrap.innerHTML = '';
-    $$('#q-materials-panel input:checked').forEach(function (box) {
-      var m = CM.materials.filter(function (x) { return x.id === box.value; })[0];
-      if (!m) return;
-      var coll = CM.collections[m.collection];
-
-      var chip = el('span', { class: 'matcolour__chip paint' });
-
-      var sel = el('select', {
-        'data-material': m.id,
-        'aria-label': 'Colour for ' + m.name,
-        onchange: function () { paintChip(chip, coll, this.value); }
-      });
-      sel.appendChild(el('option', { value: '', text: 'Colour not decided yet' }));
-      coll.colours.forEach(function (c) {
-        sel.appendChild(el('option', { value: c.name, text: c.name }));
-      });
-
-      /* Carry over a previous pick, else the colour chosen while browsing. */
-      var carried = previous[m.id];
-      if (carried === undefined && state.colourChosen && state.selected &&
-          state.selected.collection === coll.id) {
-        carried = state.selected.name;
-      }
-      if (carried) sel.value = carried;
-      paintChip(chip, coll, sel.value);
-
-      wrap.appendChild(el('div', { class: 'matcolour' }, [
-        el('span', { class: 'matcolour__name', text: m.name }),
-        el('span', { class: 'matcolour__pick' }, [chip, sel]),
-        el('span', { class: 'matcolour__note', text: coll.name })
-      ]));
-    });
   }
 
   function paintChip(chip, coll, colourName) {
@@ -895,15 +889,19 @@
     else chip.style.removeProperty('--c');
   }
 
-  /* [{ material, colour, hex }] for the request body. */
+  /* [{ material, colour, hex }] for the request body, in the order added. */
   function materialChoices() {
-    return $$('#q-materials-panel input:checked').map(function (box) {
-      var m = CM.materials.filter(function (x) { return x.id === box.value; })[0];
-      var sel = $('.matcolour select[data-material="' + box.value + '"]');
-      var name = sel ? sel.value : '';
+    return $$('#q-material-colours .matcolour').map(function (row) {
+      var sel = $('select', row);
+      var m = CM.materials.filter(function (x) { return x.id === sel.dataset.material; })[0];
       var coll = m ? CM.collections[m.collection] : null;
-      var c = (coll && name) ? coll.colours.filter(function (x) { return x.name === name; })[0] : null;
-      return { material: m ? m.name : box.value, colour: name, hex: c ? c.hex : '' };
+      var c = (coll && sel.value)
+        ? coll.colours.filter(function (x) { return x.name === sel.value; })[0] : null;
+      return {
+        material: m ? m.name : sel.dataset.material,
+        colour: sel.value,
+        hex: c ? c.hex : ''
+      };
     });
   }
 
@@ -1061,7 +1059,8 @@
     var form = $('#quote-form');
     form.reset();
     form.classList.remove('is-sent');
-    syncMaterialLabel();
+    $('#q-material-colours').innerHTML = '';
+    syncMaterialLines();
     renderDrawingList();
     setMaterialPanel(false);
     $$('#quote-form .field').forEach(function (f) { f.classList.remove('is-invalid'); });

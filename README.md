@@ -29,7 +29,7 @@ python3 -m http.server 8000    # then visit http://localhost:8000
 | Zinc | Architectural renderings of Natural, Pre-weathered, Quartz and Anthra zinc, each with a close-up texture strip on hover. |
 | Comparison tool | Twelve attributes across all eight materials. Sticky header and attribute column, meters that fill on scroll, and column focus tied to the current material. |
 | Services | The seven fabrication services, each with a **Request a quote** action that ticks the matching box on the form below and jumps to it. |
-| Quote request | Contact details, project type, timeline, a multi-select material picker where each chosen material gets its own colour list, an attachment field for drawings, and project details. Saved favourites ride along too. |
+| Quote request | Contact details, project type, timeline, a material picker that adds one line per colour (the same material can be added twice for a two-colour job), each line with its own colour list, an attachment field for drawings, and project details. Saved favourites ride along too. |
 
 ## Colour data
 
