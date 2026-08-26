@@ -29,7 +29,7 @@ python3 -m http.server 8000    # then visit http://localhost:8000
 | Zinc | Architectural renderings of Natural, Pre-weathered, Quartz and Anthra zinc, each with a close-up texture strip on hover. |
 | Comparison tool | Twelve attributes across all eight materials. Sticky header and attribute column, meters that fill on scroll, and column focus tied to the current material. |
 | Services | The seven fabrication services, each with a **Request a quote** action that ticks the matching box on the form below and jumps to it. |
-| Quote request | Contact details, project type, timeline, a multi-select material picker, an attachment field for drawings, and project details. A colour the visitor deliberately picked and any saved favourites ride along too. |
+| Quote request | Contact details, project type, timeline, a multi-select material picker where each chosen material gets its own colour list, an attachment field for drawings, and project details. Saved favourites ride along too. |
 
 ## Colour data
 
@@ -103,6 +103,14 @@ frame with no asset loading.
 
 Swatch textures use the same idea in CSS: one `--c` custom property drives a
 layered background of roll-direction grain, specular sweep and paint tooth.
+
+## Contrast
+
+Every ink token clears WCAG AA (4.5:1) against the darkest surface it is used
+on, `--bg-elevated`. `--ink-dim` and `--ink-faint` previously measured 3.54 and
+2.06, which made form labels and placeholders effectively unreadable. There is
+a rendered-DOM contrast audit in the test scripts rather than a token-level one,
+because what matters is the pair that actually lands on screen.
 
 ## Accessibility
 

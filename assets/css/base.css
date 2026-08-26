@@ -17,10 +17,13 @@
   --line-soft:     rgba(255, 255, 255, 0.05);
 
   /* Ink */
-  --ink:           #f2f4f5;
-  --ink-muted:     #a4adb4;
-  --ink-dim:       #6d767d;
-  --ink-faint:     #4b5257;
+  /* Every ink clears 4.5:1 against the darkest surface it sits on
+     (--bg-elevated). The old --ink-dim and --ink-faint measured 3.54 and
+     2.06, which is why form labels and placeholders were unreadable. */
+  --ink:           #f2f4f5;   /* 14.9:1 */
+  --ink-muted:     #a4adb4;   /*  7.2:1 */
+  --ink-dim:       #909aa1;   /*  5.7:1 */
+  --ink-faint:     #808a91;   /*  4.7:1 */
 
   /* Accent - overridden per material at runtime */
   --accent:        #9aafc4;
@@ -53,7 +56,12 @@
 *::before,
 *::after { box-sizing: border-box; }
 
-html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+  /* Makes the browser render native select popups and scrollbars dark. */
+  color-scheme: dark;
+}
 
 body {
   margin: 0;

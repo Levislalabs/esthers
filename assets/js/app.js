@@ -835,6 +835,76 @@
     } else {
       value.textContent = names.length + ' materials selected';
     }
+    renderMaterialColours();
+  }
+
+  /*
+   * Each ticked material gets its own colour list, because a project mixing
+   * 24ga SMP with copper is choosing from two entirely different collections.
+   * Existing choices survive a re-render so ticking a second material never
+   * clears the first one's colour.
+   */
+  function renderMaterialColours() {
+    var wrap = $('#q-material-colours');
+    if (!wrap) return;
+
+    var previous = {};
+    $$('.matcolour select', wrap).forEach(function (sel) {
+      previous[sel.dataset.material] = sel.value;
+    });
+
+    wrap.innerHTML = '';
+    $$('#q-materials-panel input:checked').forEach(function (box) {
+      var m = CM.materials.filter(function (x) { return x.id === box.value; })[0];
+      if (!m) return;
+      var coll = CM.collections[m.collection];
+
+      var chip = el('span', { class: 'matcolour__chip paint' });
+
+      var sel = el('select', {
+        'data-material': m.id,
+        'aria-label': 'Colour for ' + m.name,
+        onchange: function () { paintChip(chip, coll, this.value); }
+      });
+      sel.appendChild(el('option', { value: '', text: 'Colour not decided yet' }));
+      coll.colours.forEach(function (c) {
+        sel.appendChild(el('option', { value: c.name, text: c.name }));
+      });
+
+      /* Carry over a previous pick, else the colour chosen while browsing. */
+      var carried = previous[m.id];
+      if (carried === undefined && state.colourChosen && state.selected &&
+          state.selected.collection === coll.id) {
+        carried = state.selected.name;
+      }
+      if (carried) sel.value = carried;
+      paintChip(chip, coll, sel.value);
+
+      wrap.appendChild(el('div', { class: 'matcolour' }, [
+        el('span', { class: 'matcolour__name', text: m.name }),
+        el('span', { class: 'matcolour__pick' }, [chip, sel]),
+        el('span', { class: 'matcolour__note', text: coll.name })
+      ]));
+    });
+  }
+
+  function paintChip(chip, coll, colourName) {
+    var c = coll.colours.filter(function (x) { return x.name === colourName; })[0];
+    chip.className = 'matcolour__chip paint' + (c && c.metallic ? ' paint--metallic' : '');
+    if (c) chip.style.setProperty('--c', c.hex);
+    else chip.style.removeProperty('--c');
+  }
+
+  /* [{ material, colour, hex }] for the request body. */
+  function materialChoices() {
+    return $$('#q-materials-panel input:checked').map(function (box) {
+      var m = CM.materials.filter(function (x) { return x.id === box.value; })[0];
+      var sel = $('.matcolour select[data-material="' + box.value + '"]');
+      var name = sel ? sel.value : '';
+      var coll = m ? CM.collections[m.collection] : null;
+      var c = (coll && name) ? coll.colours.filter(function (x) { return x.name === name; })[0] : null;
+      return { material: m ? m.name : box.value, colour: name, hex: c ? c.hex : '' };
+    });
   }
 
   /*
@@ -921,7 +991,7 @@
   function buildQuoteText() {
     var form = $('#quote-form');
     var val = function (id) { return ($(id).value || '').trim(); };
-    var materials = selectedMaterials();
+    var choices = materialChoices();
     var drawings = drawingNames();
 
     var favs = state.favourites.map(favRecord).filter(Boolean).map(function (r) {
@@ -938,14 +1008,20 @@
       '',
       'Project type: ' + (val('#q-project-type') || 'not given'),
       'Timeline:     ' + (val('#q-timeline') || 'not given'),
-      '',
-      'Materials:    ' + (materials.length ? materials.join(', ') : 'not specified')
+      ''
     ];
 
-    /* Only a colour the visitor actually clicked, never the collection default. */
-    if (state.colourChosen && state.selected) {
-      lines.push('Colour:       ' + state.selected.name + ' (' + state.selected.hex + ')');
+    if (choices.length) {
+      lines.push('Materials:');
+      choices.forEach(function (ch) {
+        lines.push('  · ' + ch.material +
+          (ch.colour ? '  |  ' + ch.colour + (ch.hex ? ' (' + ch.hex + ')' : '')
+                     : '  |  colour not decided yet'));
+      });
+    } else {
+      lines.push('Materials:    not specified');
     }
+
     if (favs.length) {
       lines.push('', 'Saved colours:');
       favs.forEach(function (f) { lines.push('  · ' + f); });
