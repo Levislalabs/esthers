@@ -356,26 +356,18 @@ CM.services = [
     body: 'Custom standing seam chimney enclosures, roof accessories and architectural trim pieces.'
   },
   {
+    id: 'panels',
+    name: 'Metal Wall & Roof Panels',
+    body: 'Roll-formed prepainted steel panels cut to length for walls, roofs and soffit — ' +
+          'board-and-batten, lap siding, plank and standing rib profiles in over 80 colours and ' +
+          'woodgrain finishes. Supplied with the closures, trims, clips and fasteners the ' +
+          'installation calls for.'
+  },
+  {
     id: 'commercial',
     name: 'Commercial Sheet Metal',
     body: 'Large-scale fabrication for commercial projects. HVAC enclosures, ductwork and custom ' +
           'assemblies.'
-  },
-  {
-    id: 'decorative',
-    name: 'Decorative Metal Fabrication',
-    body: 'Ornamental metalwork including screens, railings, fascias and architectural accents.'
-  },
-  {
-    id: 'roof-accessories',
-    name: 'Roof Accessories',
-    body: 'Crickets, darts, scupper heads, drip edges and all custom roof-mounted accessories.'
-  },
-  {
-    id: 'restoration',
-    name: 'Historic Restoration Metal',
-    body: 'Period-appropriate metalwork for restoration projects. We replicate historic profiles ' +
-          'using modern techniques.'
   }
 ];
 

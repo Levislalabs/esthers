@@ -28,7 +28,7 @@ python3 -m http.server 8000    # then visit http://localhost:8000
 | Copper patina | Five-stage weathering timeline (Day 1 → 10 Years) with scrub control and autoplay. Later stages layer clipped mottling so the change reads as chemistry, not a hue shift. |
 | Zinc | Architectural renderings of Natural, Pre-weathered, Quartz and Anthra zinc, each with a close-up texture strip on hover. |
 | Comparison tool | Twelve attributes across all eight materials. Sticky header and attribute column, meters that fill on scroll, and column focus tied to the current material. |
-| Services | The nine fabrication services, each with a **Request a quote** action that ticks the matching box on the form below and jumps to it. |
+| Services | The seven fabrication services, each with a **Request a quote** action that ticks the matching box on the form below and jumps to it. |
 | Quote request | Carries the current material, the selected colour and every saved favourite into the request, so the quote matches what was on screen. |
 
 ## Colour data

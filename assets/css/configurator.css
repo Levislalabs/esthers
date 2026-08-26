@@ -807,23 +807,38 @@
 
 /* Explicit column counts rather than auto-fit: there are exactly nine
    services, and a 3x3 fills without leaving an orphan cell. */
+/*
+ * Separators are borders on the cards, not a 1px grid gap over a lit
+ * container background. The gap trick paints any trailing empty cell in the
+ * last row, which shows up the moment the service count is not a multiple of
+ * the column count. Borders leave empty cells invisible, so the list can grow
+ * or shrink without anyone having to think about the grid.
+ */
 .services {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 1px;
-  background: var(--line-soft);
-  border-block: 1px solid var(--line-soft);
+  border-top: 1px solid var(--line-soft);
 }
-@media (min-width: 640px)  { .services { grid-template-columns: repeat(2, 1fr); } }
-@media (min-width: 1000px) { .services { grid-template-columns: repeat(3, 1fr); } }
 
 .service {
   background: var(--bg);
   padding: 34px 30px 38px;
   position: relative;
+  border-bottom: 1px solid var(--line-soft);
   transition: background var(--dur) var(--ease);
 }
 .service:hover { background: var(--bg-panel); }
+
+@media (min-width: 640px) {
+  .services { grid-template-columns: repeat(2, 1fr); }
+  .service { border-right: 1px solid var(--line-soft); }
+  .service:nth-child(2n) { border-right: 0; }
+}
+@media (min-width: 1000px) {
+  .services { grid-template-columns: repeat(3, 1fr); }
+  .service:nth-child(2n) { border-right: 1px solid var(--line-soft); }
+  .service:nth-child(3n) { border-right: 0; }
+}
 
 .service__index {
   font-family: var(--font-mono);
