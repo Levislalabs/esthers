@@ -29,7 +29,7 @@ python3 -m http.server 8000    # then visit http://localhost:8000
 | Zinc | Architectural renderings of Natural, Pre-weathered, Quartz and Anthra zinc, each with a close-up texture strip on hover. |
 | Comparison tool | Twelve attributes across all eight materials. Sticky header and attribute column, meters that fill on scroll, and column focus tied to the current material. |
 | Services | The seven fabrication services, each with a **Request a quote** action that ticks the matching box on the form below and jumps to it. |
-| Quote request | Carries the current material, the selected colour and every saved favourite into the request, so the quote matches what was on screen. |
+| Quote request | Contact details, project type, timeline, a multi-select material picker, an attachment field for drawings, and project details. A colour the visitor deliberately picked and any saved favourites ride along too. |
 
 ## Colour data
 
@@ -78,11 +78,15 @@ image found online is usually someone else's copyright.
 ## Quote requests
 
 There is no server behind this page. Submitting validates the form, composes the
-whole request as plain text - contact details, project type, timeline, chosen
-services, material, selected colour and saved favourites - and hands it to the
-visitor's email client via `mailto:`. **Copy as text** puts the same content on
+whole request as plain text (contact details, project type, timeline, chosen
+materials, drawing filenames, a deliberately picked colour and saved
+favourites) and hands it to the visitor's email client via `mailto:`. **Copy as text** puts the same content on
 the clipboard for anyone whose browser has no mail handler. Nothing is stored
 and nothing is posted anywhere.
+
+**A `mailto:` link cannot carry a file.** The drawing field therefore records
+what the visitor picked, lists it in the request, and tells them to attach the
+files to the message that opens. Real uploads need a backend.
 
 Change the destination address in one place: `CM.quoteEmail` in
 `assets/js/data/materials.js`. Wiring this to a real backend means replacing

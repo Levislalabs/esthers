@@ -408,47 +408,13 @@
         <p class="eyebrow">Request a Quote</p>
         <h2 class="headline">Tell us what you need</h2>
         <p class="lede">
-          Anything you have picked in the configurator comes along with the request, so we are quoting
-          the same material and finish you were looking at. The more you can tell us about dimensions
-          and site conditions, the tighter the number we can give you.
+          Tell us the material, the timeline and what you are building, and send a drawing if you
+          have one. The more you can tell us about dimensions and site conditions, the tighter the
+          number we can give you.
         </p>
       </div>
 
       <div class="quote reveal">
-
-        <!-- ------------------------------------------ what's attached -->
-        <aside class="quote__aside">
-          <div class="quote__card">
-            <p class="quote__card-title">Attached to this request</p>
-            <div class="quote__spec">
-              <div class="quote__spec-row" id="quote-material">
-                <span class="quote__spec-chip paint" id="quote-material-chip"></span>
-                <span>
-                  <span class="quote__spec-label">Material</span>
-                  <span class="quote__spec-value" id="quote-material-value"></span>
-                </span>
-              </div>
-              <div class="quote__spec-row" id="quote-colour">
-                <span class="quote__spec-chip paint" id="quote-colour-chip"></span>
-                <span>
-                  <span class="quote__spec-label">Selected colour</span>
-                  <span class="quote__spec-value" id="quote-colour-value"></span>
-                </span>
-              </div>
-              <div class="quote__spec-row">
-                <span>
-                  <span class="quote__spec-label">Collection</span>
-                  <span class="quote__spec-value" id="quote-collection-value"></span>
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div class="quote__card">
-            <p class="quote__card-title">Saved colours</p>
-            <div id="quote-favs"></div>
-          </div>
-        </aside>
 
         <!-- ---------------------------------------------------- form -->
         <form class="quote__form" id="quote-form" novalidate>
@@ -487,13 +453,38 @@
             </div>
 
             <div class="field field--wide">
-              <label class="field__label" for="q-material">Material preference <span class="field__optional">we can advise</span></label>
-              <select id="q-material" name="material"></select>
+              <span class="field__label" id="q-materials-label">Material
+                <span class="field__optional">pick as many as the project needs</span></span>
+              <div class="multi" id="q-materials">
+                <button class="multi__toggle" type="button" id="q-materials-toggle"
+                        aria-expanded="false" aria-controls="q-materials-panel"
+                        aria-labelledby="q-materials-label q-materials-value">
+                  <span class="multi__value" id="q-materials-value">Choose one or more materials</span>
+                  <svg class="multi__caret" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9.5 6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+                <div class="multi__panel" id="q-materials-panel" role="group"
+                     aria-labelledby="q-materials-label" hidden></div>
+              </div>
             </div>
 
             <div class="field field--wide">
-              <span class="field__label">What do you need made?</span>
-              <div class="svc-picker" id="svc-picker"></div>
+              <label class="field__label" for="q-drawing">Drawings or documents
+                <span class="field__optional">optional</span></label>
+              <div class="filedrop" id="q-drawing-drop">
+                <input id="q-drawing" name="drawing" type="file" multiple>
+                <span class="filedrop__icon">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16.5V4m0 0L7.5 8.5M12 4l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 15.5v2.9A1.6 1.6 0 0 0 5.6 20h12.8a1.6 1.6 0 0 0 1.6-1.6v-2.9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+                </span>
+                <span class="filedrop__text">
+                  <strong>Choose files</strong>
+                  Site drawings, sketches, photos or a spec sheet. PDF, image, DWG or Word.
+                </span>
+              </div>
+              <ul class="filelist" id="q-drawing-list"></ul>
+              <p class="field__hint" id="q-drawing-hint" hidden>
+                Your email app cannot pick files up from a web page, so attach these to the message
+                that opens before you send it. We have listed them in the request so nothing gets missed.
+              </p>
             </div>
 
             <div class="field field--wide">

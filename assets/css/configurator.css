@@ -884,79 +884,9 @@
    9. QUOTE REQUEST
    ===================================================================== */
 
-.quote {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.45fr);
-  gap: clamp(28px, 4vw, 64px);
-  align-items: start;
-}
-@media (max-width: 980px) { .quote { grid-template-columns: 1fr; } }
-
-/* --- left rail: what the request carries --- */
-
-.quote__aside { display: grid; gap: 26px; position: sticky; top: 92px; }
-@media (max-width: 980px) { .quote__aside { position: static; } }
-
-.quote__card {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--bg-panel);
-  padding: 22px 22px 24px;
-}
-.quote__card-title {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  margin-bottom: 16px;
-}
-
-.quote__spec { display: grid; gap: 12px; }
-.quote__spec-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 13.4px;
-}
-.quote__spec-chip {
-  width: 30px; height: 30px;
-  border-radius: 8px;
-  flex: none;
-  overflow: hidden;
-  position: relative;
-  border: 1px solid var(--line);
-}
-.quote__spec-label {
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  letter-spacing: 0.13em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  display: block;
-  margin-bottom: 3px;
-}
-.quote__spec-value { color: var(--ink); }
-
-.quote__fav-list { display: flex; flex-wrap: wrap; gap: 7px; }
-.quote__fav {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  padding: 6px 12px 6px 6px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  color: var(--ink-muted);
-}
-.quote__fav-chip {
-  width: 18px; height: 18px;
-  border-radius: 5px;
-  flex: none;
-  overflow: hidden;
-  position: relative;
-}
-.quote__empty { font-size: 12.8px; color: var(--ink-faint); line-height: 1.6; }
+/* Single column since the summary rail was removed. The form is capped so
+   the fields do not stretch to a full 1440px and lose their reading rhythm. */
+.quote { max-width: 880px; }
 
 /* --- form --- */
 
@@ -1036,50 +966,157 @@
 }
 .field.is-invalid .field__error { display: block; }
 
-/* service checkboxes */
-.svc-picker {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
-  gap: 8px;
-}
-.svc-check {
-  position: relative;
+/* Multi-select material picker: a disclosure button over a checkbox group.
+   A native <select multiple> needs ctrl-click on desktop and collapses to an
+   unusable scroller on phones, so the dropdown wraps real checkboxes. */
+.multi { position: relative; }
+
+.multi__toggle {
+  width: 100%;
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 11px 13px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
   border-radius: 10px;
   border: 1px solid var(--line);
   background: var(--bg);
-  font-size: 12.8px;
-  line-height: 1.36;
+  font-size: 14px;
+  text-align: left;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.multi__toggle:hover { border-color: var(--line-strong); }
+.multi__toggle[aria-expanded="true"] { border-color: var(--accent-line); background: var(--bg-elevated); }
+
+.multi__value { color: var(--ink-faint); min-width: 0; }
+.multi.has-selection .multi__value { color: var(--ink); }
+
+.multi__caret {
+  width: 17px; height: 17px;
+  flex: none;
+  color: var(--ink-dim);
+  transition: transform var(--dur) var(--ease-out);
+}
+.multi__toggle[aria-expanded="true"] .multi__caret { transform: rotate(180deg); }
+
+/* An author `display` beats the UA stylesheet's [hidden] { display: none },
+   so the attribute has to be honoured explicitly or the panel never closes. */
+.multi__panel[hidden] { display: none; }
+
+.multi__panel {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  left: 0; right: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 7px;
+  display: grid;
+  gap: 3px;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-elevated);
+  box-shadow: 0 26px 54px -24px rgba(0, 0, 0, 1);
+  animation: multiIn 180ms var(--ease-out);
+}
+@keyframes multiIn {
+  from { opacity: 0; transform: translateY(-5px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.multi__opt {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 11px;
+  border-radius: 8px;
+  font-size: 13.4px;
   color: var(--ink-muted);
   cursor: pointer;
-  transition: all var(--dur-fast) var(--ease);
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
-.svc-check:hover { border-color: var(--line-strong); color: var(--ink); }
-.svc-check input {
+.multi__opt:hover { background: var(--bg-hover); color: var(--ink); }
+.multi__opt input {
   appearance: none;
   position: absolute;
   margin: 0; padding: 0; border: 0;
   width: 0; height: 0;
   opacity: 0;
 }
-.svc-check__box {
+.multi__opt-box {
   width: 15px; height: 15px;
   border-radius: 4px;
   border: 1px solid var(--line-strong);
   flex: none;
-  margin-top: 1px;
   display: grid;
   place-items: center;
   transition: all var(--dur-fast) var(--ease);
 }
-.svc-check__box svg { width: 10px; height: 10px; opacity: 0; transform: scale(0.5); transition: all var(--dur-fast) var(--ease-out); }
-.svc-check input:checked ~ .svc-check__box { background: var(--accent); border-color: var(--accent); }
-.svc-check input:checked ~ .svc-check__box svg { opacity: 1; transform: none; color: #0a0b0c; }
-.svc-check:has(input:checked) { border-color: var(--accent-line); background: var(--accent-soft); color: var(--ink); }
-.svc-check input:focus-visible ~ .svc-check__box { outline: 2px solid var(--accent); outline-offset: 2px; }
+.multi__opt-box svg { width: 10px; height: 10px; opacity: 0; transform: scale(0.5); transition: all var(--dur-fast) var(--ease-out); }
+.multi__opt input:checked ~ .multi__opt-box { background: var(--accent); border-color: var(--accent); }
+.multi__opt input:checked ~ .multi__opt-box svg { opacity: 1; transform: none; color: #0a0b0c; }
+.multi__opt:has(input:checked) { color: var(--ink); }
+.multi__opt input:focus-visible ~ .multi__opt-box { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.multi__chip {
+  width: 17px; height: 17px;
+  border-radius: 5px;
+  flex: none;
+  overflow: hidden;
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+/* --- drawing / document attachment --- */
+
+.filedrop {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  border-radius: 10px;
+  border: 1px dashed var(--line-strong);
+  background: var(--bg);
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.filedrop:hover { border-color: var(--accent-line); background: var(--bg-elevated); }
+
+/* The input covers the plate so the whole area is the click target. */
+.filedrop input[type="file"] {
+  position: absolute;
+  inset: 0;
+  width: 100%; height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.filedrop input[type="file"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 10px; }
+
+.filedrop__icon { width: 24px; height: 24px; color: var(--ink-dim); flex: none; }
+.filedrop__text { font-size: 12.6px; color: var(--ink-dim); line-height: 1.55; }
+.filedrop__text strong { display: block; color: var(--ink); font-weight: 400; font-size: 13.6px; margin-bottom: 2px; }
+
+.filelist { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+.filelist:empty { margin: 0; }
+.filelist li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--line-soft);
+  font-size: 12.4px;
+}
+.filelist__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filelist__size { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-faint); margin-left: auto; flex: none; }
+
+.field__hint {
+  font-size: 11.8px;
+  color: var(--ink-dim);
+  line-height: 1.55;
+  margin: 10px 0 0;
+}
 
 .quote__actions {
   display: flex;

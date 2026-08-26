@@ -375,4 +375,7 @@ CM.services = [
 CM.quoteEmail = 'quotes@esthers.example';
 
 CM.projectTypes = ['Residential', 'Commercial', 'Historic restoration', 'Not sure yet'];
-CM.timelines = ['As soon as possible', 'Within 1–3 months', 'Within 3–6 months', 'Planning / budgeting stage'];
+CM.timelines = ['As soon as possible', 'Within 3 days', 'Within 1 week', 'Within 2 weeks'];
+
+/* Accepted on the drawing attachment field. */
+CM.drawingTypes = '.pdf,.jpg,.jpeg,.png,.heic,.webp,.dwg,.dxf,.doc,.docx';

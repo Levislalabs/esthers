@@ -19,6 +19,7 @@
     favOnly: false,
     favourites: U.store.get(FAV_KEY, []),
     selected: null,      /* { collection, name, hex, metallic } */
+    colourChosen: false, /* true only after the visitor clicks a swatch */
     quoteText: '',
     patina: 0,
     patinaAuto: false
@@ -91,7 +92,6 @@
 
     renderDetail();
     renderColours({ resetSelection: true });
-    renderQuoteSummary();
     focusCompareColumn(id);
 
     /* Bring the rail card into view when selection is driven from elsewhere. */
@@ -254,10 +254,11 @@
     buildFilters();
 
     if (opts && opts.resetSelection) {
-      /* Keep the quote summary on a valid colour for the new collection. */
+      /* Seed a valid colour for the new collection, but this is a default and
+         not a choice, so it must not travel into the quote on its own. */
       var first = coll.colours[0];
       state.selected = { collection: coll.id, name: first.name, hex: first.hex, metallic: !!first.metallic };
-      renderQuoteSummary();
+      state.colourChosen = false;
     }
     renderSwatches();
   }
@@ -341,13 +342,13 @@
 
   function applyColour(collectionId, c) {
     state.selected = { collection: collectionId, name: c.name, hex: c.hex, metallic: !!c.metallic };
+    state.colourChosen = true;
     $$('#swatch-grid .swatch').forEach(function (card) {
       var on = card.dataset.colour === c.name;
       card.classList.toggle('is-selected', on);
       var b = $('.swatch__btn', card);
       if (b) b.setAttribute('aria-pressed', String(on));
     });
-    renderQuoteSummary();
     toast(c.hex, c.metallic, c.name + ' added to your quote request');
   }
 
@@ -373,7 +374,6 @@
 
     updateFavCount();
     renderDrawer();
-    renderQuoteSummary();
     if (state.favOnly) renderSwatches();
     toast(c.hex, c.metallic, added ? c.name + ' saved to favourites' : c.name + ' removed from favourites');
   }
@@ -719,14 +719,24 @@
     });
   }
 
-  /* Tick the matching service and drop the visitor into the form. */
+  /*
+   * Carry the service into the request. The checkbox list was removed, so the
+   * service name seeds the details field instead, and only when it is empty so
+   * a half-typed message is never overwritten.
+   */
   function requestQuoteFor(serviceId) {
-    var box = $('#quote-form input[name="service"][value="' + serviceId + '"]');
-    if (box && !box.checked) box.checked = true;
+    var svc = CM.services.filter(function (x) { return x.id === serviceId; })[0];
+    var details = $('#q-details');
+    if (svc && details && !details.value.trim()) {
+      details.value = svc.name + ': ';
+    }
     scrollToId('quote');
     window.setTimeout(function () {
-      var name = $('#q-name');
-      if (name && window.innerWidth > 760) name.focus({ preventScroll: true });
+      var target = (details && details.value.trim()) ? details : $('#q-name');
+      if (target && window.innerWidth > 760) {
+        target.focus({ preventScroll: true });
+        if (target === details) target.setSelectionRange(target.value.length, target.value.length);
+      }
     }, 620);
   }
 
@@ -735,21 +745,14 @@
      =================================================================== */
 
   function buildQuote() {
-    var picker = $('#svc-picker');
-    if (!picker) return;
+    var form = $('#quote-form');
+    if (!form) return;
 
-    picker.innerHTML = '';
-    CM.services.forEach(function (svc) {
-      picker.appendChild(el('label', { class: 'svc-check' }, [
-        el('input', { type: 'checkbox', name: 'service', value: svc.id }),
-        el('span', { class: 'svc-check__box', html: U.icon('check') }),
-        el('span', { text: svc.name })
-      ]));
-    });
+    buildMaterialPicker();
+    buildDrawingField();
 
     fillSelect($('#q-project-type'), CM.projectTypes, 'Select a project type');
     fillSelect($('#q-timeline'), CM.timelines, 'Select a timeline');
-    fillSelect($('#q-material'), CM.materials.map(function (m) { return m.name; }), 'No preference yet');
 
     $('#quote-form').addEventListener('submit', submitQuote);
     $('#quote-reset').addEventListener('click', resetQuote);
@@ -764,7 +767,117 @@
       });
     });
 
-    renderQuoteSummary();
+  }
+
+  /*
+   * Material picker. Projects regularly mix two materials, so this is a
+   * checkbox group behind a disclosure button rather than a single select.
+   */
+  function buildMaterialPicker() {
+    var panel = $('#q-materials-panel');
+    var toggle = $('#q-materials-toggle');
+    if (!panel || !toggle) return;
+
+    panel.innerHTML = '';
+    CM.materials.forEach(function (m) {
+      panel.appendChild(el('label', { class: 'multi__opt' }, [
+        el('input', {
+          type: 'checkbox', name: 'material', value: m.id,
+          onchange: syncMaterialLabel
+        }),
+        el('span', { class: 'multi__opt-box', html: U.icon('check') }),
+        el('span', { class: 'multi__chip paint', style: { '--c': m.swatch } }),
+        el('span', { text: m.name })
+      ]));
+    });
+
+    toggle.addEventListener('click', function () {
+      setMaterialPanel(toggle.getAttribute('aria-expanded') !== 'true');
+    });
+
+    /* Close on outside click and on Escape, like any other menu. */
+    document.addEventListener('click', function (ev) {
+      if (!$('#q-materials').contains(ev.target)) setMaterialPanel(false);
+    });
+    panel.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape') { setMaterialPanel(false); toggle.focus(); }
+    });
+
+    syncMaterialLabel();
+  }
+
+  function setMaterialPanel(open) {
+    var panel = $('#q-materials-panel');
+    var toggle = $('#q-materials-toggle');
+    if (!panel) return;
+    panel.hidden = !open;
+    toggle.setAttribute('aria-expanded', String(open));
+  }
+
+  function selectedMaterials() {
+    return $$('#q-materials-panel input:checked').map(function (b) {
+      var m = CM.materials.filter(function (x) { return x.id === b.value; })[0];
+      return m ? m.name : b.value;
+    });
+  }
+
+  function syncMaterialLabel() {
+    var names = selectedMaterials();
+    var value = $('#q-materials-value');
+    var wrap = $('#q-materials');
+    if (!value) return;
+
+    wrap.classList.toggle('has-selection', names.length > 0);
+    if (!names.length) {
+      value.textContent = 'Choose one or more materials';
+    } else if (names.length <= 2) {
+      value.textContent = names.join(' and ');
+    } else {
+      value.textContent = names.length + ' materials selected';
+    }
+  }
+
+  /*
+   * Drawing attachment. A mailto: link cannot carry a file, so the picked
+   * files are listed in the request and the customer is told to attach them
+   * to the message that opens. Nothing here pretends to upload.
+   */
+  function buildDrawingField() {
+    var input = $('#q-drawing');
+    if (!input) return;
+    input.setAttribute('accept', CM.drawingTypes);
+    input.addEventListener('change', renderDrawingList);
+  }
+
+  function fileSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' KB';
+    return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+  }
+
+  function renderDrawingList() {
+    var input = $('#q-drawing');
+    var list = $('#q-drawing-list');
+    var hint = $('#q-drawing-hint');
+    if (!list) return;
+
+    var files = input.files ? Array.prototype.slice.call(input.files) : [];
+    list.innerHTML = '';
+    files.forEach(function (f) {
+      list.appendChild(el('li', {}, [
+        el('span', { class: 'filelist__name', text: f.name }),
+        el('span', { class: 'filelist__size', text: fileSize(f.size) })
+      ]));
+    });
+    if (hint) hint.hidden = files.length === 0;
+  }
+
+  function drawingNames() {
+    var input = $('#q-drawing');
+    if (!input || !input.files) return [];
+    return Array.prototype.slice.call(input.files).map(function (f) {
+      return f.name + ' (' + fileSize(f.size) + ')';
+    });
   }
 
   function fillSelect(node, options, placeholder) {
@@ -774,60 +887,6 @@
     options.forEach(function (o) {
       node.appendChild(el('option', { value: o, text: o }));
     });
-  }
-
-  /*
-   * The left rail mirrors what the request will actually carry: the material
-   * on screen, the colour last selected, and every saved favourite.
-   */
-  function renderQuoteSummary() {
-    var m = material();
-    var coll = collection();
-
-    var matRow = $('#quote-material');
-    if (matRow) {
-      $('#quote-material-value').textContent = m.name;
-      $('#quote-collection-value').textContent = coll.name;
-      var chip = $('#quote-material-chip');
-      chip.className = 'quote__spec-chip paint';
-      chip.style.setProperty('--c', m.swatch);
-    }
-
-    var colourRow = $('#quote-colour');
-    if (colourRow) {
-      var sel = state.selected;
-      if (sel) {
-        colourRow.style.display = '';
-        $('#quote-colour-value').textContent = sel.name + ' · ' + sel.hex;
-        var cchip = $('#quote-colour-chip');
-        cchip.className = 'quote__spec-chip paint' + (sel.metallic ? ' paint--metallic' : '');
-        cchip.style.setProperty('--c', sel.hex);
-      } else {
-        colourRow.style.display = 'none';
-      }
-    }
-
-    var favWrap = $('#quote-favs');
-    if (!favWrap) return;
-    favWrap.innerHTML = '';
-    var records = state.favourites.map(favRecord).filter(Boolean);
-
-    if (!records.length) {
-      favWrap.appendChild(el('p', { class: 'quote__empty',
-        text: 'No saved colours yet. Tap the heart on any swatch and it will be attached to your request.' }));
-      return;
-    }
-    var list = el('div', { class: 'quote__fav-list' });
-    records.forEach(function (r) {
-      list.appendChild(el('span', { class: 'quote__fav' }, [
-        el('span', {
-          class: 'quote__fav-chip paint' + (r.colour.metallic ? ' paint--metallic' : ''),
-          style: { '--c': r.colour.hex }
-        }),
-        el('span', { text: r.colour.name })
-      ]));
-    });
-    favWrap.appendChild(list);
   }
 
   function markInvalid(input, invalid) {
@@ -862,11 +921,8 @@
   function buildQuoteText() {
     var form = $('#quote-form');
     var val = function (id) { return ($(id).value || '').trim(); };
-
-    var services = $$('#svc-picker input:checked').map(function (b) {
-      var svc = CM.services.filter(function (s) { return s.id === b.value; })[0];
-      return svc ? svc.name : b.value;
-    });
+    var materials = selectedMaterials();
+    var drawings = drawingNames();
 
     var favs = state.favourites.map(favRecord).filter(Boolean).map(function (r) {
       return r.colour.name + ' (' + r.collection.name + ', ' + r.colour.hex + ')';
@@ -882,18 +938,22 @@
       '',
       'Project type: ' + (val('#q-project-type') || 'not given'),
       'Timeline:     ' + (val('#q-timeline') || 'not given'),
-      'Services:     ' + (services.length ? services.join(', ') : 'not given'),
       '',
-      'Material preference: ' + (val('#q-material') || 'no preference'),
-      'Viewing in configurator: ' + material().name + ' / ' + collection().name
+      'Materials:    ' + (materials.length ? materials.join(', ') : 'not specified')
     ];
 
-    if (state.selected) {
-      lines.push('Selected colour: ' + state.selected.name + ' (' + state.selected.hex + ')');
+    /* Only a colour the visitor actually clicked, never the collection default. */
+    if (state.colourChosen && state.selected) {
+      lines.push('Colour:       ' + state.selected.name + ' (' + state.selected.hex + ')');
     }
     if (favs.length) {
       lines.push('', 'Saved colours:');
       favs.forEach(function (f) { lines.push('  · ' + f); });
+    }
+
+    if (drawings.length) {
+      lines.push('', 'Drawings attached to this email:');
+      drawings.forEach(function (d) { lines.push('  · ' + d); });
     }
 
     lines.push('', 'Project details:', val('#q-details'));
@@ -925,6 +985,9 @@
     var form = $('#quote-form');
     form.reset();
     form.classList.remove('is-sent');
+    syncMaterialLabel();
+    renderDrawingList();
+    setMaterialPanel(false);
     $$('#quote-form .field').forEach(function (f) { f.classList.remove('is-invalid'); });
     scrollToId('quote');
   }
@@ -1038,7 +1101,6 @@
       U.store.set(FAV_KEY, state.favourites);
       updateFavCount();
       renderDrawer();
-      renderQuoteSummary();
       renderSwatches();
     });
 
