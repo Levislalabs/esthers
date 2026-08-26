@@ -1,5 +1,5 @@
 /* =========================================================================
-   Esther's — home.css
+   Esther's - home.css
    Homepage: hero, credibility strip, featured work gallery, image slots
    Uses the tokens defined in base.css; defines no new palette.
    ========================================================================= */
@@ -48,7 +48,7 @@
   margin-top: 32px;
 }
 
-/* Establishment line — small, factual, sits under the buttons */
+/* Establishment line - small, factual, sits under the buttons */
 .hero__since {
   margin-top: 26px;
   font-family: var(--font-mono);

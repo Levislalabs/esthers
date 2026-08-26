@@ -1,5 +1,5 @@
 /*
- * app.js — configurator wiring.
+ * app.js - configurator wiring.
  *
  * One state object drives every panel. Anything that changes state calls the
  * relevant render function; nothing reads the DOM back as a source of truth.
@@ -521,7 +521,7 @@
     var copy = $('#patina-copy');
     copy.classList.add('is-swapping');
     window.setTimeout(function () {
-      $('#patina-stage-name').textContent = s.stage + ' — ' + s.title;
+      $('#patina-stage-name').textContent = s.stage + ' · ' + s.title;
       $('#patina-body').textContent = s.body;
       copy.style.setProperty('--patina-accent', s.accent);
       copy.classList.remove('is-swapping');
@@ -578,7 +578,7 @@
       ['heal', 'Self-healing surface',
        'The patina re-forms over scratches and cut edges. Handling marks that would be permanent on a painted panel disappear over a few months of weathering.'],
       ['hourglass', 'Extremely long lifespan',
-       'Correctly detailed and free-draining, architectural zinc has a documented service life of 80 to 100 years and more — it outlives the fasteners and sealants around it.'],
+       'Correctly detailed and free-draining, architectural zinc has a documented service life of 80 to 100 years and more. It outlives the fasteners and sealants around it.'],
       ['leaf', 'Low maintenance',
        'No cleaning schedule, no recoating, no touch-up. The only real requirement is a ventilated back face so moisture cannot sit against the underside.'],
       ['gem', 'Luxury architectural appearance',
@@ -672,7 +672,7 @@
     });
   }
 
-  /* Meters fill on first scroll into view — the animation is the payoff. */
+  /* Meters fill on first scroll into view - the animation is the payoff. */
   function observeMeters() {
     var table = $('#compare-table');
     if (!table) return;
@@ -877,15 +877,15 @@
       '',
       'Name:      ' + val('#q-name'),
       'Email:     ' + val('#q-email'),
-      'Phone:     ' + (val('#q-phone') || '—'),
-      'Location:  ' + (val('#q-location') || '—'),
+      'Phone:     ' + (val('#q-phone') || 'not given'),
+      'Location:  ' + (val('#q-location') || 'not given'),
       '',
-      'Project type: ' + (val('#q-project-type') || '—'),
-      'Timeline:     ' + (val('#q-timeline') || '—'),
-      'Services:     ' + (services.length ? services.join(', ') : '—'),
+      'Project type: ' + (val('#q-project-type') || 'not given'),
+      'Timeline:     ' + (val('#q-timeline') || 'not given'),
+      'Services:     ' + (services.length ? services.join(', ') : 'not given'),
       '',
-      'Material preference: ' + (val('#q-material') || '—'),
-      'Viewing in configurator: ' + material().name + ' — ' + collection().name
+      'Material preference: ' + (val('#q-material') || 'no preference'),
+      'Viewing in configurator: ' + material().name + ' / ' + collection().name
     ];
 
     if (state.selected) {
@@ -897,7 +897,7 @@
     }
 
     lines.push('', 'Project details:', val('#q-details'));
-    lines.push('', '— Sent from the Esther\'s materials configurator');
+    lines.push('', 'Sent from the Esther\'s materials configurator');
 
     if (form) { /* keeps the linter honest about the unused binding */ }
     return lines.join('\n');
@@ -911,7 +911,7 @@
     }
 
     var body = buildQuoteText();
-    var subject = 'Quote request — ' + $('#q-name').value.trim();
+    var subject = 'Quote request from ' + $('#q-name').value.trim();
     var href = 'mailto:' + CM.quoteEmail +
                '?subject=' + encodeURIComponent(subject) +
                '&body=' + encodeURIComponent(body);
@@ -945,7 +945,7 @@
       document.body.appendChild(ta);
       ta.select();
       try { document.execCommand('copy'); done(); }
-      catch (e) { toast('#d4574f', false, 'Could not copy — select the text manually'); }
+      catch (e) { toast('#d4574f', false, 'Could not copy, select the text manually'); }
       document.body.removeChild(ta);
     }
   }

@@ -1,5 +1,5 @@
 /*
- * util.js — colour maths, DOM helpers and the icon set.
+ * util.js - colour maths, DOM helpers and the icon set.
  * Loaded before every other script; no dependencies.
  */
 window.CM = window.CM || {};
@@ -82,7 +82,7 @@ window.CM = window.CM || {};
   /* ---------------------------------------------------------------- dom */
 
   /*
-   * Custom properties have to go through setProperty — assigning them onto a
+   * Custom properties have to go through setProperty - assigning them onto a
    * CSSStyleDeclaration silently does nothing, which shows up as every swatch
    * falling back to its default colour.
    */
@@ -142,7 +142,7 @@ window.CM = window.CM || {};
 
   /* ------------------------------------------------------------ storage */
 
-  /* localStorage is unavailable in some privacy modes — degrade to memory. */
+  /* localStorage is unavailable in some privacy modes - degrade to memory. */
   var memoryStore = {};
   var store = {
     get: function (key, fallback) {

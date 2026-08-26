@@ -1,6 +1,6 @@
 /* =========================================================================
-   Esther's — Materials & Colour Configurator
-   configurator.css — selector rail, spec panel, colour grid, patina,
+   Esther's - Materials & Colour Configurator
+   configurator.css - selector rail, spec panel, colour grid, patina,
                       zinc, comparison matrix, services, quote request
    ========================================================================= */
 
@@ -8,7 +8,7 @@
    0. BLOCK PROMOTION
    Most of this UI is built from <span> so it can nest inside <button>
    without invalid markup. Spans are inline by default, which silently
-   drops width, height and aspect-ratio — promote them here, once.
+   drops width, height and aspect-ratio - promote them here, once.
    ===================================================================== */
 
 .mat-card__chip,
@@ -262,7 +262,7 @@
   pointer-events: none;
 }
 
-/* Fine paint tooth — fractal noise keeps flat colours from reading as plastic */
+/* Fine paint tooth - fractal noise keeps flat colours from reading as plastic */
 .paint::after {
   content: "";
   position: absolute;
@@ -301,7 +301,7 @@
   border-radius: var(--radius-lg);
   background: var(--bg-raised);
   overflow: hidden;
-  /* Collapsed by default — expanded by "View Available Colours" */
+  /* Collapsed by default - expanded by "View Available Colours" */
   display: grid;
   grid-template-rows: 0fr;
   opacity: 0;

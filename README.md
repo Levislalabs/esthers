@@ -1,6 +1,6 @@
 # esthers
 
-Esther's Sheet Metal — company site and materials configurator.
+Esther's Sheet Metal - company site and materials configurator.
 
 A single-page, dependency-free site for a custom architectural sheet metal
 shop in Burnaby, BC. Leads with the work and the services, then hands the
@@ -20,7 +20,7 @@ python3 -m http.server 8000    # then visit http://localhost:8000
 | Section | Behaviour |
 | --- | --- |
 | Hero + credibility | The pitch alongside a photograph of real work, followed by four verifiable facts about the shop. |
-| Our work | Gallery of recent fabrication. Every image is an **image slot** — see below. |
+| Our work | Gallery of recent fabrication. Every image is an **image slot** - see below. |
 | Process | The four steps from measurement to pickup, and what the customer needs to supply at each. |
 | Material selector | Eight materials on a snap-scrolling rail. Selecting one re-renders the spec panel, swaps the colour collection, updates what the quote request carries, and cascades an accent colour through the page. |
 | Spec panel | Gauges, finish description, applications, warranty, thickness, durability, cost category and maintenance for each material, plus feature pills for PVDF / aluminum / copper / zinc. |
@@ -42,7 +42,7 @@ all shift perceived colour, and some colours are regional or mill-order only.
 Confirm against a physical metal chip before ordering. This caveat is surfaced
 in the UI on every collection and in the footer.
 
-To correct a value or add a colour, edit `assets/js/data/colours.js` — nothing
+To correct a value or add a colour, edit `assets/js/data/colours.js` - nothing
 else needs to change.
 
 ## Structure
@@ -78,15 +78,15 @@ image found online is usually someone else's copyright.
 ## Quote requests
 
 There is no server behind this page. Submitting validates the form, composes the
-whole request as plain text — contact details, project type, timeline, chosen
-services, material, selected colour and saved favourites — and hands it to the
+whole request as plain text - contact details, project type, timeline, chosen
+services, material, selected colour and saved favourites - and hands it to the
 visitor's email client via `mailto:`. **Copy as text** puts the same content on
 the clipboard for anyone whose browser has no mail handler. Nothing is stored
 and nothing is posted anywhere.
 
 Change the destination address in one place: `CM.quoteEmail` in
 `assets/js/data/materials.js`. Wiring this to a real backend means replacing
-`submitQuote()` in `assets/js/app.js` with a `fetch` to your endpoint — the
+`submitQuote()` in `assets/js/app.js` with a `fetch` to your endpoint - the
 composer that builds the request body is already separate.
 
 ## Rendering approach

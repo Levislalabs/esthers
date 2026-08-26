@@ -1,10 +1,10 @@
 /* =========================================================================
-   Esther's — Materials & Colour Configurator
-   base.css — design tokens, resets, typography, shell chrome
+   Esther's - Materials & Colour Configurator
+   base.css - design tokens, resets, typography, shell chrome
    ========================================================================= */
 
 :root {
-  /* Surfaces — near-black with a cool cast, layered rather than flat */
+  /* Surfaces - near-black with a cool cast, layered rather than flat */
   --bg:            #0a0b0c;
   --bg-raised:     #101214;
   --bg-panel:      #15181b;
@@ -22,7 +22,7 @@
   --ink-dim:       #6d767d;
   --ink-faint:     #4b5257;
 
-  /* Accent — overridden per material at runtime */
+  /* Accent - overridden per material at runtime */
   --accent:        #9aafc4;
   --accent-soft:   rgba(154, 175, 196, 0.14);
   --accent-line:   rgba(154, 175, 196, 0.38);
@@ -31,7 +31,7 @@
   --metal-hi:      rgba(255, 255, 255, 0.55);
   --metal-lo:      rgba(0, 0, 0, 0.45);
 
-  /* Motion — one shared easing curve keeps the whole UI feeling like one object */
+  /* Motion - one shared easing curve keeps the whole UI feeling like one object */
   --ease:          cubic-bezier(0.22, 0.61, 0.36, 1);
   --ease-out:      cubic-bezier(0.16, 1, 0.3, 1);
   --dur-fast:      180ms;
@@ -207,7 +207,7 @@ h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 300; margin: 0; 
 /* Layout lives in home.css; this file keeps only the ambient wash and the
    gradient treatment on the emphasised words. */
 
-/* Slow-drifting radial wash — reads as raking light across metal */
+/* Slow-drifting radial wash - reads as raking light across metal */
 .hero::before {
   content: "";
   position: absolute;

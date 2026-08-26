@@ -1,5 +1,5 @@
 /*
- * render.js — SVG scene generation for the copper patina timeline and the
+ * render.js - SVG scene generation for the copper patina timeline and the
  * zinc finish renderings.
  *
  * Each scene is built from flat polygons filled with colour-derived gradients,
@@ -62,7 +62,7 @@ window.CM = window.CM || {};
         '<stop offset="1" stop-color="', p.dark, '"/>',
       '</linearGradient>',
 
-      /* Sky above / ground below — the single strongest metal cue */
+      /* Sky above / ground below - the single strongest metal cue */
       '<linearGradient id="', id, '-env" x1="0" y1="0" x2="0.2" y2="1">',
         '<stop offset="0" stop-color="#d5e6f5" stop-opacity="', (m ? 0.34 : 0.20), '"/>',
         '<stop offset="0.42" stop-color="#d5e6f5" stop-opacity="0"/>',
@@ -89,7 +89,7 @@ window.CM = window.CM || {};
         '<stop offset="1" stop-color="#000" stop-opacity="0"/>',
       '</radialGradient>',
 
-      /* Paint tooth — subtle, but it stops large faces reading as vector fill */
+      /* Paint tooth - subtle, but it stops large faces reading as vector fill */
       '<filter id="', id, '-grain" x="-5%" y="-5%" width="110%" height="110%">',
         '<feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" result="n"/>',
         '<feColorMatrix type="saturate" values="0" in="n" result="ng"/>',
@@ -140,7 +140,7 @@ window.CM = window.CM || {};
     /* crown wash on top */
     s.push(poly([[L, topY], [L + d, topY - r], [R + d, topY - r], [R, topY]], BRICK.top));
 
-    /* brick coursing — mortar joints, front face then side face */
+    /* brick coursing - mortar joints, front face then side face */
     var y, i;
     for (i = 1; i < 7; i++) {
       y = topY + i * 33;
@@ -179,7 +179,7 @@ window.CM = window.CM || {};
     var gloss = Math.max(0, 0.85 - index * 0.19);
     var s = [];
 
-    /* Cropped to the assembly rather than the full canvas — the cap should
+    /* Cropped to the assembly rather than the full canvas - the cap should
        fill its frame, not float in the middle of it. */
     s.push('<svg viewBox="150 170 560 420" role="img" preserveAspectRatio="xMidYMid meet">');
     s.push(defs(id, p));
@@ -218,7 +218,7 @@ window.CM = window.CM || {};
              '" stroke="' + p.spec + '" stroke-width="2.4" stroke-linecap="round" opacity="' + (0.35 + gloss * 0.6) + '"/>');
     }
 
-    /* Patina blooms — count and size grow with the stage. Clipped to the
+    /* Patina blooms - count and size grow with the stage. Clipped to the
        front slope so the mottling stays on the metal. */
     s.push('<clipPath id="' + id + '-crown"><polygon points="' + pts([A, B, F, E]) + '"/></clipPath>');
     var blooms = index === 0 ? 0 : index * 5;
@@ -301,7 +301,7 @@ window.CM = window.CM || {};
   }
 
   /*
-   * Close-up macro texture strip — rolled grain plus a specular band.
+   * Close-up macro texture strip - rolled grain plus a specular band.
    * Rendered as a gradient stack rather than an image so it recolours freely.
    */
   function zincMacro(finish) {
