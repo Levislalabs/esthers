@@ -751,7 +751,6 @@
     buildMaterialPicker();
     buildDrawingField();
 
-    fillSelect($('#q-project-type'), CM.projectTypes, 'Select a project type');
     fillSelect($('#q-timeline'), CM.timelines, 'Select a timeline');
 
     $('#quote-form').addEventListener('submit', submitQuote);
@@ -999,13 +998,13 @@
     var lines = [
       'QUOTE REQUEST',
       '',
+      'PO Number: ' + (val('#q-po') || 'not given'),
       'Name:      ' + val('#q-name'),
       'Email:     ' + val('#q-email'),
       'Phone:     ' + (val('#q-phone') || 'not given'),
       'Location:  ' + (val('#q-location') || 'not given'),
       '',
-      'Project type: ' + (val('#q-project-type') || 'not given'),
-      'Timeline:     ' + (val('#q-timeline') || 'not given'),
+      'Timeline:  ' + (val('#q-timeline') || 'not given'),
       ''
     ];
 
