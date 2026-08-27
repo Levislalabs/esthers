@@ -88,8 +88,10 @@ and nothing is posted anywhere.
 what the visitor picked, lists it in the request, and tells them to attach the
 files to the message that opens. Real uploads need a backend.
 
-Change the destination address in one place: `CM.quoteEmail` in
-`assets/js/data/materials.js`. Wiring this to a real backend means replacing
+Requests are addressed to `counter@esthers.ca` and `manager@esthers.ca`, both
+on the To line. Change the destinations in one place: `CM.quoteEmail` in
+`assets/js/data/materials.js` - a single address as a string, or a list of
+them. Wiring this to a real backend means replacing
 `submitQuote()` in `assets/js/app.js` with a `fetch` to your endpoint - the
 composer that builds the request body is already separate.
 

@@ -365,8 +365,10 @@ CM.services = [
   }
 ];
 
-/* Where quote requests are addressed. Change this one line to reroute them. */
-CM.quoteEmail = 'quotes@esthers.example';
+/* Where quote requests are addressed. Every address listed goes on the To
+   line of the message the visitor's mail app opens. Change this one line to
+   reroute them. */
+CM.quoteEmail = ['counter@esthers.ca', 'manager@esthers.ca'];
 
 CM.timelines = ['As soon as possible', 'Within 3 days', 'Within 1 week', 'Within 2 weeks'];
 

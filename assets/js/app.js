@@ -1045,7 +1045,10 @@
 
     var body = buildQuoteText();
     var subject = 'Quote request from ' + $('#q-name').value.trim();
-    var href = 'mailto:' + CM.quoteEmail +
+    /* Several addresses are allowed; a comma-separated list is what a mailto:
+       To field takes, so every one of them is on the message. */
+    var to = [].concat(CM.quoteEmail).join(',');
+    var href = 'mailto:' + to +
                '?subject=' + encodeURIComponent(subject) +
                '&body=' + encodeURIComponent(body);
 
@@ -1067,7 +1070,10 @@
   }
 
   function copyQuote() {
-    var text = state.quoteText || buildQuoteText();
+    /* Copying is what a visitor with no mail handler falls back to, so the
+       text has to carry the address the mailto: link would have supplied. */
+    var text = 'Send to: ' + [].concat(CM.quoteEmail).join(', ') + '\n\n' +
+               (state.quoteText || buildQuoteText());
     var done = function () { toast(material().accent, false, 'Request copied to your clipboard'); };
 
     if (navigator.clipboard && navigator.clipboard.writeText) {
