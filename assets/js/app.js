@@ -998,11 +998,11 @@
     var lines = [
       'QUOTE REQUEST',
       '',
-      'PO Number: ' + (val('#q-po') || 'not given'),
       'Name:      ' + val('#q-name'),
+      'Company:   ' + (val('#q-company') || 'not given'),
       'Email:     ' + val('#q-email'),
+      'PO / Job:  ' + (val('#q-po') || 'not given'),
       'Phone:     ' + (val('#q-phone') || 'not given'),
-      'Location:  ' + (val('#q-location') || 'not given'),
       '',
       'Timeline:  ' + (val('#q-timeline') || 'not given'),
       ''
