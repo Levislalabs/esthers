@@ -362,12 +362,6 @@ CM.services = [
           'board-and-batten, lap siding, plank and standing rib profiles in over 80 colours and ' +
           'woodgrain finishes. Supplied with the closures, trims, clips and fasteners the ' +
           'installation calls for.'
-  },
-  {
-    id: 'commercial',
-    name: 'Commercial Sheet Metal',
-    body: 'Large-scale fabrication for commercial projects. HVAC enclosures, ductwork and custom ' +
-          'assemblies.'
   }
 ];
 

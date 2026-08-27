@@ -1109,7 +1109,11 @@
   overflow: hidden;
   position: relative;
   border: 1px solid var(--line-strong);
-  background: var(--bg-elevated);
+  /* Must stay on --c. A plain `background` here lands later in the file than
+     .paint and silently wins, which left every chip showing the empty-state
+     grey no matter which colour was picked. The fallback covers "not decided
+     yet", where --c is never set. */
+  background-color: var(--c, var(--bg-elevated));
 }
 
 .matcolour select {
