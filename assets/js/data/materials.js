@@ -25,7 +25,7 @@ CM.materials = [
       { label: 'Best Applications', value: 'Residential caps, flashing, trim', detail: 'Custom chimney caps, counter flashing, wall caps, drip edge, valley and accessory trim.' },
       { label: 'Warranty', value: 'Up to 40-year limited paint film', detail: 'Covers film integrity, chalk and fade within stated limits. Terms vary by colour and region.' },
       { label: 'Thickness', value: '0.0187" / 0.475 mm', detail: 'Lightest stocked steel gauge. Best on smaller pans and well-supported profiles.' },
-      { label: 'Durability', value: 'Good', detail: 'Hard finish with strong scratch resistance. More prone to oil-canning and denting than heavier gauges.' },
+      { label: 'Durability', value: 'Good', detail: 'Baked finish over a light substrate. More prone to oil-canning and denting than heavier gauges, and it marks more readily in handling than a PVDF panel.' },
       { label: 'Cost Category', value: '$ Entry', detail: 'Lowest installed cost of the painted steel options.' },
       { label: 'Maintenance', value: 'Low, annual rinse', detail: 'Rinse to clear debris and salts. Touch up field cuts and scratches to prevent edge creep.' }
     ]
@@ -280,7 +280,7 @@ CM.comparison = {
     {
       id: 'scratch', label: 'Scratch Resistance', icon: 'diamond', type: 'rating',
       hint: 'Resistance to marking during fabrication, transport and installation.',
-      values: { 'smp-26': 5, 'smp-24': 5, 'smp-22': 5, 'pvdf-24': 3, 'pvdf-22': 3, 'aluminum': 3, 'copper': 2, 'zinc': 4 },
+      values: { 'smp-26': 3, 'smp-24': 3, 'smp-22': 3, 'pvdf-24': 5, 'pvdf-22': 5, 'aluminum': 3, 'copper': 2, 'zinc': 4 },
       footnotes: { 'zinc': 'Self-healing, scratches close as the patina re-forms.', 'copper': 'Marks show when new, then disappear into the patina.' }
     },
     {
