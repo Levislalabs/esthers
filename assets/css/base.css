@@ -163,14 +163,83 @@ h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 300; margin: 0; 
   height: 66px;
 }
 
-.brand { display: flex; align-items: baseline; gap: 10px; text-decoration: none; color: var(--ink); }
-.brand__mark { font-family: var(--font-display); font-size: 1.22rem; letter-spacing: -0.02em; font-weight: 400; }
-.brand__sub {
+/* ------------------------------------------------------------------ logo */
+
+/* The mark itself is one <symbol> in index.html; everything here is the
+   lockup around it. Two sizes, one set of rules. */
+
+.sr-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+.logo {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  color: var(--ink);
+}
+
+.logo__mark { flex: none; display: block; }
+
+.logo__type { display: flex; flex-direction: column; line-height: 1; }
+
+/* Brushed steel, swept. The gradient is laid down at twice the width of the
+   type with its highlight parked off to the left, so moving the background
+   on hover draws the specular band across the letters - the same lighting
+   idea the swatches and the SVG scenes use, applied to the name. */
+.logo__name {
+  font-family: var(--font-display);
+  font-weight: 500;
+  text-transform: uppercase;
+  /* No stop is darker than #78838e: at the far end of the sweep that shade is
+     what lands on the letters, and it still clears 5.1:1 on the page ground.
+     A prettier, darker tail would take the company name below AA. */
+  background: linear-gradient(100deg,
+    #7f8c99 0%, #b9c5d0 16%, #ffffff 27%, #d3dce4 38%,
+    var(--accent) 58%, #828d99 82%, #78838e 100%);
+  background-size: 230% 100%;
+  background-position: 8% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  transition: background-position 1100ms var(--ease-out);
+}
+.logo:hover .logo__name,
+.logo:focus-visible .logo__name { background-position: 92% 0; }
+
+.logo__sub {
   font-family: var(--font-mono);
-  font-size: 9.5px;
-  letter-spacing: 0.2em;
   text-transform: uppercase;
   color: var(--ink-faint);
+  transition: color var(--dur) var(--ease);
+}
+.logo:hover .logo__sub { color: var(--ink-dim); }
+
+/* --- in the top bar --- */
+
+.logo--nav { gap: 11px; }
+.logo--nav .logo__mark { width: 27px; height: 27px; }
+.logo--nav .logo__name { font-size: 15.5px; letter-spacing: 0.055em; margin-bottom: 4px; }
+.logo--nav .logo__sub  { font-size: 8.5px; letter-spacing: 0.29em; }
+
+@media (max-width: 420px) {
+  .logo--nav .logo__mark { width: 23px; height: 23px; }
+  .logo--nav .logo__name { font-size: 14px; }
+  .logo--nav .logo__sub  { font-size: 8px; letter-spacing: 0.24em; }
+}
+
+/* --- closing the page --- */
+
+.logo--foot { gap: 13px; }
+.logo--foot .logo__mark { width: 34px; height: 34px; }
+.logo--foot .logo__name { font-size: 1.2rem; letter-spacing: 0.05em; margin-bottom: 5px; }
+.logo--foot .logo__sub  { font-size: 9px; letter-spacing: 0.32em; }
+
+/* One pass of the highlight across the name shortly after the page settles,
+   then it parks back where it started. Once, never looping. The global
+   reduced-motion rule collapses it to nothing. */
+@keyframes logoGlint {
+  0%   { background-position: 8% 0; }
+  55%  { background-position: 92% 0; }
+  100% { background-position: 8% 0; }
 }
 
 .topnav { display: flex; align-items: center; gap: 4px; }

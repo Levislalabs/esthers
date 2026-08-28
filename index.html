@@ -6,19 +6,43 @@
 <title>Esther's Sheet Metal | Custom Architectural Sheet Metal, Burnaby BC</title>
 <meta name="description" content="Custom architectural sheet metal fabricated in Burnaby, British Columbia since 1995. Chimney caps, flashing, coping and roof accessories in copper, zinc, aluminum and painted steel, with a full materials and colour configurator.">
 <meta name="theme-color" content="#0a0b0c">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0b0c'/%3E%3Cpath d='M6 20 16 9l10 11z' fill='none' stroke='%239aafc4' stroke-width='2'/%3E%3C/svg%3E">
+<!-- The same three flanges as the logo, squared up for a 16px tab. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0b0c'/%3E%3Cg fill='%23b9c8d6'%3E%3Cpath d='M7 6h19l-4 5H7z'/%3E%3Cpath d='M7 14.5h15l-4 5H7z' opacity='.85'/%3E%3Cpath d='M7 23h19l-4 5H7z' opacity='.7'/%3E%3C/g%3E%3C/svg%3E">
 <link rel="stylesheet" href="assets/css/base.css">
 <link rel="stylesheet" href="assets/css/home.css">
 <link rel="stylesheet" href="assets/css/configurator.css">
 </head>
 <body>
 
+<!-- ============================================================== the mark -->
+<!-- Three brake-formed flanges, each mitred back at the right and carrying a
+     specular top edge, reading as an E. Defined once and referenced wherever
+     the logo appears, so there is one mark on the page rather than copies. -->
+<svg width="0" height="0" class="sr-defs" aria-hidden="true" focusable="false"><defs>
+  <linearGradient id="mark-steel" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#eef3f7"/>
+    <stop offset="0.5" stop-color="#9aafc4"/>
+    <stop offset="1" stop-color="#555f69"/>
+  </linearGradient>
+  <symbol id="mark-esm" viewBox="0 0 44 44">
+    <path d="M9 7h26l-5.6 6.8H9z" fill="url(#mark-steel)"/>
+    <path d="M9 7h26l-1.1 1.3H9z" fill="#fff" opacity=".55"/>
+    <path d="M9 18.6h20.4l-5.6 6.8H9z" fill="url(#mark-steel)" opacity=".9"/>
+    <path d="M9 18.6h20.4l-1.1 1.3H9z" fill="#fff" opacity=".5"/>
+    <path d="M9 30.2h26l-5.6 6.8H9z" fill="url(#mark-steel)" opacity=".8"/>
+    <path d="M9 30.2h26l-1.1 1.3H9z" fill="#fff" opacity=".45"/>
+  </symbol>
+</defs></svg>
+
 <!-- ================================================================ nav -->
 <header class="topbar">
   <div class="shell topbar__inner">
-    <a class="brand" href="#top">
-      <span class="brand__mark">Esther&rsquo;s</span>
-      <span class="brand__sub">Architectural Sheet Metal</span>
+    <a class="logo logo--nav" href="#top" aria-label="Esther's Sheet Metal, back to top">
+      <svg class="logo__mark" aria-hidden="true" focusable="false"><use href="#mark-esm"/></svg>
+      <span class="logo__type">
+        <span class="logo__name">Esther&rsquo;s</span>
+        <span class="logo__sub">Sheet Metal</span>
+      </span>
     </a>
 
     <nav class="topnav" aria-label="Sections">
@@ -47,7 +71,16 @@
     <div class="shell hero__grid">
 
       <div class="hero__copy">
-        <p class="eyebrow">Custom Architectural Sheet Metal</p>
+        <p class="hero__logo">
+          <svg class="logo__mark" aria-hidden="true" focusable="false"><use href="#mark-esm"/></svg>
+          <span class="logo__type">
+            <span class="logo__name">Esther&rsquo;s</span>
+            <span class="logo__sub">Sheet Metal</span>
+          </span>
+        </p>
+        <!-- The logo above now says "sheet metal", so the eyebrow says what
+             the logo cannot instead of repeating it two lines later. -->
+        <p class="eyebrow">Custom architectural fabrication &middot; Burnaby BC</p>
         <h1 class="display">Made to fit <em>one chimney.</em></h1>
         <p class="lede">
           Every cap, flashing and coping run that leaves our shop is cut and formed for the building
@@ -540,7 +573,13 @@
   <div class="shell">
     <div class="site-footer__grid">
       <div>
-        <span class="brand__mark" style="font-size:1.35rem">Esther&rsquo;s Sheet Metal</span>
+        <span class="logo logo--foot">
+          <svg class="logo__mark" aria-hidden="true" focusable="false"><use href="#mark-esm"/></svg>
+          <span class="logo__type">
+            <span class="logo__name">Esther&rsquo;s</span>
+            <span class="logo__sub">Sheet Metal</span>
+          </span>
+        </span>
         <p class="colours__disclaimer" style="margin-top:14px;max-width:44ch">
           Custom architectural sheet metal since 1995. Chimney caps, flashing, coping and roof
           accessories in copper, zinc, aluminum and painted steel. Based in Burnaby, British Columbia,

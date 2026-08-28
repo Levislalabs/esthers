@@ -1366,6 +1366,6 @@
   #fav-only { margin-left: 0 !important; }
 }
 
-@media (max-width: 520px) {
-  .brand__sub { display: none; }
-}
+/* The old rule here hid the top bar's second line on small screens. It is
+   half the company name now, not a tagline, so it stays - base.css steps the
+   whole lockup down instead. */
