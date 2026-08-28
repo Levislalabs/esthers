@@ -43,12 +43,12 @@ matte and is divided back out to give straight alpha. Stamping the original
 onto the bar would have put a black rectangle over a translucent, blurred
 surface.
 
-**It is then desaturated and relit.** The delivered artwork is warm metal with
-an orange under-glow, which made the logo the one warm object in a row of cool
-grey links and a white button. The files here drop that cast, take a 0.78
-curve, and are relit down a vertical ramp from white to `#b0bdc9` - so the
-whole top row reads as one neutral family. The hero and footer lockup keeps
-its warmth; only the bar is neutralised.
+**It is then filled white.** The delivered artwork is warm metal with an
+orange under-glow, which made the logo the one warm object in a row of grey
+links and a white button. The files here drop that cast for a flat white fill
+on a 0.40 curve, floored at 175 so the letterforms keep an edge rather than
+going to a solid slab. The hero and footer lockup keeps its warmth; only the
+bar is neutralised, because that is the row that has to hold together.
 
 **Why there are two crops.** "Architectural Sheet Metal" needs roughly 280px
 of width before its x-height drops under seven pixels. The bar has that at

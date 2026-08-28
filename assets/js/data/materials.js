@@ -279,9 +279,18 @@ CM.comparison = {
     },
     {
       id: 'scratch', label: 'Scratch Resistance', icon: 'diamond', type: 'rating',
-      hint: 'Resistance to marking during fabrication, transport and installation.',
-      values: { 'smp-26': 3, 'smp-24': 3, 'smp-22': 3, 'pvdf-24': 5, 'pvdf-22': 5, 'aluminum': 3, 'copper': 2, 'zinc': 4 },
-      footnotes: { 'zinc': 'Self-healing, scratches close as the patina re-forms.', 'copper': 'Marks show when new, then disappear into the patina.' }
+      /* This rates how the panel survives the shop, not how hard the paint
+         film is. PVDF ships under a protective polyfilm that stays on through
+         forming and handling; SMP does not, so it is worked bare. */
+      hint: 'Resistance to marking during fabrication, transport and installation. PVDF ships under a protective film; SMP is worked bare.',
+      values: { 'smp-26': 3, 'smp-24': 3, 'smp-22': 3, 'pvdf-24': 5, 'pvdf-22': 5, 'aluminum': 5, 'copper': 2, 'zinc': 4 },
+      footnotes: {
+        'pvdf-24': 'Polyfilm stays on through forming.',
+        'pvdf-22': 'Polyfilm stays on through forming.',
+        'aluminum': 'PVDF coated, so it arrives filmed too.',
+        'zinc': 'Self-healing, scratches close as the patina re-forms.',
+        'copper': 'Marks show when new, then disappear into the patina.'
+      }
     },
     {
       id: 'corrosion', label: 'Corrosion Resistance', icon: 'droplet', type: 'rating',
