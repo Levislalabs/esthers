@@ -41,9 +41,14 @@ without touching the highlights, the orange edges or the transparency.
 artwork, so the black is the transparency: the brightest channel becomes the
 matte and is divided back out to give straight alpha. Stamping the original
 onto the bar would have put a black rectangle over a translucent, blurred
-surface. It then takes a 0.76 curve, because "Architectural Sheet Metal" is
-drawn dim enough to sit noticeably lighter than the navigation links beside
-it.
+surface.
+
+**It is then desaturated and relit.** The delivered artwork is warm metal with
+an orange under-glow, which made the logo the one warm object in a row of cool
+grey links and a white button. The files here drop that cast, take a 0.78
+curve, and are relit down a vertical ramp from white to `#b0bdc9` - so the
+whole top row reads as one neutral family. The hero and footer lockup keeps
+its warmth; only the bar is neutralised.
 
 **Why there are two crops.** "Architectural Sheet Metal" needs roughly 280px
 of width before its x-height drops under seven pixels. The bar has that at
