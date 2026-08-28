@@ -698,6 +698,280 @@
      SERVICES
      =================================================================== */
 
+  /*
+   * Contact / Visit our shops.
+   *
+   * Everything visible comes from CM.contactSection in
+   * assets/js/data/locations.js. The owner writes only human-readable values
+   * there; the tel: link, the mailto: links, the map frame and the directions
+   * URL are all derived here from the address and phone as typed, so one
+   * address change moves all four.
+   *
+   * Both map URLs are keyless and free. The embed is the plain
+   * google.com/maps ?output=embed form, and directions use the documented
+   * Maps URLs endpoint. No API key is created, stored or sent.
+   */
+  var MAPS_EMBED = 'https://www.google.com/maps?output=embed&q=';
+  var MAPS_DIR = 'https://www.google.com/maps/dir/?api=1&destination=';
+  var MAPS_PROBE = 'https://www.google.com/favicon.ico';
+
+  function telHref(phone) {
+    /* A tel: link has to be digits. Canadian numbers get the +1 country code
+       so the link also works for someone dialling from outside Canada. */
+    var digits = String(phone || '').replace(/[^0-9]/g, '');
+    if (!digits) return null;
+    if (digits.length === 10) digits = '1' + digits;
+    return 'tel:+' + digits;
+  }
+
+  function buildContact() {
+    var section = CM.contactSection;
+    var wrap = $('#contact-grid');
+    if (!section || !wrap) return;
+
+    var head = $('#contact-head');
+    if (head) {
+      head.innerHTML = '';
+      head.appendChild(el('p', { class: 'eyebrow', text: section.eyebrow }));
+      head.appendChild(el('h2', { class: 'headline', text: section.heading }));
+      head.appendChild(el('p', { class: 'lede', text: section.intro }));
+    }
+
+    wrap.innerHTML = '';
+
+    (section.locations || []).forEach(function (loc) {
+      var a = loc.address || {};
+      var cityLine = [a.city, a.region].filter(Boolean).join(', ');
+      if (a.postalCode) cityLine += (cityLine ? ' ' : '') + a.postalCode;
+      var oneLine = loc.mapAddress || [a.street, cityLine].filter(Boolean).join(', ');
+
+      /* --- heading + address ---
+         The name carries the label; a separate mono badge repeating it was
+         the same words twice. "Primary" sits beside the heading rather than
+         inside it, so it stays out of the accessible name. */
+      var head = el('div', { class: 'loc__head' }, [
+        el('h3', { class: 'loc__name', text: loc.label || '' }),
+        loc.primary ? el('span', { class: 'loc__primary', text: 'Primary' }) : null
+      ]);
+
+      var address = el('address', { class: 'loc__address' }, [
+        el('span', { text: a.street || '' }),
+        el('span', { text: cityLine })
+      ]);
+
+      /* --- phone --- */
+      var rows = [];
+      var tel = telHref(loc.phone);
+      if (tel) {
+        rows.push(el('div', { class: 'loc__row' }, [
+          el('span', { class: 'loc__row-label', text: 'Phone' }),
+          el('a', {
+            class: 'loc__link loc__link--phone', href: tel,
+            'aria-label': 'Call the ' + loc.label + ' on ' + loc.phone,
+            text: loc.phone
+          })
+        ]));
+      }
+
+      /* --- contacts --- */
+      if (loc.contacts && loc.contacts.length) {
+        var people = el('ul', { class: 'loc__people' });
+        loc.contacts.forEach(function (c) {
+          people.appendChild(el('li', { class: 'loc__person' }, [
+            el('span', { class: 'loc__person-name', text: c.name || '' }),
+            c.email ? el('a', {
+              class: 'loc__link', href: 'mailto:' + c.email,
+              'aria-label': 'Email ' + (c.name || '') + ' at the ' + loc.label + ', ' + c.email,
+              text: c.email
+            }) : null
+          ]));
+        });
+        rows.push(el('div', { class: 'loc__row' }, [
+          el('span', { class: 'loc__row-label', text: loc.contacts.length > 1 ? 'Contacts' : 'Contact' }),
+          people
+        ]));
+      }
+
+      /* --- what they make --- */
+      if (loc.specialties) {
+        rows.push(el('div', { class: 'loc__row' }, [
+          el('span', { class: 'loc__row-label', text: 'Specializes in' }),
+          el('p', { class: 'loc__spec', text: loc.specialties })
+        ]));
+      }
+
+      /* --- directions + map --- */
+      var directions = el('a', {
+        class: 'btn btn--accent loc__cta',
+        href: MAPS_DIR + encodeURIComponent(oneLine),
+        target: '_blank',
+        rel: 'noopener noreferrer',
+        'aria-label': 'Get directions to the ' + loc.label + ' at ' + oneLine + ', opens Google Maps in a new tab'
+      }, [
+        el('span', { html: U.icon('pin') }),
+        el('span', { text: 'Get directions' }),
+        el('span', { class: 'visually-hidden', text: '(opens in a new tab)' })
+      ]);
+
+      /* The map plate is rendered first and the frame is only added once
+         Google has been shown to be reachable.
+         
+         An iframe cannot be asked whether it loaded - it is cross-origin, and
+         a blocked one still fires its load event over the browser's own error
+         page - so the check is a small image request instead. Two things fall
+         out of that: nothing third-party is requested on a page where the map
+         could not work anyway, and a blocked or ad-blocked map leaves the
+         address plate on screen rather than a light grey rectangle. */
+      var map = el('div', { class: 'loc__map' }, [
+        el('span', { class: 'loc__map-fallback' }, [
+          el('span', { html: U.icon('pin') }),
+          el('span', { text: oneLine })
+        ])
+      ]);
+
+      var probe = new window.Image();
+      probe.onload = function () {
+        var frameEl = el('iframe', {
+          src: MAPS_EMBED + encodeURIComponent(oneLine),
+          title: 'Map showing the ' + loc.label + ' at ' + oneLine,
+          loading: 'lazy',
+          referrerpolicy: 'no-referrer-when-downgrade'
+        });
+        frameEl.addEventListener('load', function () { frameEl.classList.add('is-ready'); });
+        map.appendChild(frameEl);
+      };
+      probe.onerror = function () {
+        if (window.console && console.info) {
+          console.info('Contact: Google Maps is not reachable from here, so the ' + loc.label +
+                       ' card is showing its address plate instead of the map.');
+        }
+      };
+      probe.src = MAPS_PROBE;
+
+      wrap.appendChild(el('article', {
+        class: 'loc' + (loc.primary ? ' loc--primary' : ''),
+        id: loc.id ? 'loc-' + loc.id : null
+      }, [head, address, el('div', { class: 'loc__rows' }, rows), directions, map]));
+    });
+
+    buildContactHelp(section);
+  }
+
+  /*
+   * The note under the cards for anyone unsure which shop to ring. The owner
+   * writes one sentence with {phone} in it; the number is taken from whichever
+   * location is marked primary, so it can never drift out of step with the
+   * card above it.
+   */
+  function buildContactHelp(section) {
+    var note = $('#contact-help');
+    if (!note) return;
+    note.innerHTML = '';
+
+    var text = section.helpText;
+    if (!text) { note.hidden = true; return; }
+    note.hidden = false;
+
+    var source = (section.locations || []).filter(function (l) { return l.primary; })[0] ||
+                 (section.locations || [])[0];
+    var tel = source ? telHref(source.phone) : null;
+    var parts = String(text).split('{phone}');
+
+    note.appendChild(document.createTextNode(parts[0]));
+    if (parts.length > 1) {
+      if (tel) {
+        note.appendChild(el('a', {
+          class: 'loc__link loc-help__phone', href: tel,
+          'aria-label': 'Call the ' + source.label + ' on ' + source.phone,
+          text: source.phone
+        }));
+      }
+      note.appendChild(document.createTextNode(parts.slice(1).join('{phone}')));
+    }
+  }
+
+  /*
+   * Recent fabrication gallery.
+   *
+   * Everything visible in this section - the heading, the paragraph and every
+   * card - comes from CM.workSection in assets/js/data/work.js, so the owner
+   * changes the gallery by editing one data file and never this function.
+   *
+   * Cards are filtered on `enabled` and sorted on `order`. The grid is a
+   * plain auto-flow grid, so any number of cards lays out on its own.
+   */
+  function buildWork() {
+    var section = CM.workSection;
+    var grid = $('#work-grid');
+    if (!section || !grid) return;
+
+    var head = $('#work-head');
+    if (head) {
+      head.innerHTML = '';
+      head.appendChild(el('p', { class: 'eyebrow', text: section.eyebrow }));
+      head.appendChild(el('h2', { class: 'headline', text: section.heading }));
+      head.appendChild(el('p', { class: 'lede', text: section.intro }));
+    }
+
+    var projects = (section.projects || [])
+      .filter(function (p) { return p && p.enabled !== false; })
+      .slice()
+      .sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
+
+    grid.innerHTML = '';
+
+    if (!projects.length) {
+      /* Nothing enabled is a legitimate state - an empty grid beats a broken
+         one - but it is almost always a mistake, so say so in the console. */
+      warnWork('every project is either missing or has enabled: false, so the gallery is empty');
+      return;
+    }
+
+    projects.forEach(function (p) {
+      if (!p.image) { warnWork('project "' + (p.id || '?') + '" has no image, skipping'); return; }
+      if (!p.alt)   { warnWork('project "' + (p.id || '?') + '" has no alt text, so screen readers will skip the photo'); }
+
+      var img = el('img', {
+        src: p.image,
+        alt: p.alt || '',
+        loading: 'lazy',
+        decoding: 'async',
+        /* The frame already reserves a square box, so a missing width and
+           height here costs no layout shift. */
+        style: { objectPosition: p.objectPosition || 'center' }
+      });
+
+      /* A missing file falls back to the labelled plate every other photo on
+         the page uses, rather than a broken-image icon. */
+      var frame = el('div', { class: 'work__frame slot', 'data-slot': true }, [
+        img,
+        el('div', { class: 'slot__ph' }, [
+          el('span', { class: 'slot__ph-icon', html: U.icon('photo') }),
+          el('span', { class: 'slot__ph-label', text: p.title || 'Photograph' }),
+          el('span', { class: 'slot__ph-file', text: p.image })
+        ])
+      ]);
+
+      img.addEventListener('error', function () {
+        warnWork('the file "' + p.image + '" could not be loaded - check the name and that it is in assets/img/work/');
+      });
+
+      grid.appendChild(el('figure', { class: 'work' }, [
+        frame,
+        el('figcaption', {}, [
+          el('span', { class: 'work__title', text: p.title || '' }),
+          el('span', { class: 'work__meta', text: p.caption || '' })
+        ])
+      ]));
+    });
+  }
+
+  function warnWork(message) {
+    if (window.console && console.warn) {
+      console.warn('Recent fabrication: ' + message + ' (edit assets/js/data/work.js)');
+    }
+  }
+
   function buildServices() {
     var wrap = $('#services-grid');
     if (!wrap) return;
@@ -1193,6 +1467,8 @@
 
   function init() {
     buildRail();
+    buildWork();
+    buildContact();
     buildServices();
     buildQuote();
     buildPatina();

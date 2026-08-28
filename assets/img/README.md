@@ -8,9 +8,21 @@ broken image, so the layout never collapses.
 | Filename | Shot |
 | --- | --- |
 | `work-enclosure.jpg` | Large louvered chimney enclosure installed on a stone chimney, dark anthracite finish. Used as the hero image. |
-| `work-louvre-shop.jpg` | Louvered cap with hipped crown photographed in the yard before pickup - mill-finish louvre blades against a dark crown. |
-| `work-louvre-cap.jpg` | Louvered chimney cap with a hipped crown installed on a tile roof. |
-| `work-cove-cap.jpg` | Cove-profile (flared bell) chimney cap on a stone chimney, with vent grommets. |
+
+## The Recent Fabrication gallery
+
+Its photographs live in **`work/`**, and they are not listed here. Which files
+appear, in what order, with what captions, is set in one place:
+
+    assets/js/data/work.js
+
+Adding a photograph to `work/` does nothing on its own - it has to be named in
+that file. There is a plain-English guide for the owner at
+[`docs/UPDATING_RECENT_FABRICATION.md`](../../docs/UPDATING_RECENT_FABRICATION.md).
+
+A file named there but missing from the folder does not break the page: the
+card renders the labelled plate described below, naming the file it wanted, and
+the console explains what to fix.
 
 ## Logo
 

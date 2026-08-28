@@ -16,6 +16,7 @@ if (!OUT) { console.error('usage: node tools-bundle.js <output.html>'); process.
 
 const CSS = ['assets/css/base.css', 'assets/css/home.css', 'assets/css/configurator.css'];
 const JS  = ['assets/js/util.js', 'assets/js/data/colours.js', 'assets/js/data/materials.js',
+             'assets/js/data/work.js', 'assets/js/data/locations.js',
              'assets/js/render.js', 'assets/js/app.js'];
 
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -42,14 +43,21 @@ JS.forEach((f) => {
 const imgDir = path.join(ROOT, 'assets/img');
 const MIME = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
                webp: 'image/webp', gif: 'image/gif', svg: 'image/svg+xml' };
-fs.readdirSync(imgDir)
-  .filter((f) => MIME[path.extname(f).slice(1).toLowerCase()])
-  .forEach((img) => {
-    const mime = MIME[path.extname(img).slice(1).toLowerCase()];
-    const uri = 'data:' + mime + ';base64,' +
-                fs.readFileSync(path.join(imgDir, img)).toString('base64');
-    html = html.split('assets/img/' + img).join(uri);
-  });
+/* Recursive: the gallery photographs sit in assets/img/work/, and their paths
+   arrive from work.js rather than from the markup. */
+const imgFiles = (dir, prefix) =>
+  fs.readdirSync(dir, { withFileTypes: true }).reduce((acc, e) => (
+    e.isDirectory()
+      ? acc.concat(imgFiles(path.join(dir, e.name), prefix + e.name + '/'))
+      : (MIME[path.extname(e.name).slice(1).toLowerCase()] ? acc.concat(prefix + e.name) : acc)
+  ), []);
+
+imgFiles(imgDir, '').forEach((img) => {
+  const mime = MIME[path.extname(img).slice(1).toLowerCase()];
+  const uri = 'data:' + mime + ';base64,' +
+              fs.readFileSync(path.join(imgDir, img)).toString('base64');
+  html = html.split('assets/img/' + img).join(uri);
+});
 
 /* The scroll reveal starts every section at opacity 0. Preview hosts render
    the page inside a frame where that can leave the whole site blank, so the

@@ -20,7 +20,7 @@ python3 -m http.server 8000    # then visit http://localhost:8000
 | Section | Behaviour |
 | --- | --- |
 | Hero + credibility | The pitch alongside a photograph of real work, followed by four verifiable facts about the shop. |
-| Our work | Gallery of recent fabrication. Every image is an **image slot** - see below. |
+| Our work | Gallery of recent fabrication, rendered from `assets/js/data/work.js`. The owner adds, hides, reorders and re-captions projects by editing that one file - see [`docs/UPDATING_RECENT_FABRICATION.md`](docs/UPDATING_RECENT_FABRICATION.md). Every image is an **image slot** - see below. |
 | Process | The four steps from measurement to pickup, and what the customer needs to supply at each. |
 | Material selector | Eight materials on a snap-scrolling rail. Selecting one re-renders the spec panel, swaps the colour collection, updates what the quote request carries, and cascades an accent colour through the page. |
 | Spec panel | Gauges, finish description, applications, warranty, thickness, durability, cost category and maintenance for each material, plus feature pills for PVDF / aluminum / copper / zinc. |
@@ -29,6 +29,7 @@ python3 -m http.server 8000    # then visit http://localhost:8000
 | Zinc | Architectural renderings of Natural, Pre-weathered, Quartz and Anthra zinc, each with a close-up texture strip on hover. |
 | Comparison tool | Twelve attributes across all eight materials. Sticky header and attribute column, meters that fill on scroll, and column focus tied to the current material. |
 | Services | The six fabrication services, each with a **Request a quote** action that ticks the matching box on the form below and jumps to it. |
+| Contact | The two Burnaby shops, each with address, phone, the people to ask for, what that shop makes, a Get Directions button and an embedded map. Rendered from `assets/js/data/locations.js` - see [`docs/UPDATING_CONTACT_LOCATIONS.md`](docs/UPDATING_CONTACT_LOCATIONS.md). |
 | Quote request | Contact details, optional company name and PO number / job location, timeline, a material picker that adds one line per colour (the same material can be added twice for a two-colour job), each line with its own colour list, an attachment field for drawings, and project details. Saved favourites ride along too. |
 
 ## Colour data
@@ -55,6 +56,8 @@ assets/css/configurator.css    selector, colour grid, patina, compare, services,
 assets/js/util.js              colour maths, DOM helpers, icon set
 assets/js/data/colours.js      the five colour collections + patina/zinc data
 assets/js/data/materials.js    material specs, comparison matrix, services
+assets/js/data/work.js         the Recent Fabrication gallery - owner-editable
+assets/js/data/locations.js    the two shops in the Contact section - owner-editable
 assets/js/render.js            SVG scene generation
 assets/js/app.js               state and wiring
 ```
@@ -95,6 +98,21 @@ on the To line. Change the destinations in one place: `CM.quoteEmail` in
 them. Wiring this to a real backend means replacing
 `submitQuote()` in `assets/js/app.js` with a `fetch` to your endpoint - the
 composer that builds the request body is already separate.
+
+## Maps
+
+The Contact section embeds a Google Maps frame per location and links out for
+directions. Both URLs are the free public forms - `google.com/maps?output=embed`
+and the documented `maps/dir/?api=1` endpoint - so **no API key, Google account
+or billing setup exists anywhere in this project**, and nothing needs renewing.
+
+An iframe cannot be asked whether it loaded: it is cross-origin, and a blocked
+one still fires its load event over the browser's own error page. So each card
+renders its address plate first and only inserts the frame once a small image
+request has shown Google to be reachable. Two things fall out of that - nothing
+third-party is requested on a page where the map could not work anyway, and a
+blocked or ad-blocked map leaves the address on screen instead of a light grey
+rectangle in the middle of a dark page.
 
 ## Rendering approach
 

@@ -186,6 +186,8 @@ window.CM = window.CM || {};
     heal:    '<path d="M12 3.5v17M3.5 12h17" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="3 3"/>',
     hourglass: '<path d="M7 3.5h10M7 20.5h10M7.5 3.5c0 4.5 4.5 5.2 4.5 8.5s-4.5 4-4.5 8.5M16.5 3.5c0 4.5-4.5 5.2-4.5 8.5s4.5 4 4.5 8.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
     leaf:    '<path d="M20 4.2C10.5 3.4 4.6 7.6 4.6 14a5.4 5.4 0 0 0 5.4 5.4C16.4 19.4 20.6 13.6 20 4.2Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M16.2 8 6.4 18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
+    pin:     '<path d="M12 21.2s7-5.6 7-10.5a7 7 0 1 0-14 0c0 4.9 7 10.5 7 10.5Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="12" cy="10.4" r="2.6" fill="none" stroke="currentColor" stroke-width="1.6"/>',
+    photo:   '<rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8.5" cy="10" r="1.6" fill="currentColor"/><path d="m4 17 5-5 4 4 3-2.5 4 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>',
     gem:     '<path d="M6.5 4h11l3.5 5.2L12 20.5 1 9.2Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" transform="translate(1)"/>'
   };
 
