@@ -12,6 +12,28 @@ broken image, so the layout never collapses.
 | `work-louvre-cap.jpg` | Louvered chimney cap with a hipped crown installed on a tile roof. |
 | `work-cove-cap.jpg` | Cove-profile (flared bell) chimney cap on a stone chimney, with vent grommets. |
 
+## Logo
+
+| Filename | What it is |
+| --- | --- |
+| `logo-master.webp` | The supplied artwork exactly as delivered, trimmed to its own ink. The page never loads this file; everything below is derived from it. |
+| `logo-lockup.webp` + `-900/-600/-420` | The full lockup, used in the hero and the footer. |
+| `logo-mark.webp` + `-160/-96` | The mark on its own, used in the top bar. |
+
+Two things to know before reissuing any of these.
+
+**The artwork was drawn on white.** On this site's near-black the metal sinks
+into the background and the wordmark is barely readable. Every file the page
+loads therefore carries a 0.60 gamma on its colour channels, which lifts the
+shadows back out without touching the highlights, the orange edges or the
+transparency. Regenerate from `logo-master.webp` and apply the same curve, or
+ask for a dark-background version of the artwork.
+
+**The top bar does not use the lockup.** Squeezed to the height of a 66px bar,
+"Sheet Metal" turns into an unreadable smear, so the bar pairs the mark with
+the name set as live text. That is why `.logo__name` and `.logo__sub` exist in
+`base.css`.
+
 ## Guidance
 
 - The gallery crops to **1:1** and the hero to **4:5**, both with
