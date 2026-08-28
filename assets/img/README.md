@@ -14,25 +14,40 @@ broken image, so the layout never collapses.
 
 ## Logo
 
+Two pieces of supplied artwork, and everything here is derived from one of
+them. Regenerate the whole set together if either is ever reissued.
+
+### The stacked lockup - hero and footer
+
 | Filename | What it is |
 | --- | --- |
-| `logo-master.webp` | The supplied artwork exactly as delivered, trimmed to its own ink. The page never loads this file; everything below is derived from it. |
-| `logo-lockup.webp` + `-900/-600/-420` | The full lockup, used in the hero and the footer. |
-| `logo-mark.webp` + `-160/-96` | The mark on its own, used in the top bar. |
+| `logo-master.webp` | The delivered artwork, trimmed to its own ink and otherwise untouched. The page never loads this file. |
+| `logo-lockup.webp` + `-900/-600/-420` | What the page actually loads. |
+| `logo-mark.webp` | The mark cut out of the lockup. Not loaded either - it is the source the favicon data URI in `index.html` was made from. |
 
-Two things to know before reissuing any of these.
+**This artwork was drawn on white.** On the site's near-black the metal sinks
+into the background and the wordmark is barely readable, so every loaded file
+carries a 0.60 gamma on its colour channels. That lifts the shadows back out
+without touching the highlights, the orange edges or the transparency.
 
-**The artwork was drawn on white.** On this site's near-black the metal sinks
-into the background and the wordmark is barely readable. Every file the page
-loads therefore carries a 0.60 gamma on its colour channels, which lifts the
-shadows back out without touching the highlights, the orange edges or the
-transparency. Regenerate from `logo-master.webp` and apply the same curve, or
-ask for a dark-background version of the artwork.
+### The horizontal wordmark - top bar
 
-**The top bar does not use the lockup.** Squeezed to the height of a 66px bar,
-"Sheet Metal" turns into an unreadable smear, so the bar pairs the mark with
-the name set as live text. That is why `.logo__name` and `.logo__sub` exist in
-`base.css`.
+| Filename | What it is |
+| --- | --- |
+| `logo-wordmark.webp` + `-720/-400` | "Esther's Architectural Sheet Metal", the full line. |
+| `logo-wordmark-short.webp` + `-260` | The name on its own, cut at the wide gap before "Architectural". |
+
+**This one arrived on solid black with no alpha.** It is light-on-dark
+artwork, so the black is the transparency: the brightest channel becomes the
+matte and is divided back out to give straight alpha. Stamping the original
+onto the bar would have put a black rectangle over a translucent, blurred
+surface. It then takes a 0.76 curve, because "Architectural Sheet Metal" is
+drawn dim enough to sit noticeably lighter than the navigation links beside
+it.
+
+**Why there are two crops.** "Architectural Sheet Metal" needs roughly 280px
+of width before its x-height drops under seven pixels. The bar has that at
+every size except a phone, where the `<picture>` serves the name alone.
 
 ## Guidance
 

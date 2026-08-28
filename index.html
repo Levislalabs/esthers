@@ -17,14 +17,22 @@
 <!-- ================================================================ nav -->
 <header class="topbar">
   <div class="shell topbar__inner">
-    <a class="logo logo--nav" href="#top" aria-label="Esther's Sheet Metal, back to top">
-      <img class="logo__mark" src="assets/img/logo-mark-96.webp"
-           srcset="assets/img/logo-mark-96.webp 96w, assets/img/logo-mark-160.webp 160w"
-           sizes="27px" width="480" height="528" alt="" loading="eager" decoding="async">
-      <span class="logo__type">
-        <span class="logo__name">Esther&rsquo;s</span>
-        <span class="logo__sub">Sheet Metal</span>
-      </span>
+    <a class="logo--nav" href="#top">
+      <picture>
+        <!-- The line needs about 280px before "Architectural Sheet Metal"
+             drops under a 7px x-height. The bar has that everywhere except
+             on a phone, where the name alone runs instead. -->
+        <source media="(max-width: 639px)"
+                srcset="assets/img/logo-wordmark-short-260.webp 260w,
+                        assets/img/logo-wordmark-short.webp 858w"
+                sizes="120px">
+        <img src="assets/img/logo-wordmark-400.webp"
+             srcset="assets/img/logo-wordmark-400.webp 400w,
+                     assets/img/logo-wordmark-720.webp 720w"
+             sizes="clamp(295px, 24vw, 321px)"
+             width="1898" height="148" loading="eager" decoding="async"
+             alt="Esther's Architectural Sheet Metal, back to top">
+      </picture>
     </a>
 
     <nav class="topnav" aria-label="Sections">

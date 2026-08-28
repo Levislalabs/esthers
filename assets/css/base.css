@@ -165,66 +165,46 @@ h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 300; margin: 0; 
 
 /* ------------------------------------------------------------------ logo */
 
-/* The supplied artwork was drawn on white. The files the page loads carry a
-   0.60 gamma on their colour channels so the metal still reads against this
-   background; assets/img/logo-master.webp is the untouched original. */
-
-.logo {
-  display: inline-flex;
-  align-items: center;
-  text-decoration: none;
-  color: var(--ink);
-}
-
-.logo__mark { flex: none; display: block; height: auto; }
-
-.logo__type { display: flex; flex-direction: column; line-height: 1; }
-
-/* Brushed steel, swept. The gradient is laid down at twice the width of the
-   type with its highlight parked off to the left, so moving the background
-   on hover draws the specular band across the letters. No stop is darker
-   than #78838e: further down, the far end of the sweep would take the
-   company name below 4.5:1. */
-.logo__name {
-  font-family: var(--font-display);
-  font-weight: 500;
-  text-transform: uppercase;
-  background: linear-gradient(100deg,
-    #7f8c99 0%, #b9c5d0 16%, #ffffff 27%, #d3dce4 38%,
-    var(--accent) 58%, #828d99 82%, #78838e 100%);
-  background-size: 230% 100%;
-  background-position: 8% 0;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  transition: background-position 1100ms var(--ease-out);
-}
-.logo:hover .logo__name,
-.logo:focus-visible .logo__name { background-position: 92% 0; }
-
-.logo__sub {
-  font-family: var(--font-mono);
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  transition: color var(--dur) var(--ease);
-}
-.logo:hover .logo__sub { color: var(--ink-dim); }
+/* Two pieces of supplied artwork: the stacked lockup in the hero and the
+   footer, and the horizontal wordmark in the top bar. The lockup was drawn on
+   white and its files carry a 0.60 gamma so the metal still reads against
+   this background - logo-master.webp is that original, untouched. The
+   wordmark arrived on black and needed no such lift, only its background
+   keyed out. */
 
 /* --- in the top bar --- */
 
-/* Only the mark scales down here. The whole lockup squeezed to bar height
-   turns "Sheet Metal" into an illegible smear, so the words are live text
-   that stays crisp and searchable. */
-.logo--nav { gap: 10px; }
-.logo--nav .logo__mark { width: 30px; }
-.logo--nav .logo__name { font-size: 15.5px; letter-spacing: 0.055em; margin-bottom: 4px; }
-.logo--nav .logo__sub  { font-size: 8.5px; letter-spacing: 0.29em; }
+/* The whole thing is the supplied artwork, sized by height so it sits on the
+   bar's optical centre line rather than by width. Below 560px the <picture>
+   swaps in the name on its own, so the ratio is restated there and the box
+   stays reserved at both. */
+.logo--nav {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  /* Never let the bar squeeze it: a flex-shrunk raster is a stretched one. */
+  flex: none;
+}
+.logo--nav img {
+  display: block;
+  width: auto;
+  max-width: none;
+  height: clamp(23px, 1.85vw, 25px);
+  aspect-ratio: 1898 / 148;
+  transition: filter var(--dur) var(--ease);
+}
+.logo--nav:hover img,
+.logo--nav:focus-visible img { filter: brightness(1.14); }
 
-@media (max-width: 420px) {
-  .logo--nav { gap: 8px; }
-  .logo--nav .logo__mark { width: 23px; }
-  .logo--nav .logo__name { font-size: 14px; }
-  .logo--nav .logo__sub  { font-size: 8px; letter-spacing: 0.24em; }
+/* Under 640px the line no longer clears a 7px x-height in the space the bar
+   can spare, so the <picture> serves the name on its own. */
+@media (max-width: 639px) {
+  .logo--nav img { height: 22px; aspect-ratio: 858 / 148; }
+}
+/* The narrowest phones need one more step down to keep the quote button on
+   the same row. */
+@media (max-width: 400px) {
+  .logo--nav img { height: 18px; }
 }
 
 /* --- closing the page --- */
