@@ -713,7 +713,6 @@
    */
   var MAPS_EMBED = 'https://www.google.com/maps?output=embed&q=';
   var MAPS_DIR = 'https://www.google.com/maps/dir/?api=1&destination=';
-  var MAPS_PROBE = 'https://www.google.com/favicon.ico';
 
   function telHref(phone) {
     /* A tel: link has to be digits. Canadian numbers get the +1 country code
@@ -813,40 +812,38 @@
         el('span', { class: 'visually-hidden', text: '(opens in a new tab)' })
       ]);
 
-      /* The map plate is rendered first and the frame is only added once
-         Google has been shown to be reachable.
-         
-         An iframe cannot be asked whether it loaded - it is cross-origin, and
-         a blocked one still fires its load event over the browser's own error
-         page - so the check is a small image request instead. Two things fall
-         out of that: nothing third-party is requested on a page where the map
-         could not work anyway, and a blocked or ad-blocked map leaves the
-         address plate on screen rather than a light grey rectangle. */
+      /* The map frame always goes in. Nothing gates it.
+      
+         An earlier version tested google.com with a small image request first
+         and only inserted the frame if that succeeded. That was wrong: a
+         tracker blocker, a privacy extension, a corporate proxy or Google
+         simply answering that one request differently would all fail the test
+         while the map itself would have loaded perfectly well - and the
+         visitor would have been shown a fallback plate instead of a working
+         map they could have had. A false negative there costs more than the
+         case it was guarding against.
+      
+         So the frame is inserted unconditionally and the address plate sits
+         behind it, not instead of it. The frame is transparent until its load
+         event fires, which means:
+           - Google reachable  -> the real interactive map paints over the plate
+           - frame blocked      -> nothing paints, the plate shows through
+         No probe, no timing guess, no sniffing for any particular host. */
+      var frameEl = el('iframe', {
+        src: MAPS_EMBED + encodeURIComponent(oneLine),
+        title: 'Map showing the ' + loc.label + ' at ' + oneLine,
+        loading: 'lazy',
+        referrerpolicy: 'no-referrer-when-downgrade'
+      });
+      frameEl.addEventListener('load', function () { frameEl.classList.add('is-ready'); });
+
       var map = el('div', { class: 'loc__map' }, [
         el('span', { class: 'loc__map-fallback' }, [
           el('span', { html: U.icon('pin') }),
           el('span', { text: oneLine })
-        ])
+        ]),
+        frameEl
       ]);
-
-      var probe = new window.Image();
-      probe.onload = function () {
-        var frameEl = el('iframe', {
-          src: MAPS_EMBED + encodeURIComponent(oneLine),
-          title: 'Map showing the ' + loc.label + ' at ' + oneLine,
-          loading: 'lazy',
-          referrerpolicy: 'no-referrer-when-downgrade'
-        });
-        frameEl.addEventListener('load', function () { frameEl.classList.add('is-ready'); });
-        map.appendChild(frameEl);
-      };
-      probe.onerror = function () {
-        if (window.console && console.info) {
-          console.info('Contact: Google Maps is not reachable from here, so the ' + loc.label +
-                       ' card is showing its address plate instead of the map.');
-        }
-      };
-      probe.src = MAPS_PROBE;
 
       wrap.appendChild(el('article', {
         class: 'loc' + (loc.primary ? ' loc--primary' : ''),

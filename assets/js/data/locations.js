@@ -84,8 +84,8 @@ CM.contactSection = {
       ],
       specialties:
         'Standard and custom flashing, specialty chimney caps including louvered and ' +
-        'French-curved designs, and stock flashing. Also the sheet metal supplies that go ' +
-        'with the job: matching paint, screws and caulking.',
+        'French-curved designs. We also supply the sheet metal essentials that go with ' +
+        'the job, including matching paint, screws and caulking.',
       mapAddress: '3890 E. First Ave., Burnaby, BC V5R 3W1'
     },
 

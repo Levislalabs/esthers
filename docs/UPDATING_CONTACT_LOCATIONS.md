@@ -154,7 +154,7 @@ spot.
 ```js
 specialties:
   'Standard and custom flashing, specialty chimney caps including louvered ' +
-  'and French-curved designs, and stock flashing.',
+  'and French-curved designs.',
 ```
 
 The `+` at the end of a line just joins the next line onto it, so a long
