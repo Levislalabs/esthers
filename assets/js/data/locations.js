@@ -79,7 +79,7 @@ CM.contactSection = {
       },
       phone: '604-291-6766',
       contacts: [
-        { name: 'Luisa', email: 'info@esthers.ca' },
+        { name: 'Ed / Luisa', email: 'info@esthers.ca' },
         { name: 'EJay', email: 'manager@esthers.ca' }
       ],
       specialties:
