@@ -420,15 +420,15 @@
   to   { opacity: 1; transform: none; }
 }
 
-/* Hover: enlarge slightly, lift, and sweep the specular highlight */
+/* Hover: enlarge slightly and lift. The two rules that used to sweep the
+   specular highlight and lift the noise on hover went with the layers
+   themselves - see .swatch__paint below. */
 .swatch:hover {
   transform: translateY(-5px) scale(1.045);
   border-color: var(--line-strong);
   box-shadow: 0 22px 44px -20px rgba(0, 0, 0, 0.92);
   z-index: 3;
 }
-.swatch:hover .paint::before { transform: translateX(9%) scale(1.14); }
-.swatch:hover .paint::after  { opacity: 0.44; }
 
 .swatch.is-selected {
   border-color: var(--accent);
@@ -444,11 +444,29 @@
   border-radius: inherit;
 }
 
+/* The grid tile is the one place the paint is shown to be JUDGED rather than
+   decorated, so it is the one place the finish has to come off.
+
+   .paint layers three things over the flat colour to sell "painted metal":
+   a 104deg 3px repeating gradient, a 118deg white-to-black specular sweep,
+   and a fractal-noise overlay. All three are convincing on a 20px chip and
+   all three mislead at 158px. The repeating gradient reads as diagonal lines
+   ruled across the sample, and the sweep on its own drags Bright Red from a
+   bright top-left corner to a dark bottom-right one, so no part of the tile
+   is actually the hex printed underneath it.
+
+   Dropping both pseudo-elements leaves background-color: var(--c) alone,
+   which is exactly the colour the customer is choosing. Everything else about
+   the tile - size, ratio, radius, the dark hairline under it, the card hover,
+   selection and the favourite heart - is untouched, and the small chips
+   elsewhere in the page keep the finish. */
 .swatch__paint {
   aspect-ratio: 4 / 3;
   width: 100%;
   border-bottom: 1px solid rgba(0, 0, 0, 0.35);
 }
+.swatch__paint.paint::before,
+.swatch__paint.paint::after { content: none; }
 
 .swatch__meta {
   padding: 12px 13px 14px;
