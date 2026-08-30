@@ -14,10 +14,11 @@ const ROOT = '/home/user/esthers';
 const OUT = process.argv[2];
 if (!OUT) { console.error('usage: node tools-bundle.js <output.html>'); process.exit(1); }
 
-const CSS = ['assets/css/base.css', 'assets/css/home.css', 'assets/css/configurator.css'];
+const CSS = ['assets/css/base.css', 'assets/css/home.css', 'assets/css/configurator.css',
+              'assets/css/chat.css'];
 const JS  = ['assets/js/util.js', 'assets/js/data/colours.js', 'assets/js/data/materials.js',
              'assets/js/data/work.js', 'assets/js/data/locations.js',
-             'assets/js/render.js', 'assets/js/app.js'];
+             'assets/js/render.js', 'assets/js/app.js', 'assets/js/chat.js'];
 
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');

@@ -1,0 +1,492 @@
+/* =========================================================================
+   Esther's - customer help launcher and messaging panel
+   chat.css
+
+   PROTOTYPE. The panel talks to nothing; see assets/js/chat.js.
+
+   Deliberately self-contained: everything here is namespaced under .chat,
+   and the only things it borrows from the rest of the site are the shared
+   design tokens (--bg-*, --ink-*, --line*, --dur, --ease). Nothing in this
+   file can reach any other section, and no other file needs to know this
+   feature exists.
+
+   One token is NOT borrowed. The site's --accent is rewritten at runtime
+   every time a visitor picks a material in the configurator, so a chat
+   button painted with it would change colour as they browsed. The copper
+   below is local and fixed.
+   ========================================================================= */
+
+.chat {
+  /* Copper, pulled toward the mascot's orange (#FC5400) and desaturated so
+     it sits in an architectural palette rather than shouting. 5.4:1 against
+     the panel; near-black text on it reads 5.8:1. Both clear AA. */
+  --chat-accent:      #d4763a;
+  --chat-accent-soft: rgba(212, 118, 58, 0.13);
+  --chat-accent-line: rgba(212, 118, 58, 0.42);
+
+  --chat-panel:  #16191c;
+  --chat-raised: #1c2024;
+  --chat-bubble: #f4f5f3;   /* the speech bubble, near-white */
+  --chat-bubble-ink: #15181b;
+
+  /* Above the topbar (60), below the favourites drawer (89/90) so that
+     drawer still covers everything, and below the toast (100) which is a
+     transient centre-bottom pill. */
+  position: fixed;
+  z-index: 80;
+  right: clamp(16px, 2.2vw, 28px);
+  bottom: clamp(16px, 2.2vw, 28px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+  /* The wrapper must not eat clicks meant for the page behind it. */
+  pointer-events: none;
+}
+.chat > * { pointer-events: auto; }
+
+/* =====================================================================
+   1. CLOSED STATE - bubble above, mascot below
+   ===================================================================== */
+
+.chat__launcher {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  /* The button's own focus ring would trace an awkward L around the bubble
+     and the mascot, so the ring is drawn on the bubble instead - see below. */
+  outline: none;
+  transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+
+/* Hidden, not removed, while the panel is open: keeping it in the layout
+   means the panel has something stable to sit above. */
+.chat[data-open="true"] .chat__launcher {
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(6px) scale(0.96);
+}
+
+/* --- the speech bubble --- */
+
+.chat__bubble {
+  position: relative;
+  max-width: 15.5rem;
+  padding: 10px 15px 11px;
+  border-radius: 14px;
+  background: var(--chat-bubble);
+  color: var(--chat-bubble-ink);
+  font-size: 13.5px;
+  line-height: 1.45;
+  font-weight: 450;
+  text-align: left;
+  text-wrap: pretty;
+  box-shadow: 0 14px 30px -16px rgba(0, 0, 0, 0.9);
+  transition: transform var(--dur) var(--ease-out), box-shadow var(--dur) var(--ease);
+}
+
+/* The tail. Two stacked triangles would need a border trick; a rotated
+   square inheriting the bubble's own background is one element and stays
+   correct if the bubble colour ever changes. It sits on the bottom-right,
+   pointing down at the mascot's head. */
+.chat__bubble::after {
+  content: "";
+  position: absolute;
+  right: 26px;
+  bottom: -5px;
+  width: 12px;
+  height: 12px;
+  background: inherit;
+  border-radius: 2px;
+  transform: rotate(45deg);
+}
+
+/* The ring is drawn here rather than on the button so keyboard focus reads
+   as a clean rounded outline around the readable half of the launcher. */
+.chat__launcher:focus-visible .chat__bubble {
+  outline: 2px solid var(--chat-accent);
+  outline-offset: 3px;
+}
+
+/* --- the mascot --- */
+
+.chat__mascot {
+  display: block;
+  width: auto;
+  max-width: none;
+  height: 104px;
+  /* Reserved from the source ratio so nothing shifts while it decodes. */
+  aspect-ratio: 1240 / 1191;
+  margin-right: 4px;
+  /* transform-origin at the feet: a bob and a tilt then read as the
+     character shifting its weight rather than the whole picture sliding. */
+  transform-origin: 50% 88%;
+  /* Lifts the black fur off a near-black page just enough to keep the
+     silhouette; the orange and the hammer carry the rest on their own. */
+  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.55));
+  will-change: transform;
+}
+
+/* =====================================================================
+   2. MASCOT MOTION
+   The artwork is one flattened image, so every one of these moves the
+   whole picture. Nothing is separated, stretched or warped.
+   ===================================================================== */
+
+/* Idle: a 3px rise, a 1.5px drift and a degree of tilt over 4.6s. Slow
+   enough to read as breathing rather than as a widget demanding attention.
+   Transform only, so it never triggers layout. */
+@keyframes chatIdle {
+  0%   { transform: translate3d(0, 0, 0)        rotate(0deg); }
+  25%  { transform: translate3d(-1.5px, -2px, 0) rotate(-0.8deg); }
+  50%  { transform: translate3d(0, -3px, 0)      rotate(0deg); }
+  75%  { transform: translate3d(1.5px, -2px, 0)  rotate(0.8deg); }
+  100% { transform: translate3d(0, 0, 0)         rotate(0deg); }
+}
+
+/* Acknowledgement on click: up, over-settle, done. 460ms, so the panel is
+   already on its way in - the mascot is not holding anything up. */
+@keyframes chatNudge {
+  0%   { transform: translateY(0)     rotate(0deg)    scale(1); }
+  30%  { transform: translateY(-9px)  rotate(-3.5deg) scale(1.04); }
+  60%  { transform: translateY(1px)   rotate(1.5deg)  scale(0.99); }
+  100% { transform: translateY(0)     rotate(0deg)    scale(1); }
+}
+
+.chat__mascot { animation: chatIdle 4.6s var(--ease) infinite; }
+
+/* Hover / keyboard focus: same idea, a little more of it, and quicker.
+   Restrained enough that it reads as the character noticing you. */
+.chat__launcher:hover .chat__mascot,
+.chat__launcher:focus-visible .chat__mascot {
+  animation-duration: 2.9s;
+  transform: translateY(-2px) scale(1.045);
+}
+.chat__launcher:hover .chat__bubble,
+.chat__launcher:focus-visible .chat__bubble {
+  transform: translateY(-2px);
+  box-shadow: 0 18px 34px -16px rgba(0, 0, 0, 0.95);
+}
+.chat__launcher:active .chat__mascot { transform: translateY(1px) scale(0.99); }
+
+/* Set by chat.js for the length of the acknowledgement, then removed. */
+.chat__mascot.is-nudging {
+  animation: chatNudge 460ms var(--ease-out) 1;
+}
+
+/* The mascot also appears small in the panel header. It sits still there -
+   the visitor is reading, not being invited. */
+.chat__avatar {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  /* contain, not cover: the artwork is nearly square, so cropping to the
+     head would need a second asset, and squashing the character to fill a
+     square is exactly the distortion this feature must not do. */
+  object-fit: contain;
+}
+
+/* =====================================================================
+   3. THE PANEL
+   ===================================================================== */
+
+.chat__panel {
+  width: min(366px, calc(100vw - 32px));
+  max-height: min(560px, calc(100dvh - 120px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 16px;
+  border: 1px solid var(--line-strong);
+  background: var(--chat-panel);
+  box-shadow: 0 30px 70px -30px rgba(0, 0, 0, 1);
+  /* Closed: out of the layout AND out of the tab order. visibility does the
+     second part, which is why it is animated rather than display. */
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(10px) scale(0.985);
+  transform-origin: 100% 100%;
+  transition: opacity 180ms var(--ease),
+              transform 220ms var(--ease-out),
+              visibility 220ms;
+}
+.chat[data-open="true"] .chat__panel {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+}
+
+/* --- header --- */
+
+.chat__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 15px 14px 15px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--chat-raised);
+}
+.chat__head-text { flex: 1; min-width: 0; }
+.chat__title {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 550;
+  line-height: 1.25;
+  color: var(--ink);
+  letter-spacing: 0.005em;
+}
+.chat__status {
+  margin: 3px 0 0;
+  font-size: 11.8px;
+  line-height: 1.4;
+  color: var(--ink-muted);
+}
+
+.chat__close {
+  flex: none;
+  /* 40px of hit area for a 16px glyph, taken to 44 on touch widths below. */
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  color: var(--ink-muted);
+  background: none;
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease),
+              background var(--dur-fast) var(--ease),
+              border-color var(--dur-fast) var(--ease);
+}
+.chat__close:hover { color: var(--ink); background: var(--bg-hover); }
+.chat__close:focus-visible { outline: 2px solid var(--chat-accent); outline-offset: 2px; }
+.chat__close svg { width: 16px; height: 16px; }
+
+/* --- conversation --- */
+
+.chat__log {
+  flex: 1;
+  min-height: 96px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px 16px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  scrollbar-width: thin;
+}
+
+.chat__msg {
+  max-width: 84%;
+  padding: 9px 13px 10px;
+  border-radius: 13px;
+  font-size: 13.4px;
+  line-height: 1.5;
+  /* Visitors paste addresses and part numbers in here. */
+  overflow-wrap: anywhere;
+  animation: chatMsgIn 220ms var(--ease-out) backwards;
+}
+@keyframes chatMsgIn {
+  from { opacity: 0; transform: translateY(5px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* From the shop: raised surface, left aligned. */
+.chat__msg--them {
+  align-self: flex-start;
+  background: var(--chat-raised);
+  border: 1px solid var(--line);
+  border-bottom-left-radius: 5px;
+  color: var(--ink);
+}
+/* From the visitor: copper wash, right aligned. Tinted rather than filled,
+   so a long conversation does not turn into a column of orange blocks. */
+.chat__msg--me {
+  align-self: flex-end;
+  background: var(--chat-accent-soft);
+  border: 1px solid var(--chat-accent-line);
+  border-bottom-right-radius: 5px;
+  color: var(--ink);
+}
+
+/* The standing note that this is a preview. Not a message - it is the page
+   talking to the visitor, and it is styled so it can never be mistaken for
+   the shop replying. */
+.chat__note {
+  align-self: center;
+  max-width: 92%;
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  letter-spacing: 0.03em;
+  text-align: center;
+  color: var(--ink-faint);
+}
+
+/* Typing dots while the demo reply is pending. */
+.chat__typing {
+  align-self: flex-start;
+  display: flex;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 13px;
+  border-bottom-left-radius: 5px;
+  background: var(--chat-raised);
+  border: 1px solid var(--line);
+}
+.chat__typing span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ink-dim);
+  animation: chatDot 1.25s var(--ease) infinite;
+}
+.chat__typing span:nth-child(2) { animation-delay: 0.16s; }
+.chat__typing span:nth-child(3) { animation-delay: 0.32s; }
+@keyframes chatDot {
+  0%, 60%, 100% { opacity: 0.32; transform: translateY(0); }
+  30%           { opacity: 1;    transform: translateY(-3px); }
+}
+
+/* --- composer --- */
+
+.chat__form {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 11px 12px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--chat-raised);
+}
+
+.chat__input {
+  flex: 1;
+  min-width: 0;
+  /* Two lines to start; grown to a cap by chat.js as the visitor types.
+     44px matches the Send button beside it and clears the touch-target
+     guidance without making the composer look like a search bar. */
+  height: 44px;
+  max-height: 108px;
+  padding: 11px 13px;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 14px;   /* iOS zooms the page for anything under 16px on focus;
+                        14px with the viewport already locked is the balance
+                        the rest of this site's forms use. */
+  line-height: 1.45;
+  resize: none;
+  overflow-y: auto;
+}
+.chat__input::placeholder { color: var(--ink-faint); }
+.chat__input:focus {
+  outline: none;
+  border-color: var(--chat-accent-line);
+  box-shadow: 0 0 0 3px var(--chat-accent-soft);
+}
+
+.chat__send {
+  flex: none;
+  height: 44px;
+  min-width: 44px;
+  padding: 0 15px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: var(--chat-accent);
+  color: #14100c;
+  font-size: 13.5px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: filter var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
+}
+.chat__send:hover { filter: brightness(1.09); }
+.chat__send:focus-visible { outline: 2px solid var(--chat-accent); outline-offset: 2px; }
+.chat__send:disabled { opacity: 0.42; cursor: default; filter: none; }
+
+/* =====================================================================
+   4. RESPONSIVE
+   ===================================================================== */
+
+/* Tablet: the mascot comes down a little so it stays a companion to the
+   page rather than a fixture on it. */
+@media (max-width: 900px) {
+  .chat__mascot { height: 92px; }
+  .chat__bubble { max-width: 14rem; font-size: 13px; }
+}
+
+/* Phones. The toast sits centre-bottom 30px up, so the launcher lifts clear
+   of that band, and the panel takes the full width it can get. */
+@media (max-width: 560px) {
+  .chat { right: 12px; bottom: 14px; gap: 10px; }
+  .chat__mascot { height: 76px; }
+  .chat__bubble { max-width: 12.5rem; font-size: 12.5px; padding: 9px 13px 10px; }
+  .chat__bubble::after { right: 20px; }
+  .chat__panel {
+    width: calc(100vw - 24px);
+    /* Leaves the address bar and the launcher row their space, and keeps the
+       composer above the software keyboard: dvh tracks the shrunken viewport
+       where it is supported. */
+    max-height: min(78dvh, calc(100dvh - 96px));
+  }
+  .chat__log { padding: 14px 13px 6px; }
+  .chat__msg { max-width: 88%; }
+  /* Thumb-sized on touch. */
+  .chat__close { width: 44px; height: 44px; }
+}
+
+/* The narrowest phones still in real use. Everything has to fit at 320px
+   with nothing clipped and the Send button still reachable by thumb. */
+@media (max-width: 380px) {
+  .chat { right: 10px; bottom: 12px; }
+  .chat__mascot { height: 66px; }
+  .chat__bubble { max-width: 11rem; font-size: 12px; }
+  .chat__panel { width: calc(100vw - 20px); }
+  .chat__form { padding: 10px; gap: 7px; }
+  .chat__send { padding: 0 12px; }
+}
+
+/* A short landscape phone has no room for a 560px panel. */
+@media (max-height: 520px) {
+  .chat__panel { max-height: calc(100dvh - 74px); }
+  .chat__mascot { height: 64px; }
+}
+
+/* =====================================================================
+   5. REDUCED MOTION
+   Every animation in this file is decoration. None of it carries meaning
+   that is lost by removing it, so all of it goes - the launcher, the
+   panel, the messages and the typing indicator all still work, they just
+   arrive instead of moving.
+   ===================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .chat__mascot,
+  .chat__mascot.is-nudging,
+  .chat__typing span,
+  .chat__msg {
+    animation: none !important;
+  }
+  .chat__launcher,
+  .chat__panel,
+  .chat__bubble,
+  .chat__close,
+  .chat__send {
+    transition-duration: 1ms !important;
+  }
+  .chat__launcher:hover .chat__mascot,
+  .chat__launcher:focus-visible .chat__mascot,
+  .chat__launcher:active .chat__mascot,
+  .chat__launcher:hover .chat__bubble,
+  .chat__launcher:focus-visible .chat__bubble {
+    transform: none;
+  }
+  .chat[data-open="true"] .chat__launcher { transform: none; }
+  .chat__panel { transform: none; }
+}

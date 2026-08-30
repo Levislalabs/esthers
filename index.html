@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="assets/css/base.css">
 <link rel="stylesheet" href="assets/css/home.css">
 <link rel="stylesheet" href="assets/css/configurator.css">
+<link rel="stylesheet" href="assets/css/chat.css">
 </head>
 <body>
 
@@ -601,6 +602,12 @@
   <span id="toast-text"></span>
 </div>
 
+<!-- ====================================================== customer help -->
+<!-- PROTOTYPE. The launcher, the speech bubble and the whole panel are
+     built by assets/js/chat.js into this one element. Nothing typed in it
+     is sent anywhere - there is no backend behind this yet. -->
+<div class="chat" id="chat"></div>
+
 <script src="assets/js/util.js"></script>
 <script src="assets/js/data/colours.js"></script>
 <script src="assets/js/data/materials.js"></script>
@@ -608,6 +615,7 @@
 <script src="assets/js/data/locations.js"></script>
 <script src="assets/js/render.js"></script>
 <script src="assets/js/app.js"></script>
+<script src="assets/js/chat.js"></script>
 <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
 </body>
 </html>
