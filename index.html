@@ -17,22 +17,16 @@
 <!-- ================================================================ nav -->
 <header class="topbar">
   <div class="shell topbar__inner">
+    <!-- Set as live text, not artwork. The wordmark raster was drawn 1898px
+         wide and the bar renders it at 24px tall - a 79:1 downscale that no
+         amount of resampling keeps sharp. Text costs nothing, stays exact on
+         retina, and scales with the user's own font settings. The second
+         line drops out under 640px, which is what the artwork's phone
+         variant used to do. -->
     <a class="logo--nav" href="#top">
-      <picture>
-        <!-- The line needs about 280px before "Architectural Sheet Metal"
-             drops under a 7px x-height. The bar has that everywhere except
-             on a phone, where the name alone runs instead. -->
-        <source media="(max-width: 639px)"
-                srcset="assets/img/logo-wordmark-short-260.webp 260w,
-                        assets/img/logo-wordmark-short.webp 858w"
-                sizes="120px">
-        <img src="assets/img/logo-wordmark-400.webp"
-             srcset="assets/img/logo-wordmark-400.webp 400w,
-                     assets/img/logo-wordmark-720.webp 720w"
-             sizes="clamp(295px, 24vw, 321px)"
-             width="1898" height="148" loading="eager" decoding="async"
-             alt="Esther's Architectural Sheet Metal, back to top">
-      </picture>
+      <span class="logo--nav__name">ESTHER'S</span>
+      <span class="logo--nav__sub">Architectural Sheet Metal</span>
+      <span class="visually-hidden">, back to top</span>
     </a>
 
     <nav class="topnav" aria-label="Sections">

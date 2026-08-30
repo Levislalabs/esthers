@@ -165,46 +165,72 @@ h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 300; margin: 0; 
 
 /* ------------------------------------------------------------------ logo */
 
-/* Two pieces of supplied artwork: the stacked lockup in the hero and the
-   footer, and the horizontal wordmark in the top bar. The lockup was drawn on
+/* The hero and the footer carry the supplied stacked lockup. It was drawn on
    white and its files carry a 0.60 gamma so the metal still reads against
-   this background - logo-master.webp is that original, untouched. The
-   wordmark arrived on black and needed no such lift, only its background
-   keyed out. */
+   this background - logo-master.webp is that original, untouched.
+
+   The top bar does NOT use artwork. See below. */
 
 /* --- in the top bar --- */
 
-/* The whole thing is the supplied artwork, sized by height so it sits on the
-   bar's optical centre line rather than by width. Below 560px the <picture>
-   swaps in the name on its own, so the ratio is restated there and the box
-   stays reserved at both. */
+/* Set in live text rather than the supplied wordmark raster.
+
+   The artwork is 1898px wide and the bar shows it 24px tall. Downscaling by
+   that much softens every stem no matter how good the resampling is, and the
+   metallic shading in the original only made the mush more visible. Type
+   solves it outright: one weight change and one colour change carry the same
+   hierarchy the artwork was drawing, and it stays exact at any zoom, on any
+   display density.
+
+   Two flat colours, nothing else. No gradient, no glow, no shadow, no
+   texture - anything of that kind at 17px is what made it look fuzzy in the
+   first place. */
 .logo--nav {
   display: inline-flex;
-  align-items: center;
+  align-items: baseline;
+  gap: 9px;
+  color: inherit;
   text-decoration: none;
-  /* Never let the bar squeeze it: a flex-shrunk raster is a stretched one. */
+  white-space: nowrap;
+  /* Never let the bar squeeze the pair onto two lines. */
   flex: none;
+  transition: opacity var(--dur) var(--ease);
 }
-.logo--nav img {
-  display: block;
-  width: auto;
-  max-width: none;
-  height: clamp(23px, 1.85vw, 25px);
-  aspect-ratio: 1898 / 148;
-  transition: filter var(--dur) var(--ease);
-}
-.logo--nav:hover img,
-.logo--nav:focus-visible img { filter: brightness(1.14); }
 
-/* Under 640px the line no longer clears a 7px x-height in the space the bar
-   can spare, so the <picture> serves the name on its own. */
+.logo--nav__name {
+  font-family: var(--font-display);
+  font-size: clamp(16px, 1.3vw, 17px);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  /* Solid white, brighter than --ink, so the name is the one thing in the bar
+     at full strength. */
+  color: #ffffff;
+}
+
+.logo--nav__sub {
+  font-family: var(--font-body);
+  font-size: clamp(11.5px, 0.95vw, 12.5px);
+  font-weight: 400;
+  letter-spacing: 0.115em;
+  line-height: 1;
+  /* Deliberately lighter than the name but well clear of the nav links, so it
+     reads as part of the mark rather than as another menu item. 12.7:1. */
+  color: #c9d1d7;
+}
+
+.logo--nav:hover,
+.logo--nav:focus-visible { opacity: 0.78; }
+
+/* Under 640px the bar cannot spare the width for the second line, so the name
+   runs on its own - the same thing the artwork's phone variant used to do. */
 @media (max-width: 639px) {
-  .logo--nav img { height: 22px; aspect-ratio: 858 / 148; }
+  .logo--nav__sub { display: none; }
 }
 /* The narrowest phones need one more step down to keep the quote button on
    the same row. */
 @media (max-width: 400px) {
-  .logo--nav img { height: 18px; }
+  .logo--nav__name { font-size: 15px; letter-spacing: 0.08em; }
 }
 
 /* --- closing the page --- */
