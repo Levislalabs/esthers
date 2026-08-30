@@ -855,10 +855,10 @@
   }
 
   /*
-   * The note under the cards for anyone unsure which shop to ring. The owner
+   * The note above the cards for anyone unsure which shop to ring. The owner
    * writes one sentence with {phone} in it; the number is taken from whichever
    * location is marked primary, so it can never drift out of step with the
-   * card above it.
+   * card below it.
    */
   function buildContactHelp(section) {
     var note = $('#contact-help');

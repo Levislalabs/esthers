@@ -182,7 +182,7 @@ intro: 'Two Burnaby locations. One team ready to help with your sheet metal proj
 
 ---
 
-## How to change the note under the two cards
+## How to change the note above the two cards
 
 That line lives at the top of the same file, just under `intro`:
 
@@ -195,7 +195,7 @@ helpText:
 Write `{phone}` wherever the number should appear. It becomes a clickable
 number on its own — you do not write the link. The number used is the phone of
 whichever location has `primary: true`, so it can never drift out of step with
-the card above it.
+the card below it.
 
 To remove the note entirely, set it to two quotes with nothing between:
 

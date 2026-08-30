@@ -38,7 +38,7 @@ CM.contactSection = {
   /* The paragraph under the heading. */
   intro: 'Two Burnaby locations. One team ready to help with your sheet metal project.',
 
-  /* The small note under the two cards, for anyone unsure which shop to
+  /* The small note above the two cards, for anyone unsure which shop to
      ring. Write {phone} where the number should go and it becomes a
      clickable number on its own - you do not write the link.
      The number used is the phone of whichever location has primary: true.
