@@ -1,0 +1,81 @@
+# =========================================================================
+# Supabase local configuration.
+#
+# project_id is a LOCAL label only - it names the local Docker stack that
+# `supabase start` creates. It is not a credential and not the remote
+# project reference; linking to the real project is a separate, deliberate
+# `supabase link` step.
+#
+# There are no secrets in this file and there never should be. Local keys
+# live in supabase/.env (gitignored); deployed keys live in the Supabase
+# dashboard.
+# =========================================================================
+
+project_id = "esthers-chat"
+
+[api]
+enabled = true
+port = 54321
+# Only the public schema is exposed through the Data API. The chat tables
+# live there but grant nothing to anon, so exposure alone gives no access.
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+# Ceiling on rows a single Data API request can return.
+max_rows = 500
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 16
+
+[studio]
+enabled = true
+port = 54323
+
+[inbucket]
+# Local mail catcher, so password-reset and invite mail during development
+# never leaves the machine.
+enabled = true
+port = 54324
+
+[auth]
+enabled = true
+site_url = "http://localhost:8000"
+additional_redirect_urls = ["http://localhost:8000", "http://localhost:8001"]
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+refresh_token_reuse_interval = 10
+
+# Staff accounts are created by an administrator, never self-served. This
+# is the single most important auth setting here: with signups open, anyone
+# could create an account. They still could not read a conversation - that
+# needs an active staff_profiles row - but there is no reason to allow it.
+enable_signup = false
+
+[auth.email]
+enable_signup = false
+enable_confirmations = true
+double_confirm_changes = true
+
+[functions.chat-start]
+# Public: called by the website before any customer identity exists, so it
+# cannot require a JWT. It is protected by the rate limiter and by the fact
+# that it can only ever create a brand new empty conversation.
+verify_jwt = false
+
+[functions.chat-send]
+# Public: authenticated by the customer's conversation token, which the JWT
+# layer knows nothing about.
+verify_jwt = false
+
+[functions.chat-read]
+verify_jwt = false
+
+[functions.staff-conversations]
+# Staff only. The platform rejects the request before our code runs unless
+# a valid Supabase JWT is present; requireActiveStaff() then checks it is a
+# real, active staff member. Both layers matter.
+verify_jwt = true
+
+[functions.staff-actions]
+verify_jwt = true

@@ -1,1 +1,22 @@
 node_modules/
+
+# ---------------------------------------------------------------------
+# Secrets. Never commit any of these.
+#
+# The .example files ARE tracked - they hold placeholders only and are how
+# a new machine learns what to fill in.
+# ---------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+supabase/.env
+supabase/.env.*
+!supabase/.env.example
+
+# Real staff inbox configuration. staff/config.example.js is tracked.
+staff/config.js
+
+# Supabase CLI local state, including the linked project reference and any
+# cached credentials.
+supabase/.branches/
+supabase/.temp/

@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en-CA">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inbox | Esther's Sheet Metal</title>
+
+<!-- Private staff tool. Not linked from the public site, and of no use to
+     anyone without a Supabase account that has an active staff_profiles
+     row behind it. -->
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="theme-color" content="#0a0b0c">
+
+<link rel="stylesheet" href="../assets/css/base.css">
+<link rel="stylesheet" href="staff.css">
+</head>
+<body class="staff-body">
+
+<header class="staff-top">
+  <div class="staff-top__brand">
+    <span class="staff-top__name">ESTHER'S</span>
+    <span class="staff-top__sub">Inbox</span>
+  </div>
+  <div class="staff-top__right">
+    <span class="staff-top__who" id="who" hidden></span>
+    <button class="staff-btn staff-btn--quiet" id="sign-out" type="button" hidden>Sign out</button>
+  </div>
+</header>
+
+<main class="staff-main">
+
+  <!-- 1. Not configured. The default state: this page ships with no
+          Supabase URL and no key, so it cannot reach anything. -->
+  <section class="staff-panel" id="view-setup">
+    <h1 class="staff-h1">Inbox not configured</h1>
+    <p class="staff-lede">
+      This page needs to know which Supabase project to talk to before it can
+      do anything. Nothing here is connected yet.
+    </p>
+    <ol class="staff-steps">
+      <li>Copy <code>staff/config.example.js</code> to <code>staff/config.js</code>.</li>
+      <li>Fill in the project URL and the <strong>publishable</strong> key.</li>
+      <li>Reload this page.</li>
+    </ol>
+    <p class="staff-note">
+      <strong>Only the publishable key belongs here.</strong> It is designed to
+      be visible in a browser. The secret key must never be pasted into this
+      file, or into any other file the browser can read — it belongs only in
+      the Edge Function environment.
+    </p>
+    <p class="staff-note">
+      <code>staff/config.js</code> is gitignored, so it is never committed.
+    </p>
+  </section>
+
+  <!-- 2. Sign in -->
+  <section class="staff-panel" id="view-login" hidden>
+    <h1 class="staff-h1">Esther's staff sign in</h1>
+    <p class="staff-lede">Use the account an administrator created for you.</p>
+
+    <form class="staff-form" id="login-form" novalidate>
+      <label class="staff-field">
+        <span class="staff-field__label">Email</span>
+        <input class="staff-input" id="login-email" type="email"
+               autocomplete="username" required>
+      </label>
+      <label class="staff-field">
+        <span class="staff-field__label">Password</span>
+        <input class="staff-input" id="login-password" type="password"
+               autocomplete="current-password" required>
+      </label>
+      <button class="staff-btn staff-btn--primary" id="login-submit" type="submit">Sign in</button>
+      <p class="staff-error" id="login-error" role="alert" hidden></p>
+    </form>
+
+    <p class="staff-note">
+      Passwords are handled entirely by Supabase Auth. This page never stores
+      one, and there is no shared password anywhere in the site's code.
+    </p>
+  </section>
+
+  <!-- 3. Signed in, but not staff -->
+  <section class="staff-panel" id="view-denied" hidden>
+    <h1 class="staff-h1">Not authorised</h1>
+    <p class="staff-lede">
+      You are signed in, but this account is not an active member of Esther's
+      staff, so it cannot see any customer conversations.
+    </p>
+    <p class="staff-note">
+      Access is granted by an administrator adding an active row to
+      <code>staff_profiles</code>. Having an account is not enough on its own,
+      and this page cannot grant it to you.
+    </p>
+    <button class="staff-btn" id="denied-sign-out" type="button">Sign out</button>
+  </section>
+
+  <!-- 4. The inbox -->
+  <section class="staff-inbox" id="view-inbox" hidden>
+    <aside class="staff-list" aria-label="Conversations">
+      <div class="staff-list__head">
+        <h2 class="staff-h2">Conversations</h2>
+        <div class="staff-filters" role="group" aria-label="Filter by status">
+          <button class="staff-chip is-on" data-status="open"   type="button">Open</button>
+          <button class="staff-chip"       data-status="closed" type="button">Closed</button>
+          <button class="staff-chip"       data-status="all"    type="button">All</button>
+        </div>
+      </div>
+      <ul class="staff-list__items" id="conversation-list"></ul>
+      <p class="staff-empty" id="list-empty" hidden>No conversations yet.</p>
+    </aside>
+
+    <section class="staff-thread" aria-label="Conversation">
+      <div class="staff-thread__empty" id="thread-empty">
+        <p>Select a conversation on the left.</p>
+      </div>
+
+      <div class="staff-thread__inner" id="thread" hidden>
+        <header class="staff-thread__head">
+          <div>
+            <h2 class="staff-h2" id="thread-title">Conversation</h2>
+            <p class="staff-thread__meta" id="thread-meta"></p>
+          </div>
+          <button class="staff-btn staff-btn--quiet" id="toggle-status" type="button">Close</button>
+        </header>
+
+        <div class="staff-log" id="thread-log" role="log" aria-live="polite"></div>
+
+        <form class="staff-composer" id="reply-form" novalidate>
+          <label class="visually-hidden" for="reply-input">Reply</label>
+          <textarea class="staff-input staff-input--reply" id="reply-input" rows="2"
+                    placeholder="Write a reply..." maxlength="4000"></textarea>
+          <button class="staff-btn staff-btn--primary" id="reply-send" type="submit" disabled>Send</button>
+        </form>
+        <p class="staff-error" id="thread-error" role="alert" hidden></p>
+      </div>
+    </section>
+  </section>
+
+</main>
+
+<!-- Supabase JS from a CDN, pinned to an exact version. The public site is
+     plain HTML/CSS/JS with no build step, and this keeps it that way: one
+     script tag, no npm, no bundler. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+
+<!-- Local, gitignored, and absent by default. Missing is not an error: the
+     page detects it and shows the setup panel above. -->
+<script src="config.js" onerror="window.__staffConfigMissing = true"></script>
+
+<script src="staff.js"></script>
+</body>
+</html>
