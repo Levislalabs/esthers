@@ -74,6 +74,18 @@
       ]);
       rail.appendChild(card);
     });
+
+    /* The materials rail overflows at every width - eight cards at 216px is
+       wider than any screen - so unlike the gallery it always needs the
+       controls. The edge fades on .selector__rail-wrap have always been
+       there, but a permanent fade on both sides says nothing about which
+       way there is more, or how much. Anchored to the wrapper so the nav
+       sits under the fades rather than inside the scrolling area. */
+    railAffordance(rail, {
+      itemSelector: '.mat-card',
+      label: 'material',
+      insertAfter: rail.closest('.selector__rail-wrap') || rail
+    });
   }
 
   function selectMaterial(id, opts) {
@@ -938,6 +950,17 @@
         style: { objectPosition: p.objectPosition || 'center' }
       });
 
+      /* Two sizes when the owner has supplied one, so a phone is not made to
+         download a picture sized for a desktop. `sizes` tells the browser how
+         wide the card will actually be BEFORE layout happens, which is the
+         only way it can pick correctly; the values mirror the card widths in
+         home.css. A photo with no imageLarge simply serves its one file. */
+      if (p.imageLarge) {
+        img.setAttribute('srcset', p.image + ' 720w, ' + p.imageLarge + ' 1200w');
+        img.setAttribute('sizes',
+          '(min-width: 1000px) min(33vw, 440px), (min-width: 640px) min(44vw, 340px), min(78vw, 320px)');
+      }
+
       /* A missing file falls back to the labelled plate every other photo on
          the page uses, rather than a broken-image icon. */
       var frame = el('div', { class: 'work__frame slot', 'data-slot': true }, [
@@ -953,14 +976,221 @@
         warnWork('the file "' + p.image + '" could not be loaded - check the name and that it is in assets/img/work/');
       });
 
-      grid.appendChild(el('figure', { class: 'work' }, [
-        frame,
-        el('figcaption', {}, [
-          el('span', { class: 'work__title', text: p.title || '' }),
-          el('span', { class: 'work__meta', text: p.caption || '' })
-        ])
-      ]));
+      /* The small grey line is optional. An empty span still occupies its
+         line box and its gap, so a card with no caption would sit taller
+         than its neighbours for no reason - leave the element out instead. */
+      var captionText = (p.caption || '').trim();
+      var figcaption = el('figcaption', {}, [
+        el('span', { class: 'work__title', text: p.title || '' }),
+        captionText ? el('span', { class: 'work__meta', text: captionText }) : null
+      ]);
+
+      grid.appendChild(el('figure', { class: 'work' }, [frame, figcaption]));
     });
+
+    makeWorkScrollable(grid);
+  }
+
+  /*
+   * Below 1000px the gallery becomes one sideways-scrolling row (see
+   * .work-grid in home.css). The scrolling itself is the browser's, not
+   * ours - but a scroll box whose contents are not focusable is
+   * unreachable by keyboard, so it needs a tab stop and a name of its own.
+   *
+   * Given only when it actually overflows. Adding tabindex unconditionally
+   * would leave a tab stop on desktop that focuses a box which does not
+   * scroll, which is worse than not having one.
+   */
+  function makeWorkScrollable(grid) {
+    var sync = function () {
+      var scrollable = grid.scrollWidth > grid.clientWidth + 1;
+      if (scrollable) {
+        grid.setAttribute('tabindex', '0');
+        grid.setAttribute('role', 'group');
+        grid.setAttribute('aria-label', 'Recent fabrication, scroll sideways for more');
+      } else {
+        grid.removeAttribute('tabindex');
+        grid.removeAttribute('role');
+        grid.removeAttribute('aria-label');
+      }
+    };
+
+    sync();
+    /* Images arrive after layout, and a rotated phone changes the answer. */
+    window.addEventListener('resize', sync);
+    window.addEventListener('load', sync);
+
+    railAffordance(grid, {
+      itemSelector: '.work',
+      label: 'photo',
+      insertAfter: grid
+    });
+  }
+
+  /* ===================================================================
+     SCROLLING RAILS - saying out loud that there is more
+
+     A row that scrolls sideways looks identical to a row that does not.
+     The partly visible card at the edge is a hint, and it is easy to
+     miss; with a mouse there is often no obvious way to move the row at
+     all, because a trackpad's sideways gesture is not something everyone
+     knows they have.
+
+     So the state gets stated: how many there are, which one you are on,
+     and a pair of arrows that move it. Built only for rails that
+     actually overflow - a row that fits shows nothing - and rebuilt on
+     resize, because a phone turned sideways changes the answer.
+     =================================================================== */
+
+  function railAffordance(rail, opts) {
+    if (!rail) return;
+
+    var items = function () {
+      return Array.prototype.slice.call(rail.querySelectorAll(opts.itemSelector));
+    };
+    var nav = null;
+    var dots = [];
+
+    function overflows() { return rail.scrollWidth > rail.clientWidth + 2; }
+
+    /* Which item is nearest the left edge. Comparing against the rail's own
+       box rather than the page means this stays right whatever the rail's
+       padding or the page's scroll position. */
+    function activeIndex() {
+      var list = items();
+      var railLeft = rail.getBoundingClientRect().left;
+      var best = 0;
+      var bestDist = Infinity;
+      for (var i = 0; i < list.length; i++) {
+        var d = Math.abs(list[i].getBoundingClientRect().left - railLeft);
+        if (d < bestDist - 1) { bestDist = d; best = i; }
+      }
+      /* Scrolled hard to the end: the last item is the honest answer even
+         when an earlier one happens to sit closer to the left edge. */
+      if (rail.scrollLeft >= rail.scrollWidth - rail.clientWidth - 2) {
+        best = list.length - 1;
+      }
+      return best;
+    }
+
+    function scrollToIndex(i) {
+      var list = items();
+      if (!list[i]) return;
+      rail.scrollTo({
+        left: list[i].offsetLeft - rail.offsetLeft,
+        behavior: prefersReducedMotion() ? 'auto' : 'smooth'
+      });
+    }
+
+    function step(dir) {
+      var i = activeIndex() + dir;
+      scrollToIndex(Math.max(0, Math.min(items().length - 1, i)));
+    }
+
+    function build() {
+      var list = items();
+      nav = el('div', { class: 'rail-nav' });
+
+      var prev = el('button', {
+        class: 'rail-nav__arrow', type: 'button',
+        'aria-label': 'Previous ' + opts.label
+      });
+      prev.innerHTML = arrowSvg('left');
+      prev.addEventListener('click', function () { step(-1); });
+
+      var next = el('button', {
+        class: 'rail-nav__arrow', type: 'button',
+        'aria-label': 'Next ' + opts.label
+      });
+      next.innerHTML = arrowSvg('right');
+      next.addEventListener('click', function () { step(1); });
+
+      var dotWrap = el('div', {
+        class: 'rail-nav__dots', role: 'group',
+        'aria-label': 'Jump to a ' + opts.label
+      });
+      dots = list.map(function (_, i) {
+        var d = el('button', {
+          class: 'rail-nav__dot', type: 'button',
+          'aria-label': 'Show ' + opts.label + ' ' + (i + 1) + ' of ' + list.length
+        });
+        d.addEventListener('click', function () { scrollToIndex(i); });
+        dotWrap.appendChild(d);
+        return d;
+      });
+
+      /* The count in words as well as dots. A row of dots tells you how
+         many there are only once you have counted them; "1 / 6" does not
+         need counting, and it is what a screen reader announces. */
+      var count = el('span', {
+        class: 'rail-nav__count',
+        'aria-live': 'polite',
+        'aria-atomic': 'true'
+      });
+
+      nav.appendChild(prev);
+      nav.appendChild(dotWrap);
+      nav.appendChild(count);
+      nav.appendChild(next);
+
+      nav._prev = prev; nav._next = next; nav._count = count;
+
+      var anchor = opts.insertAfter || rail;
+      anchor.parentNode.insertBefore(nav, anchor.nextSibling);
+    }
+
+    function paint() {
+      if (!nav) return;
+      var i = activeIndex();
+      var total = items().length;
+
+      dots.forEach(function (d, n) {
+        if (n === i) d.setAttribute('aria-current', 'true');
+        else d.removeAttribute('aria-current');
+      });
+
+      nav._count.textContent = (i + 1) + ' / ' + total;
+
+      var atStart = rail.scrollLeft <= 2;
+      var atEnd = rail.scrollLeft >= rail.scrollWidth - rail.clientWidth - 2;
+      nav._prev.disabled = atStart;
+      nav._next.disabled = atEnd;
+    }
+
+    function sync() {
+      if (overflows()) {
+        if (!nav) build();
+        nav.hidden = false;
+        paint();
+      } else if (nav) {
+        nav.hidden = true;
+      }
+    }
+
+    /* rAF-throttled: a scroll fires far more often than a repaint is
+       useful, and the work here reads layout. */
+    var ticking = false;
+    rail.addEventListener('scroll', function () {
+      if (ticking) return;
+      ticking = true;
+      window.requestAnimationFrame(function () { paint(); ticking = false; });
+    }, { passive: true });
+
+    sync();
+    window.addEventListener('resize', sync);
+    window.addEventListener('load', sync);
+  }
+
+  function arrowSvg(dir) {
+    var d = dir === 'left' ? 'M14.5 5.5 8 12l6.5 6.5' : 'M9.5 5.5 16 12l-6.5 6.5';
+    return '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
+           '<path d="' + d + '" fill="none" stroke="currentColor" stroke-width="1.7" ' +
+           'stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  }
+
+  function prefersReducedMotion() {
+    return window.matchMedia &&
+           window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   }
 
   function warnWork(message) {

@@ -23,8 +23,8 @@ that looks like this:
 
 ```js
 {
-  id: 'cove-cap',
-  image: 'assets/img/work/cove-cap.jpg',
+  id: 'chase-cover',
+  image: 'assets/img/work/chase-cover-720.webp',
   title: 'Cove-profile cap',
   caption: 'Flared bell over stone',
   alt: 'Cove-profile chimney cap with a flared bell shape on a stone chimney.',
@@ -39,6 +39,7 @@ Here is what each line does:
 | --- | --- |
 | `id` | A nickname so the blocks can be told apart. Nobody sees it. |
 | `image` | Which photo file to show. |
+| `imageLarge` | Optional. A bigger copy of the same photo, for large screens. Leave the line out if you only have one size. |
 | `title` | The bold line under the photo. |
 | `caption` | The small grey line beside the title. |
 | `alt` | A description of the photo, for blind visitors and for Google. |
@@ -73,7 +74,7 @@ comma, a quote or a bracket. Undo your change, save, and try again.
 4. Find the block for the photo you're replacing and change the `image` line:
 
    ```js
-   image: 'assets/img/work/cove-cap.jpg',
+   image: 'assets/img/work/chase-cover-720.webp',
    ```
 
    to
@@ -124,8 +125,8 @@ the very last one.
 
 ```js
     {
-      id: 'louvre-cap-tile',
-      image: 'assets/img/work/louvre-cap-tile.jpg',
+      id: 'shroud-flared',
+      image: 'assets/img/work/shroud-flared-720.webp',
       title: 'Louvered cap on tile',
       caption: 'Draft with weather exclusion',
       alt: 'Louvered chimney cap with a hipped crown installed on a tile roof.',
@@ -240,3 +241,67 @@ quote so words don't run together.
   website is exactly where that gets noticed.
 - Keep your full-size originals somewhere else. The ones in this folder are
   the web-sized copies.
+
+---
+
+## Two sizes of the same photo
+
+You may see two lines for one photo:
+
+```js
+image:      'assets/img/work/chase-cover-720.webp',
+imageLarge: 'assets/img/work/chase-cover-1200.webp',
+```
+
+That is one photo saved twice, small and large. The browser picks: a phone
+takes the small one, a big desktop screen takes the large one. Nobody
+downloads more than they need, and the page stays quick on mobile data.
+
+**You do not have to do this.** One `image` line on its own works perfectly
+well. If you only have one copy of a photo, delete the `imageLarge` line and
+leave the rest alone.
+
+**A word about photo size.** A photo straight off a phone is usually 2 to 8
+megabytes. That is far bigger than a website needs — the card it sits in is
+only a few hundred pixels wide — and on a phone connection it is slow. The
+six photos here started at 21 MB in total and were saved down to 2 MB, which
+looks identical on screen. If you add a new photo straight from a phone, it
+will still work; just ask and it can be shrunk the same way.
+
+---
+
+## Why the photos slide sideways on a phone
+
+On a desktop the photos sit in a grid, three across.
+
+On a tablet or a phone they become **one row you swipe sideways** instead of
+a tall column you scroll through.
+
+That is deliberate. Six photos stacked one above another is a very long
+scroll on a phone, and most people give up before they reach the bottom —
+along with everything below the section. Sideways, the whole gallery is a
+couple of flicks, and the section stays about the same height however many
+photos you add.
+
+The next photo always peeks in from the right-hand edge. That sliver is what
+tells someone there is more to see, which is why there is no "swipe" label.
+
+**Adding a seventh photo costs nothing on a phone.** It makes the row one
+card longer, not the page.
+
+---
+
+## The arrows and the counter under the photos
+
+Under a row that scrolls you will see a small strip: an arrow, a row of
+dots, a counter like `3 / 6`, and another arrow.
+
+It appears **only when the row is actually wider than the screen**. If all
+the photos fit, the strip is not there at all — so it turns itself on and
+off as the window changes size, and you never have to think about it.
+
+The dots hide on narrow phones, where there is no room for them; the
+counter stays, because "3 / 6" tells you the same thing in less space.
+
+Everything in the strip works with a mouse, a finger and a keyboard. The
+same strip appears under the materials row further down the page.

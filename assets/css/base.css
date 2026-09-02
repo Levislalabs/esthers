@@ -368,6 +368,134 @@ h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 300; margin: 0; 
 .btn__arrow { transition: transform var(--dur) var(--ease-out); }
 .btn:hover .btn__arrow { transform: translateX(4px); }
 
+/* ------------------------------------------------------- scrolling rails */
+
+/* Shared controls for any row that scrolls sideways - the Recent
+   fabrication gallery on a phone, and the materials rail at every width.
+
+   The problem this solves: a row that scrolls looks exactly like a row that
+   does not. A partly visible card at the edge is a hint, but it is easy to
+   miss, and on a desktop with a mouse there is no obvious way to move a
+   horizontal row at all. So the state is stated outright - how many there
+   are, which one you are on, and a control that moves it.
+
+   Built by railAffordance() in app.js, and only for rails that actually
+   overflow. A row that fits shows nothing. */
+
+.rail-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+/* The count, spelled out. "1 / 6" removes all doubt about whether there is
+   more, which a row of dots alone can leave ambiguous at a glance. */
+.rail-nav__count {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+  min-width: 4.5em;
+  text-align: center;
+}
+
+.rail-nav__arrow {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-elevated);
+  color: var(--ink);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease),
+              border-color var(--dur-fast) var(--ease),
+              opacity var(--dur-fast) var(--ease);
+}
+.rail-nav__arrow:hover { background: var(--bg-hover); }
+.rail-nav__arrow:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rail-nav__arrow svg { width: 17px; height: 17px; }
+
+/* Dimmed rather than removed at the ends: a control that disappears makes
+   the row jump, and its absence is easy to read as a fault. disabled also
+   takes it out of the tab order, so a keyboard user is not offered a button
+   that does nothing. */
+.rail-nav__arrow[disabled] {
+  opacity: 0.3;
+  cursor: default;
+  background: transparent;
+}
+
+/* Touch targets. 40px is comfortable with a mouse; a thumb wants 44. */
+@media (max-width: 999px) {
+  .rail-nav__arrow { width: 44px; height: 44px; }
+}
+
+.rail-nav__dots {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+/* Each dot is a real button that jumps to its card, not a decoration. That
+   gives a keyboard and screen-reader user the same shortcut a touch user
+   gets by swiping, and it makes the count tappable. */
+.rail-nav__dot {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  border-radius: 999px;
+}
+.rail-nav__dot::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--line-strong);
+  transition: background var(--dur-fast) var(--ease),
+              width var(--dur-fast) var(--ease);
+}
+.rail-nav__dot:hover::before { background: var(--ink-dim); }
+.rail-nav__dot:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* The active dot stretches into a short bar. Shape as well as brightness,
+   so it still reads for anyone who cannot separate the two by colour. */
+.rail-nav__dot[aria-current="true"]::before {
+  width: 20px;
+  background: var(--ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-nav__dot::before, .rail-nav__arrow { transition: none; }
+}
+
+/* Narrow phones: the dots go, the count stays.
+   Eight dots plus two 44px arrows plus the count is wider than a 320px
+   screen, and a strip that overflows would push the whole page sideways -
+   which is exactly the fault this control exists to prevent. The count
+   says the same thing in less room: "3 / 8" needs no counting and is what
+   a screen reader announces anyway.
+
+   This block sits at the END of the rail styles on purpose. It competes
+   with `.rail-nav__dots { display: flex }` at equal specificity, so source
+   order is what decides it - placed any earlier, the flex rule wins and
+   the dots never hide. */
+@media (max-width: 559px) {
+  .rail-nav { gap: 10px; }
+  .rail-nav__dots { display: none; }
+  .rail-nav__count { min-width: 5em; font-size: 12px; }
+}
+
 /* ---------------------------------------------------------------- footer */
 
 .site-footer {

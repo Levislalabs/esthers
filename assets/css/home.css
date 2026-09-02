@@ -154,13 +154,75 @@
    between 700 and 1080px on the long edge, so a full-bleed tile would be
    upscaled and soft. At three columns every tile renders under its native
    resolution. */
+/* Desktop: a plain grid, three across. Six projects fall as two tidy rows. */
 .work-grid {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: clamp(16px, 2vw, 24px);
 }
-@media (min-width: 640px)  { .work-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (min-width: 1000px) { .work-grid { grid-template-columns: repeat(3, 1fr); } }
+
+/* Tablet and phone: one swipeable row instead of a tall column.
+
+   Six cards stacked is a long scroll past the same thing six times, and a
+   visitor on a phone gives up before they reach the bottom. Sideways, the
+   whole gallery is a couple of flicks and the sections below it stay
+   within reach.
+
+   Deliberately CSS and nothing else - the browser's own scrolling is
+   smoother than any script, keeps momentum on iOS, and cannot break.
+
+   The card widths below are chosen so the next one is always partly
+   visible. That sliver is the entire affordance: it is what tells a
+   visitor there is more without a caption saying "swipe". */
+@media (max-width: 999px) {
+  .work-grid {
+    display: flex;
+    grid-template-columns: none;
+    overflow-x: auto;
+    /* Contains the sideways scroll to this row. The page itself never
+       scrolls horizontally - checked at every width. */
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory;
+    /* Room for the card's own hover lift and shadow, so neither is clipped
+       by the scroll box. */
+    padding-block: 4px;
+  }
+
+  .work-grid > .work {
+    flex: 0 0 min(78vw, 320px);
+    scroll-snap-align: start;
+  }
+
+  /* Two and a bit at tablet width. */
+  @media (min-width: 640px) {
+    .work-grid > .work { flex-basis: min(44vw, 340px); }
+  }
+
+  /* A thin, quiet scrollbar. Hiding it is tempting and wrong: on a desktop
+     browser at a narrow window it is the only thing that says this row
+     moves, and some people scroll by dragging it. */
+  .work-grid { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+  .work-grid::-webkit-scrollbar { height: 6px; }
+  .work-grid::-webkit-scrollbar-track { background: transparent; }
+  .work-grid::-webkit-scrollbar-thumb {
+    background: var(--line-strong);
+    border-radius: 999px;
+  }
+
+  /* Keyboard focus on the scroll box itself. app.js gives it tabindex only
+     when it actually overflows, so there is no dead tab stop otherwise. */
+  .work-grid:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 4px;
+    border-radius: var(--radius);
+  }
+}
+
+/* Arrow keys and any future scrollIntoView glide rather than jump - unless
+   the visitor has asked for less movement. */
+@media (max-width: 999px) and (prefers-reduced-motion: no-preference) {
+  .work-grid { scroll-behavior: smooth; }
+}
 
 .work {
   margin: 0;

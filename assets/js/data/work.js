@@ -68,33 +68,80 @@ CM.workSection = {
   projects: [
 
     {
-      id: 'cove-cap',
-      image: 'assets/img/work/cove-cap.jpg',
-      title: 'Cove-profile cap',
-      caption: 'Flared bell over stone',
-      alt: 'Cove-profile chimney cap with a flared bell shape on a stone chimney.',
+      id: 'louvered-cap-stack',
+      image: 'assets/img/work/louvered-cap-stack-720.webp',
+      imageLarge: 'assets/img/work/louvered-cap-stack-1200.webp',
+      title: 'Large Architectural Louvered Chimney Cap',
+      caption: '',
+      alt:
+        'A tall stack of dark bronze louvered chimney caps on a pallet outside the shop, ' +
+        'wrapped and ready to go out.',
       enabled: true,
       order: 1
     },
 
     {
-      id: 'louvre-cap-shop',
-      image: 'assets/img/work/louvre-cap-shop.jpg',
-      title: 'Louvered cap, hipped crown',
-      caption: 'In the yard before pickup',
-      alt: 'Louvered chimney cap with a hipped crown, photographed in the yard before pickup.',
+      id: 'chase-cover',
+      image: 'assets/img/work/chase-cover-720.webp',
+      imageLarge: 'assets/img/work/chase-cover-1200.webp',
+      title: 'Chimney Chase Cover',
+      caption: '',
+      alt:
+        'White chimney chase covers standing on the shop floor, each with a sloped hip formed ' +
+        'to shed water and a welded round collar for the flue.',
       enabled: true,
       order: 2
     },
 
     {
-      id: 'louvre-cap-tile',
-      image: 'assets/img/work/louvre-cap-tile.jpg',
-      title: 'Louvered cap on tile',
-      caption: 'Draft with weather exclusion',
-      alt: 'Louvered chimney cap with a hipped crown installed on a tile roof.',
+      id: 'louvered-cap-sloped',
+      image: 'assets/img/work/louvered-cap-sloped-720.webp',
+      imageLarge: 'assets/img/work/louvered-cap-sloped-1200.webp',
+      title: 'Louvered Chimney Cap with Sloped Rain Cover',
+      caption: '',
+      alt:
+        'A large black louvered chimney cap outside the shop, with full louvre bands on all four ' +
+        'faces and a hipped rain cover sloping to a raised standing edge.',
       enabled: true,
       order: 3
+    },
+
+    {
+      id: 'shroud-flared',
+      image: 'assets/img/work/shroud-flared-720.webp',
+      imageLarge: 'assets/img/work/shroud-flared-1200.webp',
+      title: 'Custom Fabricated Chimney Shroud',
+      caption: '',
+      alt:
+        'Two dark bronze chimney shrouds in the shop, with concave flared sides, raised standing ' +
+        'seams and a flat top, still carrying their protective film.',
+      enabled: true,
+      order: 4
+    },
+
+    {
+      id: 'flue-collar-flashing',
+      image: 'assets/img/work/flue-collar-flashing-720.webp',
+      imageLarge: 'assets/img/work/flue-collar-flashing-1200.webp',
+      title: 'Custom Metal Chimney Flashing & Flue Collar',
+      caption: '',
+      alt:
+        'A black flue collar welded to a flat flashing base on the bench, the round pipe cut on ' +
+        'an angle to meet the roof pitch, with the weld bead running right around the joint.',
+      enabled: true,
+      order: 5
+    },
+
+    {
+      id: 'shroud-architectural',
+      image: 'assets/img/work/shroud-architectural-720.webp',
+      title: 'Custom Architectural Chimney Shroud',
+      caption: '',
+      alt:
+        'A black architectural chimney shroud on a pallet in the shop, with a concave flared ' +
+        'crown, raised seams and a banded base of X-pattern frames over mesh screening.',
+      enabled: true,
+      order: 6
     }
 
   ]
