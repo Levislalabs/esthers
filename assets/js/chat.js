@@ -3,21 +3,24 @@
  *
  * ####################################################################
  * ##                                                                ##
- * ##  PROTOTYPE ONLY. THIS SENDS NOTHING ANYWHERE.                  ##
+ * ##  LIVE ON THE PUBLIC SITE, AND IT SENDS NOTHING ANYWHERE.       ##
  * ##                                                                ##
  * ##  There is no fetch, no XHR, no WebSocket, no form action, no   ##
  * ##  mailto, no third-party SDK and no storage in this file. A     ##
  * ##  message typed here exists in one browser tab and is gone on   ##
  * ##  reload. NOBODY AT ESTHER'S RECEIVES IT.                       ##
  * ##                                                                ##
- * ##  The reply is a hard-coded string on a setTimeout - see        ##
- * ##  DEMO_REPLY below. It is worded to say so out loud, and a      ##
- * ##  standing notice sits in the conversation saying the same      ##
- * ##  thing, so a visitor cannot mistake it for a person.           ##
+ * ##  Because this is now in front of real customers, it says so    ##
+ * ##  plainly and twice over: a standing notice sits in the         ##
+ * ##  conversation from the moment it opens - BEFORE anyone spends  ##
+ * ##  time typing - and the reply repeats it and points at the two  ##
+ * ##  routes that do reach the shop, the phone and the quote form.  ##
+ * ##  Nothing here may imply a person is reading.                   ##
  * ##                                                                ##
  * ##  Phase 2 decides how messages actually reach the shop and how  ##
  * ##  staff replies come back. Nothing here presumes that answer:   ##
- * ##  send() is the single place a real transport would go.         ##
+ * ##  submit() is the single place a real transport would go, and   ##
+ * ##  the notice and the reply both come out on the same day.       ##
  * ##                                                                ##
  * ####################################################################
  *
@@ -33,9 +36,28 @@
   var U = window.CM.util || null;
   var $ = function (sel) { return document.querySelector(sel); };
 
-  /* The demo reply, and how long to wait before showing it. The delay is
-     long enough to read as considered and short enough not to feel broken. */
-  var DEMO_REPLY = "Thanks! This is a preview of the Esther's messaging system.";
+  /* The reply, and how long to wait before showing it. The delay is long
+     enough to read as considered and short enough not to feel broken.
+
+     Split around the phone number so it can be assembled from DOM nodes
+     with a real tel: link in the middle. See buildReplyNodes(): the number
+     is a link because a visitor told "call us" on a phone should be able
+     to just tap it, and making them copy it out by hand is the kind of
+     small friction that loses the enquiry. */
+  var REPLY_BEFORE = 'Thanks for reaching out! Our online messaging system is ' +
+                     'currently under construction and will be available soon. ' +
+                     'For immediate assistance, please call our Main Branch at ';
+  var REPLY_PHONE  = '604-291-6766';
+  var REPLY_TEL    = 'tel:+16042916766';
+  var REPLY_AFTER  = ' or use the Quote Request form.';
+
+  /* Shown in the conversation from the moment it opens, before anyone types
+     anything. A visitor should learn that nobody is reading this BEFORE
+     they spend time writing, not after. */
+  var CONSTRUCTION_NOTICE =
+    'Online messaging is currently under construction. ' +
+    'Messages are not being sent to our team yet.';
+
   var DEMO_DELAY = 1100;
 
   var root, launcher, panel, log, form, input, send, closeBtn, mascot;
@@ -75,14 +97,44 @@
     log.scrollTop = log.scrollHeight;
   }
 
-  function addMessage(who, text) {
+  /*
+   * A message bubble.
+   *
+   * `text` is set with textContent, never innerHTML. Everything a visitor
+   * types goes through here, so there is exactly one place to check that
+   * their words are treated as words and never as markup.
+   *
+   * `nodes` is the narrow exception: an array of elements this file built
+   * itself, for our own copy that needs a link in it. Visitor input never
+   * reaches that path - see submit(), which only ever passes `text`.
+   */
+  function addMessage(who, text, nodes) {
     var msg = el('div', {
-      class: 'chat__msg chat__msg--' + (who === 'me' ? 'me' : 'them'),
-      text: text
+      class: 'chat__msg chat__msg--' + (who === 'me' ? 'me' : 'them')
     });
+    if (nodes) {
+      nodes.forEach(function (n) { msg.appendChild(n); });
+    } else {
+      msg.textContent = text;
+    }
     log.appendChild(msg);
     scrollLog();
     return msg;
+  }
+
+  /* The under-construction reply, assembled from nodes so the phone number
+     is tappable. No innerHTML anywhere: three pieces, one of them a link. */
+  function buildReplyNodes() {
+    return [
+      document.createTextNode(REPLY_BEFORE),
+      el('a', {
+        class: 'chat__msg-tel',
+        href: REPLY_TEL,
+        'aria-label': 'Call the Main Branch on ' + REPLY_PHONE,
+        text: REPLY_PHONE
+      }),
+      document.createTextNode(REPLY_AFTER)
+    ];
   }
 
   function showTyping() {
@@ -131,8 +183,8 @@
 
     replyTimer = setTimeout(function () {
       if (typing.parentNode) typing.parentNode.removeChild(typing);
-      /* NOT a real reply. A constant, defined at the top of this file. */
-      addMessage('them', DEMO_REPLY);
+      /* NOT a real reply. Constants, defined at the top of this file. */
+      addMessage('them', null, buildReplyNodes());
     }, DEMO_DELAY);
   }
 
@@ -220,9 +272,11 @@
       avatar,
       el('div', { class: 'chat__head-text' }, [
         el('p', { class: 'chat__title', id: 'chat-title', text: "Esther's Sheet Metal" }),
-        /* Deliberately not "online now" or "replies instantly" - neither is
-           true, and neither will be true until Phase 2 says so. */
-        el('p', { class: 'chat__status', text: 'Usually replies during business hours.' })
+        /* Must not imply anyone is reading. "Usually replies during business
+           hours" was true of the intent and false of the fact: messaging is
+           not connected, so nobody replies here at all. It can go back the
+           day the backend does. */
+        el('p', { class: 'chat__status', text: 'Online messaging coming soon.' })
       ]),
       closeBtn
     ]);
@@ -272,7 +326,7 @@
     addMessage('them', 'Hi! How can we help with your sheet metal project?');
     log.appendChild(el('p', {
       class: 'chat__note',
-      text: "Preview only - messages are not sent to Esther's yet."
+      text: CONSTRUCTION_NOTICE
     }));
 
     return true;

@@ -2,7 +2,7 @@
    Esther's - customer help launcher and messaging panel
    chat.css
 
-   PROTOTYPE. The panel talks to nothing; see assets/js/chat.js.
+   LIVE, and the panel talks to nothing; see assets/js/chat.js.
 
    Deliberately self-contained: everything here is namespaced under .chat,
    and the only things it borrows from the rest of the site are the shared
@@ -314,19 +314,39 @@
   color: var(--ink);
 }
 
-/* The standing note that this is a preview. Not a message - it is the page
-   talking to the visitor, and it is styled so it can never be mistaken for
-   the shop replying. */
+/* The standing notice that messaging is not live yet.
+   Not a message - it is the page talking to the visitor - and styled so it
+   can never be mistaken for the shop replying: centred, no bubble tail, its
+   own quiet plate.
+
+   Deliberately NOT styled as an error. Nothing has gone wrong; a feature is
+   simply not finished. Red, an alert icon or a heavy border would tell a
+   customer the site is broken and send them away. This is the same ink as
+   the rest of the panel at a smaller size, sitting on a faint plate so it
+   reads as a notice rather than as small print worth skipping. */
 .chat__note {
-  align-self: center;
-  max-width: 92%;
+  align-self: stretch;
   margin: 2px 0 0;
-  font-size: 11px;
-  line-height: 1.45;
-  letter-spacing: 0.03em;
+  padding: 9px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 11.8px;
+  line-height: 1.5;
   text-align: center;
-  color: var(--ink-faint);
+  text-wrap: pretty;
+  color: var(--ink-muted);   /* 7.2:1 - readable, not shouting */
 }
+
+/* The phone number inside the reply. A visitor on a phone should be able to
+   tap it rather than copy it out by hand. */
+.chat__msg-tel {
+  color: var(--chat-accent);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-underline-offset: 2px;
+}
+.chat__msg-tel:hover { color: var(--ink); }
 
 /* Typing dots while the demo reply is pending. */
 .chat__typing {
