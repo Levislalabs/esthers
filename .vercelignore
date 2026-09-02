@@ -1,0 +1,57 @@
+# Files that must never reach the web server.
+#
+# Vercel serves a static project by copying the repository into the
+# deployment. Anything listed here is left out of that copy, so it cannot
+# be fetched at any URL - it is not hidden, it is simply not there.
+#
+# This matters most on the FEATURE BRANCH. Vercel builds a preview
+# deployment for every branch it sees, so without this file a push to
+# claude/materials-color-configurator-yri05u would put the staff sign-in
+# page and the whole unfinished backend on a public https:// address.
+#
+# Nothing here is deleted from Git. All of it stays in the repository and
+# in history; it is only excluded from what gets served.
+
+# ---------------------------------------------------------------------
+# Phase 2A messaging backend - written, reviewed, NOT deployed.
+#
+# supabase/ holds the migrations and Edge Function source. staff/ is a
+# sign-in page for an inbox that does not exist yet: publishing it would
+# invite people to try credentials against a system with no backend, and
+# would advertise the internal structure of one that is still being built.
+# ---------------------------------------------------------------------
+supabase/
+staff/
+
+# ---------------------------------------------------------------------
+# Internal documentation.
+#
+# These are written for whoever maintains the site, not for customers.
+# CHAT_BACKEND.md in particular describes the security model of the
+# messaging system in detail - accurate, and not something to hand to a
+# stranger unprompted.
+#
+# README.md is the same category: it explains how the site is built and
+# maintained, and would otherwise be fetchable at /README.md. The bare
+# name matches it at any depth, which also covers assets/img/README.md.
+# ---------------------------------------------------------------------
+docs/
+README.md
+
+# ---------------------------------------------------------------------
+# Build and development tooling. Not part of the website.
+# ---------------------------------------------------------------------
+tools-bundle.js
+node_modules/
+.git/
+.gitignore
+
+# A GitHub Pages marker. It does nothing on Vercel, and it stays in the
+# repository so the existing Pages build is unaffected - it is simply not
+# part of the website.
+.nojekyll
+
+# Local secrets, if any ever exist on a developer's machine. They are
+# gitignored too; this is the second lock on the same door.
+.env
+.env.*
