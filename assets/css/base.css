@@ -1,10 +1,10 @@
 /* =========================================================================
-   Esther's — Materials & Colour Configurator
-   base.css — design tokens, resets, typography, shell chrome
+   Esther's - Materials & Colour Configurator
+   base.css - design tokens, resets, typography, shell chrome
    ========================================================================= */
 
 :root {
-  /* Surfaces — near-black with a cool cast, layered rather than flat */
+  /* Surfaces - near-black with a cool cast, layered rather than flat */
   --bg:            #0a0b0c;
   --bg-raised:     #101214;
   --bg-panel:      #15181b;
@@ -17,12 +17,15 @@
   --line-soft:     rgba(255, 255, 255, 0.05);
 
   /* Ink */
-  --ink:           #f2f4f5;
-  --ink-muted:     #a4adb4;
-  --ink-dim:       #6d767d;
-  --ink-faint:     #4b5257;
+  /* Every ink clears 4.5:1 against the darkest surface it sits on
+     (--bg-elevated). The old --ink-dim and --ink-faint measured 3.54 and
+     2.06, which is why form labels and placeholders were unreadable. */
+  --ink:           #f2f4f5;   /* 14.9:1 */
+  --ink-muted:     #a4adb4;   /*  7.2:1 */
+  --ink-dim:       #909aa1;   /*  5.7:1 */
+  --ink-faint:     #808a91;   /*  4.7:1 */
 
-  /* Accent — overridden per material at runtime */
+  /* Accent - overridden per material at runtime */
   --accent:        #9aafc4;
   --accent-soft:   rgba(154, 175, 196, 0.14);
   --accent-line:   rgba(154, 175, 196, 0.38);
@@ -31,7 +34,7 @@
   --metal-hi:      rgba(255, 255, 255, 0.55);
   --metal-lo:      rgba(0, 0, 0, 0.45);
 
-  /* Motion — one shared easing curve keeps the whole UI feeling like one object */
+  /* Motion - one shared easing curve keeps the whole UI feeling like one object */
   --ease:          cubic-bezier(0.22, 0.61, 0.36, 1);
   --ease-out:      cubic-bezier(0.16, 1, 0.3, 1);
   --dur-fast:      180ms;
@@ -53,7 +56,12 @@
 *::before,
 *::after { box-sizing: border-box; }
 
-html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+  /* Makes the browser render native select popups and scrollbars dark. */
+  color-scheme: dark;
+}
 
 body {
   margin: 0;
@@ -155,14 +163,83 @@ h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 300; margin: 0; 
   height: 66px;
 }
 
-.brand { display: flex; align-items: baseline; gap: 10px; text-decoration: none; color: var(--ink); }
-.brand__mark { font-family: var(--font-display); font-size: 1.22rem; letter-spacing: -0.02em; font-weight: 400; }
-.brand__sub {
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
+/* ------------------------------------------------------------------ logo */
+
+/* The hero and the footer carry the supplied stacked lockup. It was drawn on
+   white and its files carry a 0.60 gamma so the metal still reads against
+   this background - logo-master.webp is that original, untouched.
+
+   The top bar does NOT use artwork. See below. */
+
+/* --- in the top bar --- */
+
+/* Set in live text rather than the supplied wordmark raster.
+
+   The artwork is 1898px wide and the bar shows it 24px tall. Downscaling by
+   that much softens every stem no matter how good the resampling is, and the
+   metallic shading in the original only made the mush more visible. Type
+   solves it outright: one weight change and one colour change carry the same
+   hierarchy the artwork was drawing, and it stays exact at any zoom, on any
+   display density.
+
+   Two flat colours, nothing else. No gradient, no glow, no shadow, no
+   texture - anything of that kind at 17px is what made it look fuzzy in the
+   first place. */
+.logo--nav {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 9px;
+  color: inherit;
+  text-decoration: none;
+  white-space: nowrap;
+  /* Never let the bar squeeze the pair onto two lines. */
+  flex: none;
+  transition: opacity var(--dur) var(--ease);
+}
+
+.logo--nav__name {
+  font-family: var(--font-display);
+  font-size: clamp(16px, 1.3vw, 17px);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  /* Solid white, brighter than --ink, so the name is the one thing in the bar
+     at full strength. */
+  color: #ffffff;
+}
+
+.logo--nav__sub {
+  font-family: var(--font-body);
+  font-size: clamp(11.5px, 0.95vw, 12.5px);
+  font-weight: 400;
+  letter-spacing: 0.115em;
+  line-height: 1;
+  /* Deliberately lighter than the name but well clear of the nav links, so it
+     reads as part of the mark rather than as another menu item. 12.7:1. */
+  color: #c9d1d7;
+}
+
+.logo--nav:hover,
+.logo--nav:focus-visible { opacity: 0.78; }
+
+/* Under 640px the bar cannot spare the width for the second line, so the name
+   runs on its own - the same thing the artwork's phone variant used to do. */
+@media (max-width: 639px) {
+  .logo--nav__sub { display: none; }
+}
+/* The narrowest phones need one more step down to keep the quote button on
+   the same row. */
+@media (max-width: 400px) {
+  .logo--nav__name { font-size: 15px; letter-spacing: 0.08em; }
+}
+
+/* --- closing the page --- */
+
+/* The footer has the room for the artwork whole. */
+.logo--foot {
+  display: block;
+  width: min(230px, 62vw);
+  height: auto;
 }
 
 .topnav { display: flex; align-items: center; gap: 4px; }
@@ -207,7 +284,7 @@ h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 300; margin: 0; 
 /* Layout lives in home.css; this file keeps only the ambient wash and the
    gradient treatment on the emphasised words. */
 
-/* Slow-drifting radial wash — reads as raking light across metal */
+/* Slow-drifting radial wash - reads as raking light across metal */
 .hero::before {
   content: "";
   position: absolute;
@@ -290,6 +367,134 @@ h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 300; margin: 0; 
 
 .btn__arrow { transition: transform var(--dur) var(--ease-out); }
 .btn:hover .btn__arrow { transform: translateX(4px); }
+
+/* ------------------------------------------------------- scrolling rails */
+
+/* Shared controls for any row that scrolls sideways - the Recent
+   fabrication gallery on a phone, and the materials rail at every width.
+
+   The problem this solves: a row that scrolls looks exactly like a row that
+   does not. A partly visible card at the edge is a hint, but it is easy to
+   miss, and on a desktop with a mouse there is no obvious way to move a
+   horizontal row at all. So the state is stated outright - how many there
+   are, which one you are on, and a control that moves it.
+
+   Built by railAffordance() in app.js, and only for rails that actually
+   overflow. A row that fits shows nothing. */
+
+.rail-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+/* The count, spelled out. "1 / 6" removes all doubt about whether there is
+   more, which a row of dots alone can leave ambiguous at a glance. */
+.rail-nav__count {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+  min-width: 4.5em;
+  text-align: center;
+}
+
+.rail-nav__arrow {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-elevated);
+  color: var(--ink);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease),
+              border-color var(--dur-fast) var(--ease),
+              opacity var(--dur-fast) var(--ease);
+}
+.rail-nav__arrow:hover { background: var(--bg-hover); }
+.rail-nav__arrow:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rail-nav__arrow svg { width: 17px; height: 17px; }
+
+/* Dimmed rather than removed at the ends: a control that disappears makes
+   the row jump, and its absence is easy to read as a fault. disabled also
+   takes it out of the tab order, so a keyboard user is not offered a button
+   that does nothing. */
+.rail-nav__arrow[disabled] {
+  opacity: 0.3;
+  cursor: default;
+  background: transparent;
+}
+
+/* Touch targets. 40px is comfortable with a mouse; a thumb wants 44. */
+@media (max-width: 999px) {
+  .rail-nav__arrow { width: 44px; height: 44px; }
+}
+
+.rail-nav__dots {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+/* Each dot is a real button that jumps to its card, not a decoration. That
+   gives a keyboard and screen-reader user the same shortcut a touch user
+   gets by swiping, and it makes the count tappable. */
+.rail-nav__dot {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  border-radius: 999px;
+}
+.rail-nav__dot::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--line-strong);
+  transition: background var(--dur-fast) var(--ease),
+              width var(--dur-fast) var(--ease);
+}
+.rail-nav__dot:hover::before { background: var(--ink-dim); }
+.rail-nav__dot:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* The active dot stretches into a short bar. Shape as well as brightness,
+   so it still reads for anyone who cannot separate the two by colour. */
+.rail-nav__dot[aria-current="true"]::before {
+  width: 20px;
+  background: var(--ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-nav__dot::before, .rail-nav__arrow { transition: none; }
+}
+
+/* Narrow phones: the dots go, the count stays.
+   Eight dots plus two 44px arrows plus the count is wider than a 320px
+   screen, and a strip that overflows would push the whole page sideways -
+   which is exactly the fault this control exists to prevent. The count
+   says the same thing in less room: "3 / 8" needs no counting and is what
+   a screen reader announces anyway.
+
+   This block sits at the END of the rail styles on purpose. It competes
+   with `.rail-nav__dots { display: flex }` at equal specificity, so source
+   order is what decides it - placed any earlier, the flex rule wins and
+   the dots never hide. */
+@media (max-width: 559px) {
+  .rail-nav { gap: 10px; }
+  .rail-nav__dots { display: none; }
+  .rail-nav__count { min-width: 5em; font-size: 12px; }
+}
 
 /* ---------------------------------------------------------------- footer */
 

@@ -25,9 +25,9 @@ CM.materials = [
       { label: 'Best Applications', value: 'Residential caps, flashing, trim', detail: 'Custom chimney caps, counter flashing, wall caps, drip edge, valley and accessory trim.' },
       { label: 'Warranty', value: 'Up to 40-year limited paint film', detail: 'Covers film integrity, chalk and fade within stated limits. Terms vary by colour and region.' },
       { label: 'Thickness', value: '0.0187" / 0.475 mm', detail: 'Lightest stocked steel gauge. Best on smaller pans and well-supported profiles.' },
-      { label: 'Durability', value: 'Good', detail: 'Hard finish with strong scratch resistance. More prone to oil-canning and denting than heavier gauges.' },
-      { label: 'Cost Category', value: '$ — Entry', detail: 'Lowest installed cost of the painted steel options.' },
-      { label: 'Maintenance', value: 'Low — annual rinse', detail: 'Rinse to clear debris and salts. Touch up field cuts and scratches to prevent edge creep.' }
+      { label: 'Durability', value: 'Good', detail: 'Baked finish over a light substrate. More prone to oil-canning and denting than heavier gauges, and it marks more readily in handling than a PVDF panel.' },
+      { label: 'Cost Category', value: '$ Entry', detail: 'Lowest installed cost of the painted steel options.' },
+      { label: 'Maintenance', value: 'Low, annual rinse', detail: 'Rinse to clear debris and salts. Touch up field cuts and scratches to prevent edge creep.' }
     ]
   },
   {
@@ -40,7 +40,7 @@ CM.materials = [
     accent: '#7C8A96',
     summary:
       'The standard specification for custom chimney caps. The step up from 26 gauge buys noticeably flatter ' +
-      'pans, cleaner brake lines and far better dent resistance — for a small premium and the same Classic ' +
+      'pans, cleaner brake lines and far better dent resistance, for a small premium and the same Classic ' +
       'colour collection.',
     specs: [
       { label: 'Available Gauges', value: '24 ga (0.0236" nominal)', detail: 'Stocked in coil and flat sheet, 40.5" and 48" widths.' },
@@ -49,8 +49,8 @@ CM.materials = [
       { label: 'Warranty', value: 'Up to 40-year limited paint film', detail: 'Same paint warranty as 26 gauge; heavier substrate improves long-term panel performance.' },
       { label: 'Thickness', value: '0.0236" / 0.60 mm', detail: 'About 26% thicker than 26 gauge. Holds a crisp break and resists oil-canning.' },
       { label: 'Durability', value: 'Very Good', detail: 'Markedly better dent and hail resistance. Spans wider without stiffeners.' },
-      { label: 'Cost Category', value: '$$ — Standard', detail: 'Modest premium over 26 gauge; the best value in painted steel.' },
-      { label: 'Maintenance', value: 'Low — annual rinse', detail: 'Rinse annually, inspect sealant joints and fasteners, touch up field cuts.' }
+      { label: 'Cost Category', value: '$$ Standard', detail: 'Modest premium over 26 gauge; the best value in painted steel.' },
+      { label: 'Maintenance', value: 'Low, annual rinse', detail: 'Rinse annually, inspect sealant joints and fasteners, touch up field cuts.' }
     ]
   },
   {
@@ -71,8 +71,8 @@ CM.materials = [
       { label: 'Warranty', value: 'Up to 40-year limited paint film', detail: 'Paint warranty as per Classic SMP; substrate carries its own galvanizing warranty.' },
       { label: 'Thickness', value: '0.0299" / 0.76 mm', detail: 'Roughly 60% thicker than 26 gauge. Very high stiffness per unit width.' },
       { label: 'Durability', value: 'Excellent', detail: 'Top of the painted steel range for impact and deflection resistance.' },
-      { label: 'Cost Category', value: '$$$ — Premium steel', detail: 'Higher material and freight cost; specified where the span demands it.' },
-      { label: 'Maintenance', value: 'Low — annual rinse', detail: 'Same care as lighter gauges. Heavier metal tolerates ladder and service contact better.' }
+      { label: 'Cost Category', value: '$$$ Premium steel', detail: 'Higher material and freight cost; specified where the span demands it.' },
+      { label: 'Maintenance', value: 'Low, annual rinse', detail: 'Same care as lighter gauges. Heavier metal tolerates ladder and service contact better.' }
     ]
   },
   {
@@ -85,7 +85,7 @@ CM.materials = [
     accent: '#9AAFC4',
     summary:
       'Architectural-grade coating on the standard fabrication gauge. PVDF is what an architect means by ' +
-      '"Kynar" — the resin system that holds colour on a south elevation for decades instead of years.',
+      '"Kynar": the resin system that holds colour on a south elevation for decades instead of years.',
     highlights: [
       'Premium architectural coating',
       'Superior fade resistance',
@@ -99,11 +99,11 @@ CM.materials = [
       { label: 'Available Gauges', value: '24 ga (0.0236" nominal)', detail: 'Stocked in the Signature colour collection, coil and flat sheet.' },
       { label: 'Finish Description', value: '70% PVDF resin, architectural', detail: 'Fluoropolymer coating with ceramic and inorganic pigments. Kynar 500 / Hylar 5000 class.' },
       { label: 'Best Applications', value: 'Luxury residential, commercial, coastal', detail: 'Standing seam caps, architectural flashing, coping and specification-driven work.' },
-      { label: 'Warranty', value: '30–40 year film, fade & chalk covered', detail: 'Fade and chalk limits are the differentiator — PVDF warranties quantify colour retention in Hunter Delta E units.' },
+      { label: 'Warranty', value: '30–40 year film, fade & chalk covered', detail: 'Fade and chalk limits are the differentiator. PVDF warranties quantify colour retention in Hunter Delta E units.' },
       { label: 'Thickness', value: '0.0236" / 0.60 mm', detail: 'Same base metal as 24 gauge SMP; the coating is the upgrade.' },
       { label: 'Durability', value: 'Excellent (coating)', detail: 'Outstanding UV, chemical and salt-spray resistance. Slightly softer film than SMP, so it marks more easily during handling.' },
-      { label: 'Cost Category', value: '$$$ — Architectural', detail: 'Typically 20–40% above SMP in the same gauge.' },
-      { label: 'Maintenance', value: 'Very low — rinse, no recoating', detail: 'Annual rinse; twice yearly within a few kilometres of salt water. No recoating within the warranty term.' }
+      { label: 'Cost Category', value: '$$$ Architectural', detail: 'Typically 20–40% above SMP in the same gauge.' },
+      { label: 'Maintenance', value: 'Very low, no recoating', detail: 'Annual rinse; twice yearly within a few kilometres of salt water. No recoating within the warranty term.' }
     ]
   },
   {
@@ -133,8 +133,8 @@ CM.materials = [
       { label: 'Warranty', value: '30–40 year film, fade & chalk covered', detail: 'Full architectural warranty package; often paired with a project-specific finish warranty.' },
       { label: 'Thickness', value: '0.0299" / 0.76 mm', detail: 'Maximum stiffness in painted steel. Stays flat across long unsupported runs.' },
       { label: 'Durability', value: 'Excellent', detail: 'Best combination of impact resistance and coating performance in the steel range.' },
-      { label: 'Cost Category', value: '$$$$ — Specification grade', detail: 'Highest cost of the steel options; competitive with aluminum on a delivered basis.' },
-      { label: 'Maintenance', value: 'Very low — rinse, no recoating', detail: 'Annual rinse, twice yearly in coastal exposure. Inspect sealed joints at five-year intervals.' }
+      { label: 'Cost Category', value: '$$$$ Specification grade', detail: 'Highest cost of the steel options; competitive with aluminum on an installed basis.' },
+      { label: 'Maintenance', value: 'Very low, no recoating', detail: 'Annual rinse, twice yearly in coastal exposure. Inspect sealed joints at five-year intervals.' }
     ]
   },
   {
@@ -163,7 +163,7 @@ CM.materials = [
       { label: 'Warranty', value: '30–40 year film + no-rust substrate', detail: 'Aluminum does not carry a red-rust exclusion, which is the practical advantage over steel at the coast.' },
       { label: 'Thickness', value: '0.032" / 0.81 mm typical', detail: 'Thicker than equivalent-strength steel because aluminum is less stiff per unit thickness.' },
       { label: 'Durability', value: 'Excellent corrosion, softer metal', detail: 'Immune to red rust. Dents more readily than steel at equivalent stiffness, so gauge up on exposed faces.' },
-      { label: 'Cost Category', value: '$$$$ — Premium', detail: 'Higher per pound than steel, partly offset by lower shipping weight and longer coastal service life.' },
+      { label: 'Cost Category', value: '$$$$ Premium', detail: 'Higher per pound than steel, partly offset by lower shipping weight and longer coastal service life.' },
       { label: 'Maintenance', value: 'Very low', detail: 'Rinse twice yearly in marine exposure. Isolate from dissimilar metals to avoid galvanic contact.' }
     ]
   },
@@ -176,7 +176,7 @@ CM.materials = [
     swatch: '#B87036',
     accent: '#E0A26A',
     summary:
-      'A living finish. Copper is the only material here that keeps changing after installation — from mill ' +
+      'A living finish. Copper is the only material here that keeps changing after installation, from mill ' +
       'bright through russet and chocolate brown to the verdigris green that makes it unmistakable. It is ' +
       'also, measured in centuries, the longest-lived option on the list.',
     highlights: [
@@ -190,11 +190,11 @@ CM.materials = [
       { label: 'Available Gauges', value: '16 oz (.0216") and 20 oz (.027")', detail: 'Copper is specified by weight per square foot. 16 oz is standard; 20 oz for large or exposed work.' },
       { label: 'Finish Description', value: 'Uncoated mill finish or pre-patinated', detail: 'No paint film. The surface is the material, and it weathers in place.' },
       { label: 'Best Applications', value: 'Heritage, luxury, standing seam caps', detail: 'Signature chimney caps, bay roofs, heritage restoration, decorative flashing and finials.' },
-      { label: 'Warranty', value: 'No paint warranty — material life 100+ yrs', detail: 'There is no coating to warrant. Copper roofs commonly outlast the structures beneath them.' },
-      { label: 'Thickness', value: '0.0216" (16 oz) typical', detail: 'Soft and highly formable — the reason copper suits ornamental brakes and hand-formed detail.' },
+      { label: 'Warranty', value: 'No paint warranty, material life 100+ yrs', detail: 'There is no coating to warrant. Copper roofs commonly outlast the structures beneath them.' },
+      { label: 'Thickness', value: '0.0216" (16 oz) typical', detail: 'Soft and highly formable, which is why copper suits ornamental brakes and hand-formed detail.' },
       { label: 'Durability', value: 'Exceptional', detail: 'Self-protecting oxide layer. Soft surface marks easily when new; marks disappear as the patina develops.' },
-      { label: 'Cost Category', value: '$$$$$ — Luxury', detail: 'Highest material cost, and it tracks commodity copper pricing. Quote validity is short.' },
-      { label: 'Maintenance', value: 'None — do not clean', detail: 'Leave it alone. Cleaning or polishing resets the patina. Avoid copper runoff onto adjacent stone or aluminum.' }
+      { label: 'Cost Category', value: '$$$$$ Luxury', detail: 'Highest material cost, and it tracks commodity copper pricing. Quote validity is short.' },
+      { label: 'Maintenance', value: 'None, do not clean', detail: 'Leave it alone. Cleaning or polishing resets the patina. Avoid copper runoff onto adjacent stone or aluminum.' }
     ]
   },
   {
@@ -206,8 +206,8 @@ CM.materials = [
     swatch: '#8C918D',
     accent: '#B7BDB9',
     summary:
-      'The quiet luxury choice. Architectural zinc has a self-healing surface — scratches close over as the ' +
-      'patina re-forms — a service life measured in generations, and a soft matte grey that European ' +
+      'The quiet luxury choice. Architectural zinc has a self-healing surface, so scratches close over as the ' +
+      'patina re-forms. It has a service life measured in generations, and a soft matte grey that European ' +
       'architects have specified for over a century.',
     highlights: [
       'Natural Zinc',
@@ -223,11 +223,11 @@ CM.materials = [
       { label: 'Available Gauges', value: '0.7 mm and 0.8 mm standard', detail: '0.7 mm for most flashing and cap work; 0.8 mm for large panels and coping.' },
       { label: 'Finish Description', value: 'Natural, pre-weathered, Quartz, Anthra', detail: 'Uncoated rolled alloy. Pre-weathered finishes are chemically patinated at the mill.' },
       { label: 'Best Applications', value: 'Luxury architectural, contemporary', detail: 'Standing seam caps, wall cladding, coping, contemporary residential and institutional work.' },
-      { label: 'Warranty', value: 'No coating warranty — 80–100+ yr life', detail: 'Like copper, zinc has no paint film to fail. Service life is governed by thickness and detailing.' },
-      { label: 'Thickness', value: '0.7 mm / 0.0276" typical', detail: 'Requires allowance for thermal movement — zinc moves more than steel and detailing must permit it.' },
+      { label: 'Warranty', value: 'No coating warranty, 80–100+ yr life', detail: 'Like copper, zinc has no paint film to fail. Service life is governed by thickness and detailing.' },
+      { label: 'Thickness', value: '0.7 mm / 0.0276" typical', detail: 'Requires allowance for thermal movement. Zinc moves more than steel and detailing must permit it.' },
       { label: 'Durability', value: 'Excellent, self-healing', detail: 'The patina re-forms over scratches, so minor handling damage disappears over months.' },
-      { label: 'Cost Category', value: '$$$$$ — Luxury', detail: 'Comparable to copper. Skilled installation is required and adds to installed cost.' },
-      { label: 'Maintenance', value: 'Essentially none', detail: 'No cleaning required. Keep free-draining — standing water and trapped moisture on the back face are the failure mode.' }
+      { label: 'Cost Category', value: '$$$$$ Luxury', detail: 'Comparable to copper. Skilled installation is required and adds to installed cost.' },
+      { label: 'Maintenance', value: 'Essentially none', detail: 'No cleaning required. Keep free-draining, because standing water and trapped moisture on the back face are the failure mode.' }
     ]
   }
 ];
@@ -275,13 +275,22 @@ CM.comparison = {
       id: 'fade', label: 'Fade Resistance', icon: 'sun', type: 'rating',
       hint: 'Colour retention under UV exposure over the warranty term.',
       values: { 'smp-26': 3, 'smp-24': 3, 'smp-22': 3, 'pvdf-24': 5, 'pvdf-22': 5, 'aluminum': 5, 'copper': 5, 'zinc': 5 },
-      footnotes: { 'copper': 'Not applicable — copper changes colour by design.', 'zinc': 'Not applicable — uncoated patina.' }
+      footnotes: { 'copper': 'Not applicable, copper changes colour by design.', 'zinc': 'Not applicable, uncoated patina.' }
     },
     {
       id: 'scratch', label: 'Scratch Resistance', icon: 'diamond', type: 'rating',
-      hint: 'Resistance to marking during fabrication, transport and installation.',
-      values: { 'smp-26': 5, 'smp-24': 5, 'smp-22': 5, 'pvdf-24': 3, 'pvdf-22': 3, 'aluminum': 3, 'copper': 2, 'zinc': 4 },
-      footnotes: { 'zinc': 'Self-healing — scratches close as the patina re-forms.', 'copper': 'Marks show when new, then disappear into the patina.' }
+      /* This rates how the panel survives the shop, not how hard the paint
+         film is. PVDF ships under a protective polyfilm that stays on through
+         forming and handling; SMP does not, so it is worked bare. */
+      hint: 'Resistance to marking during fabrication, transport and installation. PVDF ships under a protective film; SMP is worked bare.',
+      values: { 'smp-26': 3, 'smp-24': 3, 'smp-22': 3, 'pvdf-24': 5, 'pvdf-22': 5, 'aluminum': 5, 'copper': 2, 'zinc': 4 },
+      footnotes: {
+        'pvdf-24': 'Polyfilm stays on through forming.',
+        'pvdf-22': 'Polyfilm stays on through forming.',
+        'aluminum': 'PVDF coated, so it arrives filmed too.',
+        'zinc': 'Self-healing, scratches close as the patina re-forms.',
+        'copper': 'Marks show when new, then disappear into the patina.'
+      }
     },
     {
       id: 'corrosion', label: 'Corrosion Resistance', icon: 'droplet', type: 'rating',
@@ -305,7 +314,7 @@ CM.comparison = {
     },
     {
       id: 'maintenance', label: 'Maintenance', icon: 'wrench', type: 'rating',
-      hint: 'Higher is better — 5 means essentially no maintenance required.',
+      hint: 'Higher is better. A 5 means essentially no maintenance required.',
       values: { 'smp-26': 4, 'smp-24': 4, 'smp-22': 4, 'pvdf-24': 5, 'pvdf-22': 5, 'aluminum': 5, 'copper': 5, 'zinc': 5 }
     },
     {
@@ -322,7 +331,7 @@ CM.comparison = {
 };
 
 /*
- * Services offered. The index is shown in the UI — it reads as a catalogue
+ * Services offered. The index is shown in the UI. It reads as a catalogue
  * of nine, not a sequence, so nothing depends on the order beyond display.
  */
 CM.services = [
@@ -330,18 +339,18 @@ CM.services = [
     id: 'chimney-caps',
     name: 'Custom Chimney Caps',
     body: 'Precision-fabricated chimney caps in steel, copper and zinc. Flat-top, louvered and ' +
-          'pyramid profiles — built to shed water and protect your investment.'
+          'pyramid profiles, built to shed water and protect your investment.'
   },
   {
     id: 's-lock',
     name: 'S-Lock Flashing System',
     body: 'Our signature interlocking flashing profile. Fewer screw penetrations means fewer ' +
-          'opportunities for water seepage — superior protection with a cleaner look.'
+          'opportunities for water seepage, so you get superior protection with a cleaner look.'
   },
   {
     id: 'copper-gutter',
     name: 'Copper Gutter Systems',
-    body: 'Distributor for Euracraft Tecu copper gutter systems — 18 oz European-style gutters in ' +
+    body: 'Distributor for Euracraft Tecu copper gutter systems. 18 oz European-style gutters in ' +
           '5" and 6". Fully soldered seams, classic architectural appeal.'
   },
   {
@@ -356,31 +365,21 @@ CM.services = [
     body: 'Custom standing seam chimney enclosures, roof accessories and architectural trim pieces.'
   },
   {
-    id: 'commercial',
-    name: 'Commercial Sheet Metal',
-    body: 'Large-scale fabrication for commercial projects. HVAC enclosures, ductwork and custom ' +
-          'assemblies.'
-  },
-  {
-    id: 'decorative',
-    name: 'Decorative Metal Fabrication',
-    body: 'Ornamental metalwork including screens, railings, fascias and architectural accents.'
-  },
-  {
-    id: 'roof-accessories',
-    name: 'Roof Accessories',
-    body: 'Crickets, darts, scupper heads, drip edges and all custom roof-mounted accessories.'
-  },
-  {
-    id: 'restoration',
-    name: 'Historic Restoration Metal',
-    body: 'Period-appropriate metalwork for restoration projects. We replicate historic profiles ' +
-          'using modern techniques.'
+    id: 'panels',
+    name: 'Metal Wall & Roof Panels',
+    body: 'Roll-formed prepainted steel panels cut to length for walls, roofs and soffit: ' +
+          'board-and-batten, lap siding, plank and standing rib profiles in over 80 colours and ' +
+          'woodgrain finishes. Supplied with the closures, trims, clips and fasteners the ' +
+          'installation calls for.'
   }
 ];
 
-/* Where quote requests are addressed. Change this one line to reroute them. */
-CM.quoteEmail = 'quotes@esthers.example';
+/* Where quote requests are addressed. Every address listed goes on the To
+   line of the message the visitor's mail app opens. Change this one line to
+   reroute them. */
+CM.quoteEmail = ['counter@esthers.ca', 'manager@esthers.ca'];
 
-CM.projectTypes = ['Residential', 'Commercial', 'Historic restoration', 'Not sure yet'];
-CM.timelines = ['As soon as possible', 'Within 1–3 months', 'Within 3–6 months', 'Planning / budgeting stage'];
+CM.timelines = ['As soon as possible', 'Within 3 days', 'Within 1 week', 'Within 2 weeks'];
+
+/* Accepted on the drawing attachment field. */
+CM.drawingTypes = '.pdf,.jpg,.jpeg,.png,.heic,.webp,.dwg,.dxf,.doc,.docx';

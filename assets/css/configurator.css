@@ -1,6 +1,6 @@
 /* =========================================================================
-   Esther's — Materials & Colour Configurator
-   configurator.css — selector rail, spec panel, colour grid, patina,
+   Esther's - Materials & Colour Configurator
+   configurator.css - selector rail, spec panel, colour grid, patina,
                       zinc, comparison matrix, services, quote request
    ========================================================================= */
 
@@ -8,7 +8,7 @@
    0. BLOCK PROMOTION
    Most of this UI is built from <span> so it can nest inside <button>
    without invalid markup. Spans are inline by default, which silently
-   drops width, height and aspect-ratio — promote them here, once.
+   drops width, height and aspect-ratio - promote them here, once.
    ===================================================================== */
 
 .mat-card__chip,
@@ -262,7 +262,7 @@
   pointer-events: none;
 }
 
-/* Fine paint tooth — fractal noise keeps flat colours from reading as plastic */
+/* Fine paint tooth - fractal noise keeps flat colours from reading as plastic */
 .paint::after {
   content: "";
   position: absolute;
@@ -301,7 +301,7 @@
   border-radius: var(--radius-lg);
   background: var(--bg-raised);
   overflow: hidden;
-  /* Collapsed by default — expanded by "View Available Colours" */
+  /* Collapsed by default - expanded by "View Available Colours" */
   display: grid;
   grid-template-rows: 0fr;
   opacity: 0;
@@ -420,15 +420,15 @@
   to   { opacity: 1; transform: none; }
 }
 
-/* Hover: enlarge slightly, lift, and sweep the specular highlight */
+/* Hover: enlarge slightly and lift. The two rules that used to sweep the
+   specular highlight and lift the noise on hover went with the layers
+   themselves - see .swatch__paint below. */
 .swatch:hover {
   transform: translateY(-5px) scale(1.045);
   border-color: var(--line-strong);
   box-shadow: 0 22px 44px -20px rgba(0, 0, 0, 0.92);
   z-index: 3;
 }
-.swatch:hover .paint::before { transform: translateX(9%) scale(1.14); }
-.swatch:hover .paint::after  { opacity: 0.44; }
 
 .swatch.is-selected {
   border-color: var(--accent);
@@ -444,11 +444,29 @@
   border-radius: inherit;
 }
 
+/* The grid tile is the one place the paint is shown to be JUDGED rather than
+   decorated, so it is the one place the finish has to come off.
+
+   .paint layers three things over the flat colour to sell "painted metal":
+   a 104deg 3px repeating gradient, a 118deg white-to-black specular sweep,
+   and a fractal-noise overlay. All three are convincing on a 20px chip and
+   all three mislead at 158px. The repeating gradient reads as diagonal lines
+   ruled across the sample, and the sweep on its own drags Bright Red from a
+   bright top-left corner to a dark bottom-right one, so no part of the tile
+   is actually the hex printed underneath it.
+
+   Dropping both pseudo-elements leaves background-color: var(--c) alone,
+   which is exactly the colour the customer is choosing. Everything else about
+   the tile - size, ratio, radius, the dark hairline under it, the card hover,
+   selection and the favourite heart - is untouched, and the small chips
+   elsewhere in the page keep the finish. */
 .swatch__paint {
   aspect-ratio: 4 / 3;
   width: 100%;
   border-bottom: 1px solid rgba(0, 0, 0, 0.35);
 }
+.swatch__paint.paint::before,
+.swatch__paint.paint::after { content: none; }
 
 .swatch__meta {
   padding: 12px 13px 14px;
@@ -807,23 +825,38 @@
 
 /* Explicit column counts rather than auto-fit: there are exactly nine
    services, and a 3x3 fills without leaving an orphan cell. */
+/*
+ * Separators are borders on the cards, not a 1px grid gap over a lit
+ * container background. The gap trick paints any trailing empty cell in the
+ * last row, which shows up the moment the service count is not a multiple of
+ * the column count. Borders leave empty cells invisible, so the list can grow
+ * or shrink without anyone having to think about the grid.
+ */
 .services {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 1px;
-  background: var(--line-soft);
-  border-block: 1px solid var(--line-soft);
+  border-top: 1px solid var(--line-soft);
 }
-@media (min-width: 640px)  { .services { grid-template-columns: repeat(2, 1fr); } }
-@media (min-width: 1000px) { .services { grid-template-columns: repeat(3, 1fr); } }
 
 .service {
   background: var(--bg);
   padding: 34px 30px 38px;
   position: relative;
+  border-bottom: 1px solid var(--line-soft);
   transition: background var(--dur) var(--ease);
 }
 .service:hover { background: var(--bg-panel); }
+
+@media (min-width: 640px) {
+  .services { grid-template-columns: repeat(2, 1fr); }
+  .service { border-right: 1px solid var(--line-soft); }
+  .service:nth-child(2n) { border-right: 0; }
+}
+@media (min-width: 1000px) {
+  .services { grid-template-columns: repeat(3, 1fr); }
+  .service:nth-child(2n) { border-right: 1px solid var(--line-soft); }
+  .service:nth-child(3n) { border-right: 0; }
+}
 
 .service__index {
   font-family: var(--font-mono);
@@ -869,79 +902,9 @@
    9. QUOTE REQUEST
    ===================================================================== */
 
-.quote {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.45fr);
-  gap: clamp(28px, 4vw, 64px);
-  align-items: start;
-}
-@media (max-width: 980px) { .quote { grid-template-columns: 1fr; } }
-
-/* --- left rail: what the request carries --- */
-
-.quote__aside { display: grid; gap: 26px; position: sticky; top: 92px; }
-@media (max-width: 980px) { .quote__aside { position: static; } }
-
-.quote__card {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--bg-panel);
-  padding: 22px 22px 24px;
-}
-.quote__card-title {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  margin-bottom: 16px;
-}
-
-.quote__spec { display: grid; gap: 12px; }
-.quote__spec-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 13.4px;
-}
-.quote__spec-chip {
-  width: 30px; height: 30px;
-  border-radius: 8px;
-  flex: none;
-  overflow: hidden;
-  position: relative;
-  border: 1px solid var(--line);
-}
-.quote__spec-label {
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  letter-spacing: 0.13em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  display: block;
-  margin-bottom: 3px;
-}
-.quote__spec-value { color: var(--ink); }
-
-.quote__fav-list { display: flex; flex-wrap: wrap; gap: 7px; }
-.quote__fav {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  padding: 6px 12px 6px 6px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  color: var(--ink-muted);
-}
-.quote__fav-chip {
-  width: 18px; height: 18px;
-  border-radius: 5px;
-  flex: none;
-  overflow: hidden;
-  position: relative;
-}
-.quote__empty { font-size: 12.8px; color: var(--ink-faint); line-height: 1.6; }
+/* Single column since the summary rail was removed. The form is capped so
+   the fields do not stretch to a full 1440px and lose their reading rhythm. */
+.quote { max-width: 880px; }
 
 /* --- form --- */
 
@@ -962,10 +925,10 @@
 
 .field__label {
   font-family: var(--font-mono);
-  font-size: 9.5px;
-  letter-spacing: 0.16em;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--ink-dim);
+  color: var(--ink-muted);
   display: flex;
   align-items: baseline;
   gap: 7px;
@@ -982,15 +945,16 @@
   width: 100%;
   padding: 12px 14px;
   border-radius: 10px;
-  border: 1px solid var(--line);
-  background: var(--bg);
-  font-size: 14px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-panel);
+  color: var(--ink);
+  font-size: 15px;
   font-family: inherit;
   transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
 }
 .field > textarea { resize: vertical; min-height: 116px; line-height: 1.6; }
 .field > input::placeholder,
-.field > textarea::placeholder { color: var(--ink-faint); }
+.field > textarea::placeholder { color: var(--ink-dim); opacity: 1; }
 .field > input:focus,
 .field > select:focus,
 .field > textarea:focus {
@@ -1021,50 +985,235 @@
 }
 .field.is-invalid .field__error { display: block; }
 
-/* service checkboxes */
-.svc-picker {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
-  gap: 8px;
-}
-.svc-check {
-  position: relative;
+/* Multi-select material picker: a disclosure button over a checkbox group.
+   A native <select multiple> needs ctrl-click on desktop and collapses to an
+   unusable scroller on phones, so the dropdown wraps real checkboxes. */
+.multi { position: relative; }
+
+.multi__toggle {
+  width: 100%;
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 11px 13px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-panel);
+  color: var(--ink);
+  font-size: 15px;
+  text-align: left;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.multi__toggle:hover { border-color: var(--line-strong); }
+.multi__toggle[aria-expanded="true"] { border-color: var(--accent-line); background: var(--bg-elevated); }
+
+.multi__value { color: var(--ink-dim); min-width: 0; }
+.multi.has-selection .multi__value { color: var(--ink); }
+
+.multi__caret {
+  width: 17px; height: 17px;
+  flex: none;
+  color: var(--ink-dim);
+  transition: transform var(--dur) var(--ease-out);
+}
+.multi__toggle[aria-expanded="true"] .multi__caret { transform: rotate(180deg); }
+
+/* An author `display` beats the UA stylesheet's [hidden] { display: none },
+   so the attribute has to be honoured explicitly or the panel never closes. */
+.multi__panel[hidden] { display: none; }
+
+.multi__panel {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  left: 0; right: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 7px;
+  display: grid;
+  gap: 3px;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-elevated);
+  box-shadow: 0 26px 54px -24px rgba(0, 0, 0, 1);
+  animation: multiIn 180ms var(--ease-out);
+}
+@keyframes multiIn {
+  from { opacity: 0; transform: translateY(-5px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.multi__opt {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--ink);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.multi__opt:hover { background: var(--bg-hover); color: var(--ink); }
+.multi__opt { width: 100%; text-align: left; }
+.multi__opt-add {
+  width: 17px; height: 17px;
+  flex: none;
+  color: var(--ink-dim);
+  transition: color var(--dur-fast) var(--ease);
+}
+.multi__opt:hover .multi__opt-add { color: var(--accent); }
+
+.multi__chip {
+  width: 17px; height: 17px;
+  border-radius: 5px;
+  flex: none;
+  overflow: hidden;
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+/* --- colour choice per selected material --- */
+
+.matcolours { display: grid; gap: 10px; margin-top: 12px; }
+.matcolours:empty { margin-top: 0; }
+
+.matcolour {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
   border-radius: 10px;
   border: 1px solid var(--line);
-  background: var(--bg);
-  font-size: 12.8px;
-  line-height: 1.36;
-  color: var(--ink-muted);
-  cursor: pointer;
-  transition: all var(--dur-fast) var(--ease);
+  background: var(--bg-panel);
+  animation: matColourIn 260ms var(--ease-out) backwards;
 }
-.svc-check:hover { border-color: var(--line-strong); color: var(--ink); }
-.svc-check input {
-  appearance: none;
-  position: absolute;
-  margin: 0; padding: 0; border: 0;
-  width: 0; height: 0;
-  opacity: 0;
+@keyframes matColourIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
 }
-.svc-check__box {
-  width: 15px; height: 15px;
-  border-radius: 4px;
-  border: 1px solid var(--line-strong);
+
+.matcolour__name {
+  font-size: 13.6px;
+  color: var(--ink);
+  flex: 1 1 150px;
+  min-width: 0;
+}
+
+.matcolour__remove {
+  width: 30px; height: 30px;
   flex: none;
-  margin-top: 1px;
+  border-radius: 8px;
   display: grid;
   place-items: center;
+  color: var(--ink-dim);
+  border: 1px solid transparent;
   transition: all var(--dur-fast) var(--ease);
 }
-.svc-check__box svg { width: 10px; height: 10px; opacity: 0; transform: scale(0.5); transition: all var(--dur-fast) var(--ease-out); }
-.svc-check input:checked ~ .svc-check__box { background: var(--accent); border-color: var(--accent); }
-.svc-check input:checked ~ .svc-check__box svg { opacity: 1; transform: none; color: #0a0b0c; }
-.svc-check:has(input:checked) { border-color: var(--accent-line); background: var(--accent-soft); color: var(--ink); }
-.svc-check input:focus-visible ~ .svc-check__box { outline: 2px solid var(--accent); outline-offset: 2px; }
+.matcolour__remove svg { width: 15px; height: 15px; }
+.matcolour__remove:hover {
+  color: #e8837c;
+  border-color: rgba(232, 131, 124, 0.4);
+  background: rgba(212, 87, 79, 0.08);
+}
+.matcolour__pick { display: flex; align-items: center; gap: 10px; flex: 1 1 240px; min-width: 0; }
+
+.matcolour__chip {
+  width: 30px; height: 30px;
+  border-radius: 8px;
+  flex: none;
+  overflow: hidden;
+  position: relative;
+  border: 1px solid var(--line-strong);
+  /* Must stay on --c. A plain `background` here lands later in the file than
+     .paint and silently wins, which left every chip showing the empty-state
+     grey no matter which colour was picked. The fallback covers "not decided
+     yet", where --c is never set. */
+  background-color: var(--c, var(--bg-elevated));
+}
+
+.matcolour select {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 10px 34px 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-elevated);
+  color: var(--ink);
+  font-size: 14px;
+  font-family: inherit;
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--ink-dim) 50%),
+    linear-gradient(135deg, var(--ink-dim) 50%, transparent 50%);
+  background-position: calc(100% - 18px) 50%, calc(100% - 12px) 50%;
+  background-size: 6px 6px, 6px 6px;
+  background-repeat: no-repeat;
+  transition: border-color var(--dur-fast) var(--ease);
+}
+.matcolour select:focus { outline: none; border-color: var(--accent-line); }
+.matcolour select option { background: var(--bg-panel); color: var(--ink); }
+
+.matcolour__note {
+  flex: 1 1 100%;
+  font-size: 12.4px;
+  color: var(--ink-muted);
+  line-height: 1.5;
+}
+
+/* --- drawing / document attachment --- */
+
+.filedrop {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  border-radius: 10px;
+  border: 1px dashed var(--line-strong);
+  background: var(--bg-panel);
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.filedrop:hover { border-color: var(--accent-line); background: var(--bg-elevated); }
+
+/* The input covers the plate so the whole area is the click target. */
+.filedrop input[type="file"] {
+  position: absolute;
+  inset: 0;
+  width: 100%; height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.filedrop input[type="file"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 10px; }
+
+.filedrop__icon { width: 24px; height: 24px; color: var(--ink-dim); flex: none; }
+.filedrop__text { font-size: 13.2px; color: var(--ink-muted); line-height: 1.55; }
+.filedrop__text strong { display: block; color: var(--ink); font-weight: 400; font-size: 14px; margin-bottom: 2px; }
+
+.filelist { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+.filelist:empty { margin: 0; }
+.filelist li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  font-size: 13.2px;
+  color: var(--ink);
+}
+.filelist__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filelist__size { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-faint); margin-left: auto; flex: none; }
+
+.field__hint {
+  font-size: 12.6px;
+  color: var(--ink-muted);
+  line-height: 1.55;
+  margin: 10px 0 0;
+}
 
 .quote__actions {
   display: flex;
@@ -1076,8 +1225,8 @@
   border-top: 1px solid var(--line-soft);
 }
 .quote__note {
-  font-size: 12px;
-  color: var(--ink-faint);
+  font-size: 12.8px;
+  color: var(--ink-muted);
   line-height: 1.6;
   flex: 1 1 240px;
   min-width: 0;
@@ -1235,6 +1384,6 @@
   #fav-only { margin-left: 0 !important; }
 }
 
-@media (max-width: 520px) {
-  .brand__sub { display: none; }
-}
+/* The old rule here hid the top bar's second line on small screens. It is
+   half the company name now, not a tagline, so it stays - base.css steps the
+   whole lockup down instead. */

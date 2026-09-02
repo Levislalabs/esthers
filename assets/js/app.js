@@ -1,5 +1,5 @@
 /*
- * app.js — configurator wiring.
+ * app.js - configurator wiring.
  *
  * One state object drives every panel. Anything that changes state calls the
  * relevant render function; nothing reads the DOM back as a source of truth.
@@ -19,6 +19,7 @@
     favOnly: false,
     favourites: U.store.get(FAV_KEY, []),
     selected: null,      /* { collection, name, hex, metallic } */
+    colourChosen: false, /* true only after the visitor clicks a swatch */
     quoteText: '',
     patina: 0,
     patinaAuto: false
@@ -73,6 +74,18 @@
       ]);
       rail.appendChild(card);
     });
+
+    /* The materials rail overflows at every width - eight cards at 216px is
+       wider than any screen - so unlike the gallery it always needs the
+       controls. The edge fades on .selector__rail-wrap have always been
+       there, but a permanent fade on both sides says nothing about which
+       way there is more, or how much. Anchored to the wrapper so the nav
+       sits under the fades rather than inside the scrolling area. */
+    railAffordance(rail, {
+      itemSelector: '.mat-card',
+      label: 'material',
+      insertAfter: rail.closest('.selector__rail-wrap') || rail
+    });
   }
 
   function selectMaterial(id, opts) {
@@ -91,7 +104,6 @@
 
     renderDetail();
     renderColours({ resetSelection: true });
-    renderQuoteSummary();
     focusCompareColumn(id);
 
     /* Bring the rail card into view when selection is driven from elsewhere. */
@@ -254,10 +266,11 @@
     buildFilters();
 
     if (opts && opts.resetSelection) {
-      /* Keep the quote summary on a valid colour for the new collection. */
+      /* Seed a valid colour for the new collection, but this is a default and
+         not a choice, so it must not travel into the quote on its own. */
       var first = coll.colours[0];
       state.selected = { collection: coll.id, name: first.name, hex: first.hex, metallic: !!first.metallic };
-      renderQuoteSummary();
+      state.colourChosen = false;
     }
     renderSwatches();
   }
@@ -341,13 +354,13 @@
 
   function applyColour(collectionId, c) {
     state.selected = { collection: collectionId, name: c.name, hex: c.hex, metallic: !!c.metallic };
+    state.colourChosen = true;
     $$('#swatch-grid .swatch').forEach(function (card) {
       var on = card.dataset.colour === c.name;
       card.classList.toggle('is-selected', on);
       var b = $('.swatch__btn', card);
       if (b) b.setAttribute('aria-pressed', String(on));
     });
-    renderQuoteSummary();
     toast(c.hex, c.metallic, c.name + ' added to your quote request');
   }
 
@@ -373,7 +386,6 @@
 
     updateFavCount();
     renderDrawer();
-    renderQuoteSummary();
     if (state.favOnly) renderSwatches();
     toast(c.hex, c.metallic, added ? c.name + ' saved to favourites' : c.name + ' removed from favourites');
   }
@@ -521,7 +533,7 @@
     var copy = $('#patina-copy');
     copy.classList.add('is-swapping');
     window.setTimeout(function () {
-      $('#patina-stage-name').textContent = s.stage + ' — ' + s.title;
+      $('#patina-stage-name').textContent = s.stage + ' · ' + s.title;
       $('#patina-body').textContent = s.body;
       copy.style.setProperty('--patina-accent', s.accent);
       copy.classList.remove('is-swapping');
@@ -578,7 +590,7 @@
       ['heal', 'Self-healing surface',
        'The patina re-forms over scratches and cut edges. Handling marks that would be permanent on a painted panel disappear over a few months of weathering.'],
       ['hourglass', 'Extremely long lifespan',
-       'Correctly detailed and free-draining, architectural zinc has a documented service life of 80 to 100 years and more — it outlives the fasteners and sealants around it.'],
+       'Correctly detailed and free-draining, architectural zinc has a documented service life of 80 to 100 years and more. It outlives the fasteners and sealants around it.'],
       ['leaf', 'Low maintenance',
        'No cleaning schedule, no recoating, no touch-up. The only real requirement is a ventilated back face so moisture cannot sit against the underside.'],
       ['gem', 'Luxury architectural appearance',
@@ -672,7 +684,7 @@
     });
   }
 
-  /* Meters fill on first scroll into view — the animation is the payoff. */
+  /* Meters fill on first scroll into view - the animation is the payoff. */
   function observeMeters() {
     var table = $('#compare-table');
     if (!table) return;
@@ -698,6 +710,495 @@
      SERVICES
      =================================================================== */
 
+  /*
+   * Contact / Visit our shops.
+   *
+   * Everything visible comes from CM.contactSection in
+   * assets/js/data/locations.js. The owner writes only human-readable values
+   * there; the tel: link, the mailto: links, the map frame and the directions
+   * URL are all derived here from the address and phone as typed, so one
+   * address change moves all four.
+   *
+   * Both map URLs are keyless and free. The embed is the plain
+   * google.com/maps ?output=embed form, and directions use the documented
+   * Maps URLs endpoint. No API key is created, stored or sent.
+   */
+  var MAPS_EMBED = 'https://www.google.com/maps?output=embed&q=';
+  var MAPS_DIR = 'https://www.google.com/maps/dir/?api=1&destination=';
+
+  function telHref(phone) {
+    /* A tel: link has to be digits. Canadian numbers get the +1 country code
+       so the link also works for someone dialling from outside Canada. */
+    var digits = String(phone || '').replace(/[^0-9]/g, '');
+    if (!digits) return null;
+    if (digits.length === 10) digits = '1' + digits;
+    return 'tel:+' + digits;
+  }
+
+  function buildContact() {
+    var section = CM.contactSection;
+    var wrap = $('#contact-grid');
+    if (!section || !wrap) return;
+
+    var head = $('#contact-head');
+    if (head) {
+      head.innerHTML = '';
+      head.appendChild(el('p', { class: 'eyebrow', text: section.eyebrow }));
+      head.appendChild(el('h2', { class: 'headline', text: section.heading }));
+      head.appendChild(el('p', { class: 'lede', text: section.intro }));
+    }
+
+    wrap.innerHTML = '';
+
+    (section.locations || []).forEach(function (loc) {
+      var a = loc.address || {};
+      var cityLine = [a.city, a.region].filter(Boolean).join(', ');
+      if (a.postalCode) cityLine += (cityLine ? ' ' : '') + a.postalCode;
+      var oneLine = loc.mapAddress || [a.street, cityLine].filter(Boolean).join(', ');
+
+      /* --- heading + address ---
+         The name carries the label; a separate mono badge repeating it was
+         the same words twice. "Primary" sits beside the heading rather than
+         inside it, so it stays out of the accessible name. */
+      var head = el('div', { class: 'loc__head' }, [
+        el('h3', { class: 'loc__name', text: loc.label || '' }),
+        loc.primary ? el('span', { class: 'loc__primary', text: 'Primary' }) : null
+      ]);
+
+      var address = el('address', { class: 'loc__address' }, [
+        el('span', { text: a.street || '' }),
+        el('span', { text: cityLine })
+      ]);
+
+      /* --- phone --- */
+      var rows = [];
+      var tel = telHref(loc.phone);
+      if (tel) {
+        rows.push(el('div', { class: 'loc__row' }, [
+          el('span', { class: 'loc__row-label', text: 'Phone' }),
+          el('a', {
+            class: 'loc__link loc__link--phone', href: tel,
+            'aria-label': 'Call the ' + loc.label + ' on ' + loc.phone,
+            text: loc.phone
+          })
+        ]));
+      }
+
+      /* --- contacts --- */
+      if (loc.contacts && loc.contacts.length) {
+        var people = el('ul', { class: 'loc__people' });
+        loc.contacts.forEach(function (c) {
+          people.appendChild(el('li', { class: 'loc__person' }, [
+            el('span', { class: 'loc__person-name', text: c.name || '' }),
+            c.email ? el('a', {
+              class: 'loc__link', href: 'mailto:' + c.email,
+              'aria-label': 'Email ' + (c.name || '') + ' at the ' + loc.label + ', ' + c.email,
+              text: c.email
+            }) : null
+          ]));
+        });
+        rows.push(el('div', { class: 'loc__row' }, [
+          el('span', { class: 'loc__row-label', text: loc.contacts.length > 1 ? 'Contacts' : 'Contact' }),
+          people
+        ]));
+      }
+
+      /* --- what they make --- */
+      if (loc.specialties) {
+        rows.push(el('div', { class: 'loc__row' }, [
+          el('span', { class: 'loc__row-label', text: 'Specializes in' }),
+          el('p', { class: 'loc__spec', text: loc.specialties })
+        ]));
+      }
+
+      /* --- directions + map --- */
+      var directions = el('a', {
+        class: 'btn btn--accent loc__cta',
+        href: MAPS_DIR + encodeURIComponent(oneLine),
+        target: '_blank',
+        rel: 'noopener noreferrer',
+        'aria-label': 'Get directions to the ' + loc.label + ' at ' + oneLine + ', opens Google Maps in a new tab'
+      }, [
+        el('span', { html: U.icon('pin') }),
+        el('span', { text: 'Get directions' }),
+        el('span', { class: 'visually-hidden', text: '(opens in a new tab)' })
+      ]);
+
+      /* The map frame always goes in. Nothing gates it.
+      
+         An earlier version tested google.com with a small image request first
+         and only inserted the frame if that succeeded. That was wrong: a
+         tracker blocker, a privacy extension, a corporate proxy or Google
+         simply answering that one request differently would all fail the test
+         while the map itself would have loaded perfectly well - and the
+         visitor would have been shown a fallback plate instead of a working
+         map they could have had. A false negative there costs more than the
+         case it was guarding against.
+      
+         So the frame is inserted unconditionally and the address plate sits
+         behind it, not instead of it. The frame is transparent until its load
+         event fires, which means:
+           - Google reachable  -> the real interactive map paints over the plate
+           - frame blocked      -> nothing paints, the plate shows through
+         No probe, no timing guess, no sniffing for any particular host. */
+      var frameEl = el('iframe', {
+        src: MAPS_EMBED + encodeURIComponent(oneLine),
+        title: 'Map showing the ' + loc.label + ' at ' + oneLine,
+        loading: 'lazy',
+        referrerpolicy: 'no-referrer-when-downgrade'
+      });
+      frameEl.addEventListener('load', function () { frameEl.classList.add('is-ready'); });
+
+      var map = el('div', { class: 'loc__map' }, [
+        el('span', { class: 'loc__map-fallback' }, [
+          el('span', { html: U.icon('pin') }),
+          el('span', { text: oneLine })
+        ]),
+        frameEl
+      ]);
+
+      wrap.appendChild(el('article', {
+        class: 'loc' + (loc.primary ? ' loc--primary' : ''),
+        id: loc.id ? 'loc-' + loc.id : null
+      }, [head, address, el('div', { class: 'loc__rows' }, rows), directions, map]));
+    });
+
+    buildContactHelp(section);
+  }
+
+  /*
+   * The note above the cards for anyone unsure which shop to ring. The owner
+   * writes one sentence with {phone} in it; the number is taken from whichever
+   * location is marked primary, so it can never drift out of step with the
+   * card below it.
+   */
+  function buildContactHelp(section) {
+    var note = $('#contact-help');
+    if (!note) return;
+    note.innerHTML = '';
+
+    var text = section.helpText;
+    if (!text) { note.hidden = true; return; }
+    note.hidden = false;
+
+    var source = (section.locations || []).filter(function (l) { return l.primary; })[0] ||
+                 (section.locations || [])[0];
+    var tel = source ? telHref(source.phone) : null;
+    var parts = String(text).split('{phone}');
+
+    note.appendChild(document.createTextNode(parts[0]));
+    if (parts.length > 1) {
+      if (tel) {
+        note.appendChild(el('a', {
+          class: 'loc__link loc-help__phone', href: tel,
+          'aria-label': 'Call the ' + source.label + ' on ' + source.phone,
+          text: source.phone
+        }));
+      }
+      note.appendChild(document.createTextNode(parts.slice(1).join('{phone}')));
+    }
+  }
+
+  /*
+   * Recent fabrication gallery.
+   *
+   * Everything visible in this section - the heading, the paragraph and every
+   * card - comes from CM.workSection in assets/js/data/work.js, so the owner
+   * changes the gallery by editing one data file and never this function.
+   *
+   * Cards are filtered on `enabled` and sorted on `order`. The grid is a
+   * plain auto-flow grid, so any number of cards lays out on its own.
+   */
+  function buildWork() {
+    var section = CM.workSection;
+    var grid = $('#work-grid');
+    if (!section || !grid) return;
+
+    var head = $('#work-head');
+    if (head) {
+      head.innerHTML = '';
+      head.appendChild(el('p', { class: 'eyebrow', text: section.eyebrow }));
+      head.appendChild(el('h2', { class: 'headline', text: section.heading }));
+      head.appendChild(el('p', { class: 'lede', text: section.intro }));
+    }
+
+    var projects = (section.projects || [])
+      .filter(function (p) { return p && p.enabled !== false; })
+      .slice()
+      .sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
+
+    grid.innerHTML = '';
+
+    if (!projects.length) {
+      /* Nothing enabled is a legitimate state - an empty grid beats a broken
+         one - but it is almost always a mistake, so say so in the console. */
+      warnWork('every project is either missing or has enabled: false, so the gallery is empty');
+      return;
+    }
+
+    projects.forEach(function (p) {
+      if (!p.image) { warnWork('project "' + (p.id || '?') + '" has no image, skipping'); return; }
+      if (!p.alt)   { warnWork('project "' + (p.id || '?') + '" has no alt text, so screen readers will skip the photo'); }
+
+      var img = el('img', {
+        src: p.image,
+        alt: p.alt || '',
+        loading: 'lazy',
+        decoding: 'async',
+        /* The frame already reserves a square box, so a missing width and
+           height here costs no layout shift. */
+        style: { objectPosition: p.objectPosition || 'center' }
+      });
+
+      /* Two sizes when the owner has supplied one, so a phone is not made to
+         download a picture sized for a desktop. `sizes` tells the browser how
+         wide the card will actually be BEFORE layout happens, which is the
+         only way it can pick correctly; the values mirror the card widths in
+         home.css. A photo with no imageLarge simply serves its one file. */
+      if (p.imageLarge) {
+        img.setAttribute('srcset', p.image + ' 720w, ' + p.imageLarge + ' 1200w');
+        img.setAttribute('sizes',
+          '(min-width: 1000px) min(33vw, 440px), (min-width: 640px) min(44vw, 340px), min(78vw, 320px)');
+      }
+
+      /* A missing file falls back to the labelled plate every other photo on
+         the page uses, rather than a broken-image icon. */
+      var frame = el('div', { class: 'work__frame slot', 'data-slot': true }, [
+        img,
+        el('div', { class: 'slot__ph' }, [
+          el('span', { class: 'slot__ph-icon', html: U.icon('photo') }),
+          el('span', { class: 'slot__ph-label', text: p.title || 'Photograph' }),
+          el('span', { class: 'slot__ph-file', text: p.image })
+        ])
+      ]);
+
+      img.addEventListener('error', function () {
+        warnWork('the file "' + p.image + '" could not be loaded - check the name and that it is in assets/img/work/');
+      });
+
+      /* The small grey line is optional. An empty span still occupies its
+         line box and its gap, so a card with no caption would sit taller
+         than its neighbours for no reason - leave the element out instead. */
+      var captionText = (p.caption || '').trim();
+      var figcaption = el('figcaption', {}, [
+        el('span', { class: 'work__title', text: p.title || '' }),
+        captionText ? el('span', { class: 'work__meta', text: captionText }) : null
+      ]);
+
+      grid.appendChild(el('figure', { class: 'work' }, [frame, figcaption]));
+    });
+
+    makeWorkScrollable(grid);
+  }
+
+  /*
+   * Below 1000px the gallery becomes one sideways-scrolling row (see
+   * .work-grid in home.css). The scrolling itself is the browser's, not
+   * ours - but a scroll box whose contents are not focusable is
+   * unreachable by keyboard, so it needs a tab stop and a name of its own.
+   *
+   * Given only when it actually overflows. Adding tabindex unconditionally
+   * would leave a tab stop on desktop that focuses a box which does not
+   * scroll, which is worse than not having one.
+   */
+  function makeWorkScrollable(grid) {
+    var sync = function () {
+      var scrollable = grid.scrollWidth > grid.clientWidth + 1;
+      if (scrollable) {
+        grid.setAttribute('tabindex', '0');
+        grid.setAttribute('role', 'group');
+        grid.setAttribute('aria-label', 'Recent fabrication, scroll sideways for more');
+      } else {
+        grid.removeAttribute('tabindex');
+        grid.removeAttribute('role');
+        grid.removeAttribute('aria-label');
+      }
+    };
+
+    sync();
+    /* Images arrive after layout, and a rotated phone changes the answer. */
+    window.addEventListener('resize', sync);
+    window.addEventListener('load', sync);
+
+    railAffordance(grid, {
+      itemSelector: '.work',
+      label: 'photo',
+      insertAfter: grid
+    });
+  }
+
+  /* ===================================================================
+     SCROLLING RAILS - saying out loud that there is more
+
+     A row that scrolls sideways looks identical to a row that does not.
+     The partly visible card at the edge is a hint, and it is easy to
+     miss; with a mouse there is often no obvious way to move the row at
+     all, because a trackpad's sideways gesture is not something everyone
+     knows they have.
+
+     So the state gets stated: how many there are, which one you are on,
+     and a pair of arrows that move it. Built only for rails that
+     actually overflow - a row that fits shows nothing - and rebuilt on
+     resize, because a phone turned sideways changes the answer.
+     =================================================================== */
+
+  function railAffordance(rail, opts) {
+    if (!rail) return;
+
+    var items = function () {
+      return Array.prototype.slice.call(rail.querySelectorAll(opts.itemSelector));
+    };
+    var nav = null;
+    var dots = [];
+
+    function overflows() { return rail.scrollWidth > rail.clientWidth + 2; }
+
+    /* Which item is nearest the left edge. Comparing against the rail's own
+       box rather than the page means this stays right whatever the rail's
+       padding or the page's scroll position. */
+    function activeIndex() {
+      var list = items();
+      var railLeft = rail.getBoundingClientRect().left;
+      var best = 0;
+      var bestDist = Infinity;
+      for (var i = 0; i < list.length; i++) {
+        var d = Math.abs(list[i].getBoundingClientRect().left - railLeft);
+        if (d < bestDist - 1) { bestDist = d; best = i; }
+      }
+      /* Scrolled hard to the end: the last item is the honest answer even
+         when an earlier one happens to sit closer to the left edge. */
+      if (rail.scrollLeft >= rail.scrollWidth - rail.clientWidth - 2) {
+        best = list.length - 1;
+      }
+      return best;
+    }
+
+    function scrollToIndex(i) {
+      var list = items();
+      if (!list[i]) return;
+      rail.scrollTo({
+        left: list[i].offsetLeft - rail.offsetLeft,
+        behavior: prefersReducedMotion() ? 'auto' : 'smooth'
+      });
+    }
+
+    function step(dir) {
+      var i = activeIndex() + dir;
+      scrollToIndex(Math.max(0, Math.min(items().length - 1, i)));
+    }
+
+    function build() {
+      var list = items();
+      nav = el('div', { class: 'rail-nav' });
+
+      var prev = el('button', {
+        class: 'rail-nav__arrow', type: 'button',
+        'aria-label': 'Previous ' + opts.label
+      });
+      prev.innerHTML = arrowSvg('left');
+      prev.addEventListener('click', function () { step(-1); });
+
+      var next = el('button', {
+        class: 'rail-nav__arrow', type: 'button',
+        'aria-label': 'Next ' + opts.label
+      });
+      next.innerHTML = arrowSvg('right');
+      next.addEventListener('click', function () { step(1); });
+
+      var dotWrap = el('div', {
+        class: 'rail-nav__dots', role: 'group',
+        'aria-label': 'Jump to a ' + opts.label
+      });
+      dots = list.map(function (_, i) {
+        var d = el('button', {
+          class: 'rail-nav__dot', type: 'button',
+          'aria-label': 'Show ' + opts.label + ' ' + (i + 1) + ' of ' + list.length
+        });
+        d.addEventListener('click', function () { scrollToIndex(i); });
+        dotWrap.appendChild(d);
+        return d;
+      });
+
+      /* The count in words as well as dots. A row of dots tells you how
+         many there are only once you have counted them; "1 / 6" does not
+         need counting, and it is what a screen reader announces. */
+      var count = el('span', {
+        class: 'rail-nav__count',
+        'aria-live': 'polite',
+        'aria-atomic': 'true'
+      });
+
+      nav.appendChild(prev);
+      nav.appendChild(dotWrap);
+      nav.appendChild(count);
+      nav.appendChild(next);
+
+      nav._prev = prev; nav._next = next; nav._count = count;
+
+      var anchor = opts.insertAfter || rail;
+      anchor.parentNode.insertBefore(nav, anchor.nextSibling);
+    }
+
+    function paint() {
+      if (!nav) return;
+      var i = activeIndex();
+      var total = items().length;
+
+      dots.forEach(function (d, n) {
+        if (n === i) d.setAttribute('aria-current', 'true');
+        else d.removeAttribute('aria-current');
+      });
+
+      nav._count.textContent = (i + 1) + ' / ' + total;
+
+      var atStart = rail.scrollLeft <= 2;
+      var atEnd = rail.scrollLeft >= rail.scrollWidth - rail.clientWidth - 2;
+      nav._prev.disabled = atStart;
+      nav._next.disabled = atEnd;
+    }
+
+    function sync() {
+      if (overflows()) {
+        if (!nav) build();
+        nav.hidden = false;
+        paint();
+      } else if (nav) {
+        nav.hidden = true;
+      }
+    }
+
+    /* rAF-throttled: a scroll fires far more often than a repaint is
+       useful, and the work here reads layout. */
+    var ticking = false;
+    rail.addEventListener('scroll', function () {
+      if (ticking) return;
+      ticking = true;
+      window.requestAnimationFrame(function () { paint(); ticking = false; });
+    }, { passive: true });
+
+    sync();
+    window.addEventListener('resize', sync);
+    window.addEventListener('load', sync);
+  }
+
+  function arrowSvg(dir) {
+    var d = dir === 'left' ? 'M14.5 5.5 8 12l6.5 6.5' : 'M9.5 5.5 16 12l-6.5 6.5';
+    return '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
+           '<path d="' + d + '" fill="none" stroke="currentColor" stroke-width="1.7" ' +
+           'stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  }
+
+  function prefersReducedMotion() {
+    return window.matchMedia &&
+           window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  }
+
+  function warnWork(message) {
+    if (window.console && console.warn) {
+      console.warn('Recent fabrication: ' + message + ' (edit assets/js/data/work.js)');
+    }
+  }
+
   function buildServices() {
     var wrap = $('#services-grid');
     if (!wrap) return;
@@ -719,14 +1220,24 @@
     });
   }
 
-  /* Tick the matching service and drop the visitor into the form. */
+  /*
+   * Carry the service into the request. The checkbox list was removed, so the
+   * service name seeds the details field instead, and only when it is empty so
+   * a half-typed message is never overwritten.
+   */
   function requestQuoteFor(serviceId) {
-    var box = $('#quote-form input[name="service"][value="' + serviceId + '"]');
-    if (box && !box.checked) box.checked = true;
+    var svc = CM.services.filter(function (x) { return x.id === serviceId; })[0];
+    var details = $('#q-details');
+    if (svc && details && !details.value.trim()) {
+      details.value = svc.name + ': ';
+    }
     scrollToId('quote');
     window.setTimeout(function () {
-      var name = $('#q-name');
-      if (name && window.innerWidth > 760) name.focus({ preventScroll: true });
+      var target = (details && details.value.trim()) ? details : $('#q-name');
+      if (target && window.innerWidth > 760) {
+        target.focus({ preventScroll: true });
+        if (target === details) target.setSelectionRange(target.value.length, target.value.length);
+      }
     }, 620);
   }
 
@@ -735,21 +1246,13 @@
      =================================================================== */
 
   function buildQuote() {
-    var picker = $('#svc-picker');
-    if (!picker) return;
+    var form = $('#quote-form');
+    if (!form) return;
 
-    picker.innerHTML = '';
-    CM.services.forEach(function (svc) {
-      picker.appendChild(el('label', { class: 'svc-check' }, [
-        el('input', { type: 'checkbox', name: 'service', value: svc.id }),
-        el('span', { class: 'svc-check__box', html: U.icon('check') }),
-        el('span', { text: svc.name })
-      ]));
-    });
+    buildMaterialPicker();
+    buildDrawingField();
 
-    fillSelect($('#q-project-type'), CM.projectTypes, 'Select a project type');
     fillSelect($('#q-timeline'), CM.timelines, 'Select a timeline');
-    fillSelect($('#q-material'), CM.materials.map(function (m) { return m.name; }), 'No preference yet');
 
     $('#quote-form').addEventListener('submit', submitQuote);
     $('#quote-reset').addEventListener('click', resetQuote);
@@ -764,7 +1267,185 @@
       });
     });
 
-    renderQuoteSummary();
+  }
+
+  /*
+   * Material picker. The same material can appear more than once, because a
+   * job often takes one gauge in two colours, so this adds line items rather
+   * than toggling a fixed set of checkboxes. Each line owns its own colour.
+   */
+  var lineSeq = 0;
+
+  function buildMaterialPicker() {
+    var panel = $('#q-materials-panel');
+    var toggle = $('#q-materials-toggle');
+    if (!panel || !toggle) return;
+
+    panel.innerHTML = '';
+    CM.materials.forEach(function (m) {
+      panel.appendChild(el('button', {
+        class: 'multi__opt', type: 'button',
+        onclick: function () { addMaterialLine(m.id); }
+      }, [
+        el('span', { class: 'multi__opt-add', html: U.icon('plus') }),
+        el('span', { class: 'multi__chip paint', style: { '--c': m.swatch } }),
+        el('span', { text: m.name })
+      ]));
+    });
+
+    toggle.addEventListener('click', function () {
+      setMaterialPanel(toggle.getAttribute('aria-expanded') !== 'true');
+    });
+
+    /* Close on outside click and on Escape, like any other menu. */
+    document.addEventListener('click', function (ev) {
+      if (!$('#q-materials').contains(ev.target)) setMaterialPanel(false);
+    });
+    panel.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape') { setMaterialPanel(false); toggle.focus(); }
+    });
+
+    syncMaterialLines();
+  }
+
+  function setMaterialPanel(open) {
+    var panel = $('#q-materials-panel');
+    var toggle = $('#q-materials-toggle');
+    if (!panel) return;
+    panel.hidden = !open;
+    toggle.setAttribute('aria-expanded', String(open));
+  }
+
+  /*
+   * Adds one line. The panel deliberately stays open so a visitor wanting the
+   * same gauge in three colours can click it three times.
+   */
+  function addMaterialLine(materialId, presetColour) {
+    var wrap = $('#q-material-colours');
+    var m = CM.materials.filter(function (x) { return x.id === materialId; })[0];
+    if (!wrap || !m) return;
+
+    var coll = CM.collections[m.collection];
+    var id = 'line-' + (++lineSeq);
+    var chip = el('span', { class: 'matcolour__chip paint' });
+
+    var sel = el('select', {
+      'data-material': m.id,
+      id: id + '-colour',
+      'aria-label': 'Colour for ' + m.name,
+      onchange: function () { paintChip(chip, coll, this.value); }
+    });
+    sel.appendChild(el('option', { value: '', text: 'Colour not decided yet' }));
+    coll.colours.forEach(function (c) {
+      sel.appendChild(el('option', { value: c.name, text: c.name }));
+    });
+
+    /* Seed from the argument, else from a colour picked while browsing. */
+    var seed = presetColour;
+    if (seed === undefined && state.colourChosen && state.selected &&
+        state.selected.collection === coll.id) {
+      seed = state.selected.name;
+    }
+    if (seed) sel.value = seed;
+    paintChip(chip, coll, sel.value);
+
+    var row = el('div', { class: 'matcolour', 'data-line': id }, [
+      el('span', { class: 'matcolour__name', text: m.name }),
+      el('span', { class: 'matcolour__pick' }, [chip, sel]),
+      el('button', {
+        class: 'matcolour__remove', type: 'button',
+        'aria-label': 'Remove this ' + m.name + ' line',
+        html: U.icon('close'),
+        onclick: function () { row.remove(); syncMaterialLines(); }
+      }),
+      el('span', { class: 'matcolour__note', text: coll.name })
+    ]);
+
+    wrap.appendChild(row);
+    syncMaterialLines();
+    if (window.innerWidth > 760) sel.focus();
+  }
+
+  /* Keeps the empty-state hint and the toggle label honest. */
+  function syncMaterialLines() {
+    var rows = $$('#q-material-colours .matcolour');
+    var hint = $('#q-materials-empty');
+    var value = $('#q-materials-value');
+    var wrap = $('#q-materials');
+
+    if (hint) hint.hidden = rows.length > 0;
+    if (wrap) wrap.classList.toggle('has-selection', rows.length > 0);
+    if (value) {
+      value.textContent = rows.length
+        ? 'Add another material  (' + rows.length + ' added)'
+        : 'Add a material';
+    }
+  }
+
+  function paintChip(chip, coll, colourName) {
+    var c = coll.colours.filter(function (x) { return x.name === colourName; })[0];
+    chip.className = 'matcolour__chip paint' + (c && c.metallic ? ' paint--metallic' : '');
+    if (c) chip.style.setProperty('--c', c.hex);
+    else chip.style.removeProperty('--c');
+  }
+
+  /* [{ material, colour, hex }] for the request body, in the order added. */
+  function materialChoices() {
+    return $$('#q-material-colours .matcolour').map(function (row) {
+      var sel = $('select', row);
+      var m = CM.materials.filter(function (x) { return x.id === sel.dataset.material; })[0];
+      var coll = m ? CM.collections[m.collection] : null;
+      var c = (coll && sel.value)
+        ? coll.colours.filter(function (x) { return x.name === sel.value; })[0] : null;
+      return {
+        material: m ? m.name : sel.dataset.material,
+        colour: sel.value,
+        hex: c ? c.hex : ''
+      };
+    });
+  }
+
+  /*
+   * Drawing attachment. A mailto: link cannot carry a file, so the picked
+   * files are listed in the request and the customer is told to attach them
+   * to the message that opens. Nothing here pretends to upload.
+   */
+  function buildDrawingField() {
+    var input = $('#q-drawing');
+    if (!input) return;
+    input.setAttribute('accept', CM.drawingTypes);
+    input.addEventListener('change', renderDrawingList);
+  }
+
+  function fileSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' KB';
+    return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+  }
+
+  function renderDrawingList() {
+    var input = $('#q-drawing');
+    var list = $('#q-drawing-list');
+    var hint = $('#q-drawing-hint');
+    if (!list) return;
+
+    var files = input.files ? Array.prototype.slice.call(input.files) : [];
+    list.innerHTML = '';
+    files.forEach(function (f) {
+      list.appendChild(el('li', {}, [
+        el('span', { class: 'filelist__name', text: f.name }),
+        el('span', { class: 'filelist__size', text: fileSize(f.size) })
+      ]));
+    });
+    if (hint) hint.hidden = files.length === 0;
+  }
+
+  function drawingNames() {
+    var input = $('#q-drawing');
+    if (!input || !input.files) return [];
+    return Array.prototype.slice.call(input.files).map(function (f) {
+      return f.name + ' (' + fileSize(f.size) + ')';
+    });
   }
 
   function fillSelect(node, options, placeholder) {
@@ -774,60 +1455,6 @@
     options.forEach(function (o) {
       node.appendChild(el('option', { value: o, text: o }));
     });
-  }
-
-  /*
-   * The left rail mirrors what the request will actually carry: the material
-   * on screen, the colour last selected, and every saved favourite.
-   */
-  function renderQuoteSummary() {
-    var m = material();
-    var coll = collection();
-
-    var matRow = $('#quote-material');
-    if (matRow) {
-      $('#quote-material-value').textContent = m.name;
-      $('#quote-collection-value').textContent = coll.name;
-      var chip = $('#quote-material-chip');
-      chip.className = 'quote__spec-chip paint';
-      chip.style.setProperty('--c', m.swatch);
-    }
-
-    var colourRow = $('#quote-colour');
-    if (colourRow) {
-      var sel = state.selected;
-      if (sel) {
-        colourRow.style.display = '';
-        $('#quote-colour-value').textContent = sel.name + ' · ' + sel.hex;
-        var cchip = $('#quote-colour-chip');
-        cchip.className = 'quote__spec-chip paint' + (sel.metallic ? ' paint--metallic' : '');
-        cchip.style.setProperty('--c', sel.hex);
-      } else {
-        colourRow.style.display = 'none';
-      }
-    }
-
-    var favWrap = $('#quote-favs');
-    if (!favWrap) return;
-    favWrap.innerHTML = '';
-    var records = state.favourites.map(favRecord).filter(Boolean);
-
-    if (!records.length) {
-      favWrap.appendChild(el('p', { class: 'quote__empty',
-        text: 'No saved colours yet. Tap the heart on any swatch and it will be attached to your request.' }));
-      return;
-    }
-    var list = el('div', { class: 'quote__fav-list' });
-    records.forEach(function (r) {
-      list.appendChild(el('span', { class: 'quote__fav' }, [
-        el('span', {
-          class: 'quote__fav-chip paint' + (r.colour.metallic ? ' paint--metallic' : ''),
-          style: { '--c': r.colour.hex }
-        }),
-        el('span', { text: r.colour.name })
-      ]));
-    });
-    favWrap.appendChild(list);
   }
 
   function markInvalid(input, invalid) {
@@ -862,11 +1489,8 @@
   function buildQuoteText() {
     var form = $('#quote-form');
     var val = function (id) { return ($(id).value || '').trim(); };
-
-    var services = $$('#svc-picker input:checked').map(function (b) {
-      var svc = CM.services.filter(function (s) { return s.id === b.value; })[0];
-      return svc ? svc.name : b.value;
-    });
+    var choices = materialChoices();
+    var drawings = drawingNames();
 
     var favs = state.favourites.map(favRecord).filter(Boolean).map(function (r) {
       return r.colour.name + ' (' + r.collection.name + ', ' + r.colour.hex + ')';
@@ -876,28 +1500,38 @@
       'QUOTE REQUEST',
       '',
       'Name:      ' + val('#q-name'),
+      'Company:   ' + (val('#q-company') || 'not given'),
       'Email:     ' + val('#q-email'),
-      'Phone:     ' + (val('#q-phone') || '—'),
-      'Location:  ' + (val('#q-location') || '—'),
+      'PO / Job:  ' + (val('#q-po') || 'not given'),
+      'Phone:     ' + (val('#q-phone') || 'not given'),
       '',
-      'Project type: ' + (val('#q-project-type') || '—'),
-      'Timeline:     ' + (val('#q-timeline') || '—'),
-      'Services:     ' + (services.length ? services.join(', ') : '—'),
-      '',
-      'Material preference: ' + (val('#q-material') || '—'),
-      'Viewing in configurator: ' + material().name + ' — ' + collection().name
+      'Timeline:  ' + (val('#q-timeline') || 'not given'),
+      ''
     ];
 
-    if (state.selected) {
-      lines.push('Selected colour: ' + state.selected.name + ' (' + state.selected.hex + ')');
+    if (choices.length) {
+      lines.push('Materials:');
+      choices.forEach(function (ch) {
+        lines.push('  · ' + ch.material +
+          (ch.colour ? '  |  ' + ch.colour + (ch.hex ? ' (' + ch.hex + ')' : '')
+                     : '  |  colour not decided yet'));
+      });
+    } else {
+      lines.push('Materials:    not specified');
     }
+
     if (favs.length) {
       lines.push('', 'Saved colours:');
       favs.forEach(function (f) { lines.push('  · ' + f); });
     }
 
+    if (drawings.length) {
+      lines.push('', 'Drawings attached to this email:');
+      drawings.forEach(function (d) { lines.push('  · ' + d); });
+    }
+
     lines.push('', 'Project details:', val('#q-details'));
-    lines.push('', '— Sent from the Esther\'s materials configurator');
+    lines.push('', 'Sent from the Esther\'s materials configurator');
 
     if (form) { /* keeps the linter honest about the unused binding */ }
     return lines.join('\n');
@@ -911,8 +1545,11 @@
     }
 
     var body = buildQuoteText();
-    var subject = 'Quote request — ' + $('#q-name').value.trim();
-    var href = 'mailto:' + CM.quoteEmail +
+    var subject = 'Quote request from ' + $('#q-name').value.trim();
+    /* Several addresses are allowed; a comma-separated list is what a mailto:
+       To field takes, so every one of them is on the message. */
+    var to = [].concat(CM.quoteEmail).join(',');
+    var href = 'mailto:' + to +
                '?subject=' + encodeURIComponent(subject) +
                '&body=' + encodeURIComponent(body);
 
@@ -925,12 +1562,19 @@
     var form = $('#quote-form');
     form.reset();
     form.classList.remove('is-sent');
+    $('#q-material-colours').innerHTML = '';
+    syncMaterialLines();
+    renderDrawingList();
+    setMaterialPanel(false);
     $$('#quote-form .field').forEach(function (f) { f.classList.remove('is-invalid'); });
     scrollToId('quote');
   }
 
   function copyQuote() {
-    var text = state.quoteText || buildQuoteText();
+    /* Copying is what a visitor with no mail handler falls back to, so the
+       text has to carry the address the mailto: link would have supplied. */
+    var text = 'Send to: ' + [].concat(CM.quoteEmail).join(', ') + '\n\n' +
+               (state.quoteText || buildQuoteText());
     var done = function () { toast(material().accent, false, 'Request copied to your clipboard'); };
 
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -945,7 +1589,7 @@
       document.body.appendChild(ta);
       ta.select();
       try { document.execCommand('copy'); done(); }
-      catch (e) { toast('#d4574f', false, 'Could not copy — select the text manually'); }
+      catch (e) { toast('#d4574f', false, 'Could not copy, select the text manually'); }
       document.body.removeChild(ta);
     }
   }
@@ -1038,7 +1682,6 @@
       U.store.set(FAV_KEY, state.favourites);
       updateFavCount();
       renderDrawer();
-      renderQuoteSummary();
       renderSwatches();
     });
 
@@ -1051,6 +1694,8 @@
 
   function init() {
     buildRail();
+    buildWork();
+    buildContact();
     buildServices();
     buildQuote();
     buildPatina();

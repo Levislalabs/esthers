@@ -1,5 +1,5 @@
 /*
- * util.js — colour maths, DOM helpers and the icon set.
+ * util.js - colour maths, DOM helpers and the icon set.
  * Loaded before every other script; no dependencies.
  */
 window.CM = window.CM || {};
@@ -82,7 +82,7 @@ window.CM = window.CM || {};
   /* ---------------------------------------------------------------- dom */
 
   /*
-   * Custom properties have to go through setProperty — assigning them onto a
+   * Custom properties have to go through setProperty - assigning them onto a
    * CSSStyleDeclaration silently does nothing, which shows up as every swatch
    * falling back to its default colour.
    */
@@ -142,7 +142,7 @@ window.CM = window.CM || {};
 
   /* ------------------------------------------------------------ storage */
 
-  /* localStorage is unavailable in some privacy modes — degrade to memory. */
+  /* localStorage is unavailable in some privacy modes - degrade to memory. */
   var memoryStore = {};
   var store = {
     get: function (key, fallback) {
@@ -165,6 +165,7 @@ window.CM = window.CM || {};
     heart:   '<path d="M12 20.5 4.3 13a4.6 4.6 0 0 1 6.5-6.5l1.2 1.2 1.2-1.2A4.6 4.6 0 0 1 19.7 13Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>',
     search:  '<circle cx="10.5" cy="10.5" r="6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m15.2 15.2 4.3 4.3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>',
     close:   '<path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>',
+    plus:    '<path d="M12 5.5v13M5.5 12h13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
     check:   '<path d="m5 12.5 4.6 4.6L19 7.4" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>',
     copy:    '<rect x="8.5" y="8.5" width="11.5" height="11.5" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M15.5 5.5h-9a2 2 0 0 0-2 2v9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
     arrow:   '<path d="M4 12h15m-5.5-6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
@@ -185,6 +186,8 @@ window.CM = window.CM || {};
     heal:    '<path d="M12 3.5v17M3.5 12h17" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="3 3"/>',
     hourglass: '<path d="M7 3.5h10M7 20.5h10M7.5 3.5c0 4.5 4.5 5.2 4.5 8.5s-4.5 4-4.5 8.5M16.5 3.5c0 4.5-4.5 5.2-4.5 8.5s4.5 4 4.5 8.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
     leaf:    '<path d="M20 4.2C10.5 3.4 4.6 7.6 4.6 14a5.4 5.4 0 0 0 5.4 5.4C16.4 19.4 20.6 13.6 20 4.2Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M16.2 8 6.4 18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
+    pin:     '<path d="M12 21.2s7-5.6 7-10.5a7 7 0 1 0-14 0c0 4.9 7 10.5 7 10.5Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="12" cy="10.4" r="2.6" fill="none" stroke="currentColor" stroke-width="1.6"/>',
+    photo:   '<rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8.5" cy="10" r="1.6" fill="currentColor"/><path d="m4 17 5-5 4 4 3-2.5 4 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>',
     gem:     '<path d="M6.5 4h11l3.5 5.2L12 20.5 1 9.2Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" transform="translate(1)"/>'
   };
 
