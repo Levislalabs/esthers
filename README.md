@@ -80,24 +80,51 @@ image found online is usually someone else's copyright.
 
 ## Quote requests
 
-There is no server behind this page. Submitting validates the form, composes the
-whole request as plain text (contact details, company, PO number / job
-location, timeline, chosen
+Submitting validates the form, composes the whole request as plain text
+(contact details, company, PO number / job location, timeline, chosen
 materials, drawing filenames, a deliberately picked colour and saved
-favourites) and hands it to the visitor's email client via `mailto:`. **Copy as text** puts the same content on
-the clipboard for anyone whose browser has no mail handler. Nothing is stored
-and nothing is posted anywhere.
+favourites) and posts it to `api/quote.js`, which hands it to the email
+provider **with the picked files as real attachments**. **Copy as text** puts
+the same content on the clipboard.
 
-**A `mailto:` link cannot carry a file.** The drawing field therefore records
-what the visitor picked, lists it in the request, and tells them to attach the
-files to the message that opens. Real uploads need a backend.
+Only name and email are required. Project details is optional; when it is left
+blank the email says `Project details: not given` rather than carrying an empty
+heading.
 
-Requests are addressed to `counter@esthers.ca` and `manager@esthers.ca`, both
-on the To line. Change the destinations in one place: `CM.quoteEmail` in
-`assets/js/data/materials.js` - a single address as a string, or a list of
-them. Wiring this to a real backend means replacing
-`submitQuote()` in `assets/js/app.js` with a `fetch` to your endpoint - the
-composer that builds the request body is already separate.
+### It falls back rather than failing
+
+On startup the page asks `GET /api/quote` whether the mailbox is configured. If
+the answer is no - no API key set, or no function deployed at all - the form
+reverts to the old `mailto:` behaviour, and the drawing hint goes back to
+telling the visitor to attach the files themselves.
+
+**A `mailto:` link cannot carry a file**, which is exactly why that path is now
+the fallback and not the main one: for years it meant a customer who picked
+three photos sent an email listing three filenames and no pictures.
+
+The success panel only appears once the provider has actually accepted the
+message. A failed send leaves the form exactly as the customer filled it.
+
+### Configuring delivery
+
+Set these on the deployment. None of them belong in the repository:
+
+| Variable | Meaning |
+| --- | --- |
+| `RESEND_API_KEY` | API key. Without it the endpoint reports "not configured" and the site falls back to `mailto:`. |
+| `QUOTE_TO` | Comma-separated recipients, e.g. `counter@esthers.ca,manager@esthers.ca`. |
+| `QUOTE_FROM` | Optional sender. Defaults to the provider's test sender, which needs no DNS changes. |
+
+Limits, enforced server-side in `api/quote.js` and mirrored in the browser for
+a faster message: **5 files, 2.5 MB each, 3 MB combined**. Accepted types are
+PDF, JPG, PNG, HEIC, WebP, DWG, DXF, DOC and DOCX - decided by reading the
+file's actual bytes, never by its extension or the MIME type the browser
+claims. The email is sent as plain text only, so nothing a visitor types is
+ever interpreted as markup.
+
+`CM.quoteEmail` in `assets/js/data/materials.js` still holds the addresses used
+by the `mailto:` fallback and by **Copy as text**; `QUOTE_TO` is what the server
+actually sends to. Keep them in step.
 
 ## Maps
 

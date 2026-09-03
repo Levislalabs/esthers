@@ -1214,6 +1214,10 @@
   line-height: 1.55;
   margin: 10px 0 0;
 }
+/* Same hint slot, used to explain why a picked file cannot be sent. It has
+   to read as a problem without shouting, so it takes the error colour and
+   keeps the hint's size and position. */
+.field__hint--bad { color: #d4574f; }
 
 .quote__actions {
   display: flex;
@@ -1259,6 +1263,27 @@
 .quote__done h3 { font-size: 1.5rem; margin-bottom: 12px; }
 .quote__done p { color: var(--ink-muted); max-width: 46ch; margin: 0 auto 22px; line-height: 1.65; }
 .quote__done-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+
+/* Two endings, one panel. By default the panel describes the mailto: path,
+   because that is what happens on a deployment with no mailbox connected.
+   When the request was genuinely delivered, .is-sent--server swaps in the
+   wording that is true of that path instead. */
+.quote__done-server { display: none; }
+.quote__form.is-sent--server .quote__done-mail { display: none; }
+.quote__form.is-sent--server .quote__done-server { display: block; }
+
+/* Sending state. The button has to stop being pressable while the files go
+   up, and has to look like it is doing something. */
+.btn.is-busy { opacity: 0.72; cursor: progress; }
+.btn.is-busy .btn__arrow { animation: btnBusy 900ms linear infinite; }
+@keyframes btnBusy {
+  from { opacity: 0.35; }
+  50%  { opacity: 1; }
+  to   { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn.is-busy .btn__arrow { animation: none; }
+}
 
 /* =====================================================================
    10. FAVOURITES DRAWER

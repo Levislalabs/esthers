@@ -92,11 +92,78 @@ Do this in a browser. It takes about five minutes.
    If Vercel has pre-filled a build command, clear it. This site has no build
    step — the files in the repository *are* the website.
 
-5. Do **not** add any Environment Variables. The site needs none.
+5. Add the Environment Variables for quote-request email (see the next
+   section). Without them the site still works — the quote form falls back to
+   opening the visitor's email app — but **attachments will not arrive**.
 6. Click **Deploy**.
 
 After a minute you get a URL like `https://esthers.vercel.app`. That is the
 preview. **The real domain is still untouched at this point.**
+
+---
+
+## Step 1b — turn on quote-request email
+
+**This is the step that makes customer photos arrive as attachments.** Until it
+is done, the quote form behaves the way it always has: it opens the visitor's
+email app with the request typed out, and their photos stay on their phone.
+Nothing breaks — it simply does not carry the pictures.
+
+### Why it needs setting up at all
+
+A `mailto:` link — which is all the form had before — has room for a subject
+and a message and nothing else. There is no attachment field in it. So a
+customer who picked three photos sent an email listing three *filenames*. The
+pictures never left their browser. Fixing that needs somewhere to send them,
+and that is what these three settings are.
+
+### Create the sending account
+
+1. Go to **resend.com** and sign up. The free tier is far more than a quote
+   form needs.
+2. **API Keys → Create API Key.** Give it **Sending access** only.
+3. Copy the key. You will not be shown it again.
+   **Do not paste it into the repository, a document, or a chat message.** It
+   goes in one place only: the box in step 4.
+
+### Add the three variables in Vercel
+
+**Settings → Environment Variables.** Add each one to all environments
+(Production, Preview, Development):
+
+| Name | Value |
+| --- | --- |
+| `RESEND_API_KEY` | the key you just copied |
+| `QUOTE_TO` | `counter@esthers.ca,manager@esthers.ca` |
+| `QUOTE_FROM` | leave unset for now — see below |
+
+Then **Deployments → … → Redeploy**. Environment variables are read when the
+site is built, so an existing deployment will not pick them up on its own.
+
+### About the "from" address
+
+Leave `QUOTE_FROM` unset to start. The endpoint then sends from the provider's
+own test address, which **needs no DNS changes at all** — important, because
+nothing about esthers.ca DNS should be touched yet. Quotes still arrive at
+`counter@esthers.ca`, and replying goes to the customer, because their address
+is set as the reply-to.
+
+Later, when you want the email to come *from* esthers.ca, that requires adding
+DNS records the provider gives you. **That is a separate job to plan carefully
+alongside the domain move**, since it touches the same DNS zone as the company
+email. It is not needed for attachments to work.
+
+### Check it worked
+
+Open the site, submit a quote request to yourself with a photo attached, and
+look in the mailbox. Full instructions are in the checklist at the end.
+
+If the key is missing or wrong, the form does not show an error to the
+customer — it quietly falls back to the email-app behaviour. That is deliberate:
+a customer should never see a broken form. But it does mean **the only way to
+know it is working is to look in the mailbox.**
+
+---
 
 ### Keep this project separate from Portrait Remix
 
@@ -278,6 +345,17 @@ Work through this on the `.vercel.app` URL.
 12. Recent Fabrication: all six photos
 13. Gallery swipes sideways on a narrow window
 14. Quote Request form appears
+
+**The quote form — the part that needs a real mailbox check**
+14a. "Project details" shows **optional**, not required
+14b. Submitting with Project details **empty** works
+14c. Attach a photo, submit, and **look in counter@esthers.ca**:
+     the email must contain the picture as a real attachment that opens
+14d. Attach two or three photos: all of them arrive, with their filenames
+14e. Try a file that is not allowed (a .txt): a plain message appears and
+     nothing is sent
+14f. Try a photo over 2.5 MB: it is refused with a message naming the limit
+14g. If a send fails, the form keeps everything typed — nothing is cleared
 15. Contact: both shops, **Ed / Luisa** on Main Branch
 16. Helper line sits **above** the two cards
 17. Maps show, Get Directions works

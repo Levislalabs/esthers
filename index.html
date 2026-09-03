@@ -463,10 +463,9 @@
             </div>
 
             <div class="field field--wide">
-              <label class="field__label" for="q-details">Project details <span class="field__req">required</span></label>
+              <label class="field__label" for="q-details">Project details <span class="field__optional">optional</span></label>
               <textarea id="q-details" name="details"
                 placeholder="Flue count and dimensions, chimney size, roof pitch, exposure, access, and anything else that affects the build."></textarea>
-              <span class="field__error">A sentence or two about the project helps us quote it properly.</span>
             </div>
 
           </div>
@@ -483,15 +482,24 @@
             </p>
           </div>
 
-          <!-- shown after the request is composed -->
+          <!-- Shown after the request goes. There are two endings, because
+               there are two ways it can go: the request was delivered to us
+               with its attachments, or - on a deployment with no mailbox
+               connected - it was handed to the visitor's email app, which
+               cannot carry files. The wording has to match what happened,
+               so .is-sent--server picks between them. -->
           <div class="quote__done">
             <span class="quote__done-mark">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.6 4.6L19 7.4" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </span>
-            <h3 class="subhead">Your request is ready to send</h3>
-            <p>
+            <h3 class="subhead quote__done-title" data-sent="Your request has been sent">Your request is ready to send</h3>
+            <p class="quote__done-mail">
               We have handed it to your email app with everything filled in. If nothing opened, copy the
               request instead and send it to us however you like. We read every one.
+            </p>
+            <p class="quote__done-server">
+              It is with us now, drawings and all. We read every one and will come back to you at the
+              email address you gave. Keep a copy for your own records if you like.
             </p>
             <div class="quote__done-actions">
               <button class="btn btn--ghost" type="button" id="quote-copy-done"><span>Copy the request</span></button>

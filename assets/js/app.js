@@ -21,6 +21,8 @@
     selected: null,      /* { collection, name, hex, metallic } */
     colourChosen: false, /* true only after the visitor clicks a swatch */
     quoteText: '',
+    quoteUpload: false,   /* true once /api/quote reports it can send mail */
+    quoteSentCount: 0,    /* attachments on the request that just went */
     patina: 0,
     patinaAuto: false
   };
@@ -1251,6 +1253,7 @@
 
     buildMaterialPicker();
     buildDrawingField();
+    probeQuoteUpload();
 
     fillSelect($('#q-timeline'), CM.timelines, 'Select a timeline');
 
@@ -1406,15 +1409,78 @@
   }
 
   /*
-   * Drawing attachment. A mailto: link cannot carry a file, so the picked
-   * files are listed in the request and the customer is told to attach them
-   * to the message that opens. Nothing here pretends to upload.
+   * Drawing attachment.
+   *
+   * These four numbers mirror the ones in api/quote.js. The server enforces
+   * them; these exist only so a customer who picks a 40 MB photo hears about
+   * it immediately instead of after an upload. If you change one, change both.
    */
+  var UPLOAD = {
+    maxFiles: 5,
+    maxFileBytes: 2.5 * 1024 * 1024,
+    maxTotalBytes: 3 * 1024 * 1024,
+    /* Mirrors CM.drawingTypes. The server decides for real, by reading the
+       bytes; this is the fast, friendly check. */
+    extensions: ['pdf', 'jpg', 'jpeg', 'png', 'heic', 'webp', 'dwg', 'dxf', 'doc', 'docx']
+  };
+
   function buildDrawingField() {
     var input = $('#q-drawing');
     if (!input) return;
     input.setAttribute('accept', CM.drawingTypes);
     input.addEventListener('change', renderDrawingList);
+  }
+
+  function extensionOf(filename) {
+    var m = /\.([A-Za-z0-9]{1,8})$/.exec(filename || '');
+    return m ? m[1].toLowerCase() : '';
+  }
+
+  /*
+   * Returns a customer-facing sentence when the picked files cannot be sent,
+   * or null when they are fine. Never surfaces an API error verbatim.
+   */
+  function checkDrawings(files) {
+    if (files.length > UPLOAD.maxFiles) {
+      return 'Please attach no more than ' + UPLOAD.maxFiles +
+             ' files. You can email any extras to us directly.';
+    }
+    var total = 0;
+    for (var i = 0; i < files.length; i++) {
+      var f = files[i];
+      if (UPLOAD.extensions.indexOf(extensionOf(f.name)) === -1) {
+        return '"' + f.name + '" is not a file type we can open. ' +
+               'Please send a PDF, image, DWG, DXF or Word file.';
+      }
+      if (f.size > UPLOAD.maxFileBytes) {
+        return '"' + f.name + '" is larger than ' +
+               (Math.round(UPLOAD.maxFileBytes / 1024 / 1024 * 10) / 10) +
+               ' MB. Please send that one by email instead.';
+      }
+      total += f.size;
+    }
+    if (total > UPLOAD.maxTotalBytes) {
+      return 'Those files come to more than ' +
+             Math.round(UPLOAD.maxTotalBytes / 1024 / 1024) +
+             ' MB together. Please attach the important ones and email the rest.';
+    }
+    return null;
+  }
+
+  /* FileReader rather than arrayBuffer(), so this still works on the older
+     iOS Safari versions a contractor on a job site is likely to be holding. */
+  function readAsBase64(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        var result = String(reader.result || '');
+        var comma = result.indexOf(',');
+        if (comma === -1) { reject(new Error('unreadable')); return; }
+        resolve(result.slice(comma + 1));
+      };
+      reader.onerror = function () { reject(new Error('unreadable')); };
+      reader.readAsDataURL(file);
+    });
   }
 
   function fileSize(bytes) {
@@ -1437,7 +1503,22 @@
         el('span', { class: 'filelist__size', text: fileSize(f.size) })
       ]));
     });
-    if (hint) hint.hidden = files.length === 0;
+
+    if (!hint) return;
+    hint.hidden = files.length === 0;
+    if (!files.length) { hint.classList.remove('field__hint--bad'); return; }
+
+    /* Say what will actually happen to these files. The answer differs
+       depending on whether this deployment can send them, so it is read
+       from the endpoint rather than hard-coded into the markup. */
+    var problem = checkDrawings(files);
+    hint.classList.toggle('field__hint--bad', Boolean(problem));
+    hint.textContent = problem ? problem
+      : state.quoteUpload
+        ? 'These will be attached to your request.'
+        : 'Your email app cannot pick files up from a web page, so attach these to the ' +
+          'message that opens before you send it. We have listed them in the request ' +
+          'so nothing gets missed.';
   }
 
   function drawingNames() {
@@ -1467,9 +1548,13 @@
     var ok = true;
     var firstBad = null;
 
+    /* Name and email are all that is genuinely required: without them a quote
+       cannot be addressed or returned. Project details used to be required
+       too, but a customer who just wants a number for a chase cover should
+       not be blocked by a minimum word count - and the drawings they attach
+       often say more than the box would. */
     [['#q-name', function (v) { return v.trim().length > 1; }],
-     ['#q-email', function (v) { return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim()); }],
-     ['#q-details', function (v) { return v.trim().length > 9; }]
+     ['#q-email', function (v) { return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim()); }]
     ].forEach(function (pair) {
       var input = $(pair[0]);
       var good = pair[1](input.value);
@@ -1530,21 +1615,60 @@
       drawings.forEach(function (d) { lines.push('  · ' + d); });
     }
 
-    lines.push('', 'Project details:', val('#q-details'));
+    /* Optional since the field was relaxed. An empty box gets the same
+       "not given" the other optional fields use, so the email never carries
+       an empty heading - and never the words undefined, null or "". */
+    var details = val('#q-details');
+    if (details) lines.push('', 'Project details:', details);
+    else lines.push('', 'Project details: not given');
+
     lines.push('', 'Sent from the Esther\'s materials configurator');
 
     if (form) { /* keeps the linter honest about the unused binding */ }
     return lines.join('\n');
   }
 
-  function submitQuote(ev) {
-    ev.preventDefault();
-    if (!validateQuote()) {
-      toast('#d4574f', false, 'Check the highlighted fields');
-      return;
-    }
+  /*
+   * Ask the endpoint whether it can actually send mail. A deployment with no
+   * mailbox configured answers ready:false, and one with no function at all
+   * answers 404 - both mean the same thing here, so both fall back to the
+   * mailto: flow. Nothing about the key is requested or returned; the answer
+   * is a boolean.
+   */
+  function probeQuoteUpload() {
+    if (!window.fetch) return;
+    fetch('/api/quote', { method: 'GET', headers: { 'Accept': 'application/json' } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (info) {
+        state.quoteUpload = Boolean(info && info.ready);
+        renderDrawingList();
+      })
+      .catch(function () { state.quoteUpload = false; });
+  }
 
-    var body = buildQuoteText();
+  function setQuoteSending(sending) {
+    var btn = $('#quote-form button[type="submit"]');
+    if (!btn) return;
+    btn.disabled = sending;
+    btn.classList.toggle('is-busy', sending);
+    var label = btn.querySelector('span');
+    if (label) {
+      if (sending) {
+        if (!btn.dataset.label) btn.dataset.label = label.textContent;
+        label.textContent = 'Sending…';
+      } else if (btn.dataset.label) {
+        label.textContent = btn.dataset.label;
+      }
+    }
+  }
+
+  /*
+   * The mailto: composer. This was the whole of "send" until the upload
+   * endpoint existed, and it stays as the fallback for a deployment with no
+   * mailbox wired up. It cannot carry files - a mailto: URI has no
+   * attachment field - which is exactly why it is no longer the main path.
+   */
+  function sendQuoteByMail(body) {
     var subject = 'Quote request from ' + $('#q-name').value.trim();
     /* Several addresses are allowed; a comma-separated list is what a mailto:
        To field takes, so every one of them is on the message. */
@@ -1558,10 +1682,106 @@
     window.location.href = href;
   }
 
+  function submitQuote(ev) {
+    ev.preventDefault();
+    if (!validateQuote()) {
+      toast('#d4574f', false, 'Check the highlighted fields');
+      return;
+    }
+
+    var input = $('#q-drawing');
+    var files = (input && input.files) ? Array.prototype.slice.call(input.files) : [];
+
+    var problem = checkDrawings(files);
+    if (problem) {
+      renderDrawingList();
+      toast('#d4574f', false, problem);
+      if (input) input.focus();
+      return;
+    }
+
+    var body = buildQuoteText();
+    state.quoteText = body;
+
+    /* No endpoint on this deployment: compose the email as before. The done
+       panel tells the customer to attach the files themselves, which is the
+       truth on this path. */
+    if (!state.quoteUpload || !window.fetch) {
+      sendQuoteByMail(body);
+      return;
+    }
+
+    setQuoteSending(true);
+
+    Promise.all(files.map(function (f) {
+      return readAsBase64(f).then(function (data) {
+        return { name: f.name, type: f.type || '', size: f.size, data: data };
+      });
+    })).then(function (payloadFiles) {
+      /* A file that would not read must not become a quietly attachment-less
+         "success". Better to stop and say so. */
+      if (payloadFiles.length !== files.length) throw new Error('unreadable');
+
+      return fetch('/api/quote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: $('#q-name').value.trim(),
+          email: $('#q-email').value.trim(),
+          subject: 'Quote request from ' + $('#q-name').value.trim(),
+          text: body,
+          files: payloadFiles
+        })
+      });
+    }).then(function (response) {
+      return response.json().catch(function () { return {}; })
+        .then(function (data) { return { response: response, data: data }; });
+    }).then(function (result) {
+      var data = result.data || {};
+
+      /* The mailbox went away between the probe and the send. Fall back
+         rather than telling the customer their request failed. */
+      if (result.response.status === 503 && data.notConfigured) {
+        setQuoteSending(false);
+        sendQuoteByMail(body);
+        return;
+      }
+
+      if (!result.response.ok || !data.ok) {
+        throw new Error(data.error || '');
+      }
+
+      /* Success state ONLY here - after the provider accepted the message.
+         The form is left exactly as the customer filled it; resetQuote is
+         what clears it, and only when they ask for another request. */
+      setQuoteSending(false);
+      state.quoteSentCount = files.length;
+      var title = $('.quote__done-title');
+      if (title && title.dataset.sent) title.textContent = title.dataset.sent;
+      $('#quote-form').classList.add('is-sent', 'is-sent--server');
+      toast(material().accent, false,
+        files.length ? 'Request sent with ' + files.length +
+                       (files.length === 1 ? ' attachment' : ' attachments')
+                     : 'Request sent');
+    }).catch(function (err) {
+      setQuoteSending(false);
+      /* The customer's answers stay on screen, untouched, so they can retry
+         or copy the request instead. */
+      var message = (err && err.message) ? err.message : '';
+      toast('#d4574f', false, message ||
+        'We could not send your request just now. Please try again, or copy it and email us.');
+    });
+  }
+
   function resetQuote() {
     var form = $('#quote-form');
     form.reset();
-    form.classList.remove('is-sent');
+    form.classList.remove('is-sent', 'is-sent--server');
+    /* The heading is swapped on a real send, so put it back for the next one. */
+    var title = $('.quote__done-title');
+    if (title) title.textContent = 'Your request is ready to send';
+    setQuoteSending(false);
+    state.quoteSentCount = 0;
     $('#q-material-colours').innerHTML = '';
     syncMaterialLines();
     renderDrawingList();
