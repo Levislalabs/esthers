@@ -80,7 +80,8 @@ CM.contactSection = {
       phone: '604-291-6766',
       contacts: [
         { name: 'Ed / Luisa', email: 'info@esthers.ca' },
-        { name: 'EJay', email: 'manager@esthers.ca' }
+        { name: 'EJay', email: 'manager@esthers.ca' },
+        { name: 'Mavy', email: 'accounting@esthers.ca' }
       ],
       specialties:
         'Standard and custom flashing, specialty chimney caps including louvered and ' +
