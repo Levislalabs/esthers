@@ -1,0 +1,11 @@
+# Esther's Sheet Metal - https://www.esthers.ca/
+#
+# The public site is open to normal crawling. Nothing is disallowed here:
+# anything that should not be on the web is simply not published, rather
+# than being listed in this file. robots.txt is itself public, so naming
+# paths in order to hide them would only advertise them.
+
+User-agent: *
+Allow: /
+
+Sitemap: https://www.esthers.ca/sitemap.xml

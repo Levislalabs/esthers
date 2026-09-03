@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Esther's Sheet Metal is a single-page site. The one entry below is the
+  whole of it. The in-page sections (#work, #services, #materials and the
+  rest) are anchors on this same document, not separate URLs, so they do
+  not belong in a sitemap.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://www.esthers.ca/</loc>
+  </url>
+</urlset>
