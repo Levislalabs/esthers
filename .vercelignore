@@ -4,10 +4,10 @@
 # deployment. Anything listed here is left out of that copy, so it cannot
 # be fetched at any URL - it is not hidden, it is simply not there.
 #
-# This matters most on the FEATURE BRANCH. Vercel builds a preview
-# deployment for every branch it sees, so without this file a push to
-# claude/materials-color-configurator-yri05u would put the staff sign-in
-# page and the whole unfinished backend on a public https:// address.
+# This matters most on development branches. Vercel builds a preview
+# deployment for every branch it sees, so without this file a push to a
+# work-in-progress branch would put its unfinished pages and backend on a
+# public https:// address.
 #
 # Nothing here is deleted from Git. All of it stays in the repository and
 # in history; it is only excluded from what gets served.
@@ -55,3 +55,22 @@ node_modules/
 # gitignored too; this is the second lock on the same door.
 .env
 .env.*
+
+# ---------------------------------------------------------------------
+# Camera originals for the gallery.
+#
+# The page serves only the .webp derivatives - nothing references these
+# .jpg files. Left in, they were 21 MB of publicly fetchable downloads
+# that no visitor ever asks for, still carrying the phone's make, model,
+# firmware version and the exact minute each photo was taken. None of
+# that belongs on a website.
+#
+# They stay in Git as the originals the derivatives are made from; they
+# are simply not part of what gets served. The hero image lives at
+# assets/img/work-enclosure.jpg, outside this folder, and is unaffected.
+# ---------------------------------------------------------------------
+assets/img/work/*.jpg
+
+# This file itself. It names the paths it holds back, which is a map
+# worth not handing out, and it is of no use to a browser.
+.vercelignore
