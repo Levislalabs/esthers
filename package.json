@@ -1,0 +1,8 @@
+{
+  "name": "esthers-site",
+  "private": true,
+  "description": "Server-side dependencies for the quote-request functions in api/. The website itself is plain HTML, CSS and JavaScript with no build step and no frontend package - nothing here is bundled or shipped to the browser.",
+  "dependencies": {
+    "@vercel/blob": "^2.8.0"
+  }
+}

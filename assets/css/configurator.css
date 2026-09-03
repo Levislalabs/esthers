@@ -1208,6 +1208,32 @@
 .filelist__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .filelist__size { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-faint); margin-left: auto; flex: none; }
 
+/* Upload state, in the list the customer is already reading rather than in a
+   separate progress panel. It only takes up room once there is something to
+   say, so an untouched form looks exactly as it did before. */
+.filelist__state {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-faint);
+  flex: none;
+  min-width: 3.4em;
+  text-align: right;
+}
+.filelist li[data-status="uploading"] .filelist__state { color: var(--accent); }
+.filelist li[data-status="done"] .filelist__state { color: var(--accent); }
+.filelist li[data-status="failed"] .filelist__state { color: #d4574f; }
+.filelist li[data-status="failed"] { border-color: #d4574f; }
+.filelist li[data-status="uploading"] .filelist__name { opacity: 0.75; }
+
+/* The limits, said once, where the files are picked. */
+.filedrop__limits {
+  display: block;
+  font-style: normal;
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  margin-top: 4px;
+}
+
 .field__hint {
   font-size: 12.6px;
   color: var(--ink-muted);
@@ -1263,6 +1289,15 @@
 .quote__done h3 { font-size: 1.5rem; margin-bottom: 12px; }
 .quote__done p { color: var(--ink-muted); max-width: 46ch; margin: 0 auto 22px; line-height: 1.65; }
 .quote__done-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+
+/* Two notes under the send button, for the same reason there are two success
+   panels: the honest description of what pressing the button does depends on
+   whether this deployment can actually receive the request. The mailto:
+   wording is the default because that is what happens when it cannot; JS
+   swaps to the direct-send wording once the endpoint says it is live. */
+.quote__note--server { display: none; }
+.quote__form.can-send .quote__note--mail { display: none; }
+.quote__form.can-send .quote__note--server { display: block; }
 
 /* Two endings, one panel. By default the panel describes the mailto: path,
    because that is what happens on a deployment with no mailbox connected.

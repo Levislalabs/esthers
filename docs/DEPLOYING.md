@@ -3,10 +3,13 @@
 Plain-English guide to how Esther's website is hosted, what has been done,
 and what is left. Written for someone who has not done this before.
 
-**Where things stand right now:** the site is configured for Vercel but has
-**not been deployed there yet**, and **www.esthers.ca still points at the old
+**Where things stand right now:** the site is **live on Vercel** at
+`https://esthers.vercel.app`, and **www.esthers.ca still points at the old
 cPanel site**. Nothing about the live domain or the company email has been
 touched.
+
+Steps 1 and 1b below are done. **Step 1c — creating the private Blob store —
+is not, and customer file uploads do not work until it is.**
 
 ---
 
@@ -55,16 +58,14 @@ network request leaving the page.
 
 ## What is NOT done
 
-- No Vercel project exists yet.
-- No deployment has been made.
+- **No Blob store exists** — so quote uploads are off. See step 1c.
 - No DNS has been touched.
 - The chat backend is written but not switched on.
 
-**Why the deployment was not made for you:** it needs a Vercel account, and
-creating one is not something that can be done on your behalf — it is tied to
-your identity, your billing and your GitHub authorisation. Step 1 below is the
-five minutes of clicking that only you can do. Everything that *could* be
-prepared in advance has been.
+**Why the storage was not created for you:** it is a dashboard action tied to
+your account and billing, and it produces a credential that should never pass
+through a chat message. Step 1c is a couple of minutes of clicking that only
+you can do. Everything that *could* be prepared in advance has been.
 
 ---
 
@@ -75,7 +76,7 @@ Do this in a browser. It takes about five minutes.
 1. Go to **vercel.com** and sign in. **Sign in with GitHub** is easiest —
    it means Vercel can see the repository without any extra setup.
 2. Click **Add New…** → **Project**.
-3. Find **pressstartejay/esthers** in the list and click **Import**.
+3. Find **Levislalabs/esthers** in the list and click **Import**.
    - If it is not listed, click **Adjust GitHub App Permissions** and give
      Vercel access to that repository.
 4. On the configuration screen:
@@ -139,6 +140,38 @@ and that is what these three settings are.
 
 Then **Deployments → … → Redeploy**. Environment variables are read when the
 site is built, so an existing deployment will not pick them up on its own.
+
+### Step 1c — create the private Blob store (you must do this)
+
+Customer photos no longer travel inside the quote request — they upload
+straight to private storage. That storage has to exist before the form can
+accept a file, and creating it is a dashboard job only you can do.
+
+**Until this is done the site still works.** The form falls back to the old
+behaviour and says so. Nothing is broken; files just are not carried.
+
+1. Open your project on **vercel.com**.
+2. Go to the **Storage** tab.
+3. Click **Create Database** (or **Create Store**) and choose **Blob**.
+4. Name it something plain, e.g. `esthers-quote-uploads`.
+5. **Choose PRIVATE, not public.** This is the important click on this page.
+   A public store hands out permanent URLs that anyone who ever sees one can
+   open forever. These files are photographs of customers' houses.
+6. **Connect it to the Esther's project only.** If your account also has
+   Portrait Remix, do not connect it to that as well — separate projects,
+   separate storage, nothing shared.
+7. Connect it to **all three environments**: Production, Preview, Development.
+8. Vercel then creates an environment variable called **`BLOB_READ_WRITE_TOKEN`**
+   in the project automatically.
+   **You do not need to copy it, type it, or send it to anyone — including me.**
+   It should never appear in the repository or in a chat message.
+9. **Redeploy** (Deployments → … → Redeploy). Variables are read at build
+   time, so an existing deployment will not pick it up on its own.
+
+**How to check it worked:** open `https://esthers.vercel.app/api/quote` in a
+browser. You want to see `"ready":true` **and** `"uploads":true`. If `uploads`
+is false, the store is not connected to this project or the redeploy has not
+happened yet.
 
 ### About the "from" address
 
@@ -349,13 +382,18 @@ Work through this on the `.vercel.app` URL.
 **The quote form — the part that needs a real mailbox check**
 14a. "Project details" shows **optional**, not required
 14b. Submitting with Project details **empty** works
-14c. Attach a photo, submit, and **look in counter@esthers.ca**:
-     the email must contain the picture as a real attachment that opens
-14d. Attach two or three photos: all of them arrive, with their filenames
-14e. Try a file that is not allowed (a .txt): a plain message appears and
+14c. The upload control reads "Up to 5 files, 25 MB each"
+14d. Attach a photo, submit, and **look in counter@esthers.ca**: the email
+     has an ATTACHMENTS / FILES section listing the file, its size and a
+     "Download securely" link. Click the link — the picture must open.
+14e. Attach two or three photos, including a big one: all of them are
+     listed, each with its own link, and each row shows "sent"
+14f. Try a file that is not allowed (a .txt): a plain message appears and
      nothing is sent
-14f. Try a photo over 2.5 MB: it is refused with a message naming the limit
-14g. If a send fails, the form keeps everything typed — nothing is cleared
+14g. Try a photo over 25 MB: it is refused with a message naming the limit
+14h. If a send fails, the form keeps everything typed — nothing is cleared
+14i. Paste a download link into a private window a few days later to
+     confirm it still works; after 7 days it must stop working
 15. Contact: both shops, **Ed / Luisa** on Main Branch
 16. Helper line sits **above** the two cards
 17. Maps show, Get Directions works

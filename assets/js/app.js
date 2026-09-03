@@ -1415,12 +1415,20 @@
    * them; these exist only so a customer who picks a 40 MB photo hears about
    * it immediately instead of after an upload. If you change one, change both.
    */
+  /* These mirror api/_lib.js, which is what actually enforces them. These
+     exist so a customer who picks a 40 MB file hears about it immediately
+     instead of after a long upload. If you change one, change both.
+
+     The numbers are large now because files no longer travel inside the
+     quote request itself - they go straight from the browser to private
+     storage, so the old 4.5 MB request-body ceiling does not apply. */
   var UPLOAD = {
     maxFiles: 5,
-    maxFileBytes: 2.5 * 1024 * 1024,
-    maxTotalBytes: 3 * 1024 * 1024,
-    /* Mirrors CM.drawingTypes. The server decides for real, by reading the
-       bytes; this is the fast, friendly check. */
+    maxFileBytes: 25 * 1024 * 1024,
+    maxTotalBytes: 75 * 1024 * 1024,
+    /* Mirrors CM.drawingTypes. The server still has the last word: after an
+       upload finishes it reads the first 512 bytes back and checks the file
+       really is what its name claims. */
     extensions: ['pdf', 'jpg', 'jpeg', 'png', 'heic', 'webp', 'dwg', 'dxf', 'doc', 'docx']
   };
 
@@ -1467,19 +1475,93 @@
     return null;
   }
 
-  /* FileReader rather than arrayBuffer(), so this still works on the older
-     iOS Safari versions a contractor on a job site is likely to be holding. */
-  function readAsBase64(file) {
+  /*
+   * Uploads.
+   *
+   * Files used to be base64'd into the quote request itself, which capped the
+   * whole thing at about 3 MB - less than two phone photos. They now go
+   * straight from the browser to private storage, and the quote request
+   * carries only the pathnames. Nothing here reads a file into memory: the
+   * File object is handed to fetch() as the body and the browser streams it.
+   *
+   * XMLHttpRequest rather than fetch for the PUT, because it is the only way
+   * to get real upload progress - and watching a 20 MB photo sit at "sending"
+   * with no feedback is how people conclude a form is broken.
+   */
+  function putFile(url, file, onProgress) {
     return new Promise(function (resolve, reject) {
-      var reader = new FileReader();
-      reader.onload = function () {
-        var result = String(reader.result || '');
-        var comma = result.indexOf(',');
-        if (comma === -1) { reject(new Error('unreadable')); return; }
-        resolve(result.slice(comma + 1));
+      var xhr = new XMLHttpRequest();
+      xhr.open('PUT', url, true);
+      if (file.type) xhr.setRequestHeader('Content-Type', file.type);
+      xhr.upload.onprogress = function (ev) {
+        if (ev.lengthComputable && onProgress) onProgress(ev.loaded / ev.total);
       };
-      reader.onerror = function () { reject(new Error('unreadable')); };
-      reader.readAsDataURL(file);
+      xhr.onload = function () {
+        if (xhr.status >= 200 && xhr.status < 300) resolve();
+        else reject(new Error('upload failed'));
+      };
+      xhr.onerror = function () { reject(new Error('upload failed')); };
+      xhr.onabort = function () { reject(new Error('upload cancelled')); };
+      xhr.send(file);
+    });
+  }
+
+  /*
+   * Asks the server for permission, then uploads each file in turn.
+   *
+   * Sequential rather than parallel: a phone on site data is the normal case,
+   * and five simultaneous 20 MB uploads on a weak connection fail more often
+   * than they finish. One at a time also makes "which one failed" a
+   * meaningful answer.
+   *
+   * Rejects on the FIRST failure. A partly-uploaded set must never turn into
+   * a quote that claims all the files arrived.
+   */
+  function uploadAll(files) {
+    var manifest = files.map(function (f) {
+      return { name: f.name, size: f.size, type: f.type || '' };
+    });
+
+    return fetch('/api/upload-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files: manifest })
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; })
+        .then(function (d) { return { response: r, data: d }; });
+    }).then(function (res) {
+      if (!res.response.ok || !res.data.ok) {
+        var err = new Error(res.data.error || '');
+        err.customerMessage = res.data.error || '';
+        throw err;
+      }
+
+      var uploads = res.data.uploads || [];
+      if (uploads.length !== files.length) throw new Error('upload setup mismatch');
+
+      /* Chain them so exactly one is in flight at a time. */
+      var chain = Promise.resolve();
+      uploads.forEach(function (u, i) {
+        chain = chain.then(function () {
+          setFileStatus(i, 'uploading', 0);
+          return putFile(u.uploadUrl, files[i], function (fraction) {
+            setFileStatus(i, 'uploading', fraction);
+          }).then(function () {
+            setFileStatus(i, 'done', 1);
+          }, function (err) {
+            setFileStatus(i, 'failed', 0);
+            var e = new Error('upload failed');
+            e.failedIndex = i;
+            e.customerMessage = 'We could not upload "' + files[i].name +
+              '". Nothing has been sent - please check your connection and try again.';
+            throw e;
+          });
+        });
+      });
+
+      return chain.then(function () {
+        return uploads.map(function (u) { return { pathname: u.pathname }; });
+      });
     });
   }
 
@@ -1497,10 +1579,11 @@
 
     var files = input.files ? Array.prototype.slice.call(input.files) : [];
     list.innerHTML = '';
-    files.forEach(function (f) {
-      list.appendChild(el('li', {}, [
+    files.forEach(function (f, i) {
+      list.appendChild(el('li', { 'data-file': String(i) }, [
         el('span', { class: 'filelist__name', text: f.name }),
-        el('span', { class: 'filelist__size', text: fileSize(f.size) })
+        el('span', { class: 'filelist__size', text: fileSize(f.size) }),
+        el('span', { class: 'filelist__state', text: '' })
       ]));
     });
 
@@ -1515,10 +1598,37 @@
     hint.classList.toggle('field__hint--bad', Boolean(problem));
     hint.textContent = problem ? problem
       : state.quoteUpload
-        ? 'These will be attached to your request.'
-        : 'Your email app cannot pick files up from a web page, so attach these to the ' +
-          'message that opens before you send it. We have listed them in the request ' +
-          'so nothing gets missed.';
+        ? 'These will be sent with your request.'
+        : 'This deployment cannot receive files yet, so these will NOT be sent. ' +
+          'Attach them to the message that opens instead - they are listed in the ' +
+          'request so nothing gets missed.';
+  }
+
+  /* Per-file upload state, shown in the list the customer is already looking
+     at rather than in a separate progress panel. */
+  function setFileStatus(index, status, fraction) {
+    var row = document.querySelector('#q-drawing-list li[data-file="' + index + '"]');
+    if (!row) return;
+    var cell = row.querySelector('.filelist__state');
+    row.setAttribute('data-status', status);
+    if (!cell) return;
+    if (status === 'uploading') {
+      cell.textContent = Math.round((fraction || 0) * 100) + '%';
+    } else if (status === 'done') {
+      cell.textContent = 'sent';
+    } else if (status === 'failed') {
+      cell.textContent = 'failed';
+    } else {
+      cell.textContent = '';
+    }
+  }
+
+  function clearFileStatuses() {
+    $$('#q-drawing-list li').forEach(function (row) {
+      row.removeAttribute('data-status');
+      var cell = row.querySelector('.filelist__state');
+      if (cell) cell.textContent = '';
+    });
   }
 
   function drawingNames() {
@@ -1640,7 +1750,13 @@
     fetch('/api/quote', { method: 'GET', headers: { 'Accept': 'application/json' } })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (info) {
-        state.quoteUpload = Boolean(info && info.ready);
+        /* Both halves have to be live for the form to promise anything:
+           a mailbox to send to, and storage to put the files in. */
+        state.quoteUpload = Boolean(info && info.ready && info.uploads);
+        /* Swap the note under the send button to match what will really
+           happen when it is pressed. */
+        var form = $('#quote-form');
+        if (form) form.classList.toggle('can-send', state.quoteUpload);
         renderDrawingList();
       })
       .catch(function () { state.quoteUpload = false; });
@@ -1704,24 +1820,31 @@
     state.quoteText = body;
 
     /* No endpoint on this deployment: compose the email as before. The done
-       panel tells the customer to attach the files themselves, which is the
-       truth on this path. */
+       panel and the drawing hint both say plainly that the files are not
+       coming with it. */
     if (!state.quoteUpload || !window.fetch) {
       sendQuoteByMail(body);
       return;
     }
 
     setQuoteSending(true);
+    clearFileStatuses();
 
-    Promise.all(files.map(function (f) {
-      return readAsBase64(f).then(function (data) {
-        return { name: f.name, type: f.type || '', size: f.size, data: data };
-      });
-    })).then(function (payloadFiles) {
-      /* A file that would not read must not become a quietly attachment-less
-         "success". Better to stop and say so. */
-      if (payloadFiles.length !== files.length) throw new Error('unreadable');
+    var fail = function (err) {
+      setQuoteSending(false);
+      /* Everything the customer typed stays exactly where it is, so they can
+         retry or copy the request instead of starting again. */
+      var message = (err && err.customerMessage) ? err.customerMessage : '';
+      toast('#d4574f', false, message ||
+        'We could not send your request just now. Please try again, or copy it and email us.');
+    };
 
+    /* Upload first - all of them, or none of it counts. Only once every file
+       is safely stored does the quote itself go, carrying pathnames rather
+       than bytes. */
+    var uploaded = files.length ? uploadAll(files) : Promise.resolve([]);
+
+    uploaded.then(function (stored) {
       return fetch('/api/quote', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1730,7 +1853,7 @@
           email: $('#q-email').value.trim(),
           subject: 'Quote request from ' + $('#q-name').value.trim(),
           text: body,
-          files: payloadFiles
+          files: stored
         })
       });
     }).then(function (response) {
@@ -1748,12 +1871,15 @@
       }
 
       if (!result.response.ok || !data.ok) {
-        throw new Error(data.error || '');
+        if (typeof data.failedIndex === 'number') setFileStatus(data.failedIndex, 'failed', 0);
+        var err = new Error(data.error || '');
+        err.customerMessage = data.error || '';
+        throw err;
       }
 
-      /* Success state ONLY here - after the provider accepted the message.
-         The form is left exactly as the customer filled it; resetQuote is
-         what clears it, and only when they ask for another request. */
+      /* Success ONLY here - after the provider accepted the message. The form
+         keeps everything the customer typed; resetQuote is what clears it,
+         and only when they ask for another request. */
       setQuoteSending(false);
       state.quoteSentCount = files.length;
       var title = $('.quote__done-title');
@@ -1761,16 +1887,9 @@
       $('#quote-form').classList.add('is-sent', 'is-sent--server');
       toast(material().accent, false,
         files.length ? 'Request sent with ' + files.length +
-                       (files.length === 1 ? ' attachment' : ' attachments')
+                       (files.length === 1 ? ' file' : ' files')
                      : 'Request sent');
-    }).catch(function (err) {
-      setQuoteSending(false);
-      /* The customer's answers stay on screen, untouched, so they can retry
-         or copy the request instead. */
-      var message = (err && err.message) ? err.message : '';
-      toast('#d4574f', false, message ||
-        'We could not send your request just now. Please try again, or copy it and email us.');
-    });
+    }).catch(fail);
   }
 
   function resetQuote() {

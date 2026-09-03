@@ -453,13 +453,15 @@
                 <span class="filedrop__text">
                   <strong>Choose files</strong>
                   Site drawings, sketches, photos or a spec sheet. PDF, image, DWG or Word.
+                  <em class="filedrop__limits">Up to 5 files, 25 MB each.</em>
                 </span>
               </div>
               <ul class="filelist" id="q-drawing-list"></ul>
-              <p class="field__hint" id="q-drawing-hint" hidden>
-                Your email app cannot pick files up from a web page, so attach these to the message
-                that opens before you send it. We have listed them in the request so nothing gets missed.
-              </p>
+              <!-- Filled by renderDrawingList(). The wording depends on whether
+                   this deployment can actually receive files, so it is not
+                   fixed here - promising an upload that cannot happen is worse
+                   than saying nothing. -->
+              <p class="field__hint" id="q-drawing-hint" hidden></p>
             </div>
 
             <div class="field field--wide">
@@ -476,9 +478,13 @@
               <span class="btn__arrow"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M4 12h15m-5.5-6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
             </button>
             <button class="btn btn--ghost" type="button" id="quote-copy"><span>Copy as text</span></button>
-            <p class="quote__note">
+            <p class="quote__note quote__note--mail">
               This opens the request in your email app so you can see exactly what is being sent
               before it leaves. No details are stored by this page.
+            </p>
+            <p class="quote__note quote__note--server">
+              Your quote request and files are sent directly to Esther's. Files are stored
+              privately, are not shared, and are removed after 30 days.
             </p>
           </div>
 

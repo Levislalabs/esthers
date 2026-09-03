@@ -82,10 +82,17 @@ image found online is usually someone else's copyright.
 
 Submitting validates the form, composes the whole request as plain text
 (contact details, company, PO number / job location, timeline, chosen
-materials, drawing filenames, a deliberately picked colour and saved
-favourites) and posts it to `api/quote.js`, which hands it to the email
-provider **with the picked files as real attachments**. **Copy as text** puts
-the same content on the clipboard.
+materials, a deliberately picked colour and saved favourites), uploads any
+picked files **directly from the browser to private storage**, and then posts
+the request to `api/quote.js` carrying only the pathnames. The email arrives
+with an ATTACHMENTS / FILES section: each file's name, its size, and a signed
+download link that expires after 7 days. **Copy as text** puts the request on
+the clipboard.
+
+Files no longer travel inside the request, which is what used to cap them at
+about 3 MB. **Limits are now 5 files, 25 MB each, 75 MB combined.** The full
+design — security, storage layout, retention — is in
+[`docs/QUOTE_UPLOADS.md`](docs/QUOTE_UPLOADS.md).
 
 Only name and email are required. Project details is optional; when it is left
 blank the email says `Project details: not given` rather than carrying an empty
@@ -114,13 +121,14 @@ Set these on the deployment. None of them belong in the repository:
 | `RESEND_API_KEY` | API key. Without it the endpoint reports "not configured" and the site falls back to `mailto:`. |
 | `QUOTE_TO` | Comma-separated recipients, e.g. `counter@esthers.ca,manager@esthers.ca`. |
 | `QUOTE_FROM` | Optional sender. Defaults to the provider's test sender, which needs no DNS changes. |
+| `BLOB_READ_WRITE_TOKEN` | Created automatically by Vercel when a **private** Blob store is connected to the project. Never set by hand. Without it, uploads report unavailable and the form falls back. |
 
-Limits, enforced server-side in `api/quote.js` and mirrored in the browser for
-a faster message: **5 files, 2.5 MB each, 3 MB combined**. Accepted types are
+Limits, enforced server-side in `api/_lib.js` and mirrored in the browser for
+a faster message: **5 files, 25 MB each, 75 MB combined**. Accepted types are
 PDF, JPG, PNG, HEIC, WebP, DWG, DXF, DOC and DOCX - decided by reading the
-file's actual bytes, never by its extension or the MIME type the browser
-claims. The email is sent as plain text only, so nothing a visitor types is
-ever interpreted as markup.
+file's actual bytes back after upload, never by its extension or the MIME type
+the browser claims. The email is sent as plain text only, so nothing a visitor
+types is ever interpreted as markup.
 
 `CM.quoteEmail` in `assets/js/data/materials.js` still holds the addresses used
 by the `mailto:` fallback and by **Copy as text**; `QUOTE_TO` is what the server
