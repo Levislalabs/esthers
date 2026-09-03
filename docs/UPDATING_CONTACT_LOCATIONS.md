@@ -26,7 +26,7 @@ Each location is a block that looks like this:
     street: '3890 E. First Ave.',
     city: 'Burnaby',
     region: 'BC',
-    postalCode: 'V5R 3W1'
+    postalCode: 'V5C 3W1'
   },
   phone: '604-291-6766',
   contacts: [
@@ -34,7 +34,7 @@ Each location is a block that looks like this:
     { name: 'EJay', email: 'manager@esthers.ca' }
   ],
   specialties: 'Standard and custom flashing, ...',
-  mapAddress: '3890 E. First Ave., Burnaby, BC V5R 3W1'
+  mapAddress: '3890 E. First Ave., Burnaby, BC V5C 3W1'
 },
 ```
 
@@ -134,10 +134,10 @@ address: {
   street: '3890 E. First Ave.',
   city: 'Burnaby',
   region: 'BC',
-  postalCode: 'V5R 3W1'
+  postalCode: 'V5C 3W1'
 },
 ...
-mapAddress: '3890 E. First Ave., Burnaby, BC V5R 3W1'
+mapAddress: '3890 E. First Ave., Burnaby, BC V5C 3W1'
 ```
 
 **Always change both.** If you change only the printed address, the map will

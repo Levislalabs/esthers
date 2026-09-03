@@ -75,7 +75,7 @@ CM.contactSection = {
         street: '3890 E. First Ave.',
         city: 'Burnaby',
         region: 'BC',
-        postalCode: 'V5R 3W1'
+        postalCode: 'V5C 3W1'
       },
       phone: '604-291-6766',
       contacts: [
@@ -87,7 +87,7 @@ CM.contactSection = {
         'Standard and custom flashing, specialty chimney caps including louvered and ' +
         'French-curved designs. We also supply the sheet metal essentials that go with ' +
         'the job, including matching paint, screws and caulking.',
-      mapAddress: '3890 E. First Ave., Burnaby, BC V5R 3W1'
+      mapAddress: '3890 E. First Ave., Burnaby, BC V5C 3W1'
     },
 
     {
