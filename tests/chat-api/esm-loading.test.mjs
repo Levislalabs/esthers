@@ -121,38 +121,56 @@ describe('the real Node 22 module import', () => {
     }
   });
 
-  test('firebase-admin/auth really does depend on an ESM-only package', () => {
-    /* The fact that makes require() fail and import() succeed. If it ever
-       stops being true the fix is still correct, but the reasoning above
-       would have gone stale and a reader deserves to know.
+  test('auth no longer pulls in an ESM-ONLY package - the override fixed it', () => {
+    /* HISTORY. This assertion used to be the reverse: firebase-admin/auth
+       pulled in jose 6 (type: "module"), and jwks-rsa/src/utils.js requires
+       it with a plain CommonJS require(). That threw ERR_REQUIRE_ESM on any
+       Node without require(esm) - which landed in 22.12, and Vercel's Node
+       22.x was below it. A scoped npm override now pins jose to the 5.x line
+       for jwks-rsa only, and jose 5 ships a CommonJS build.
 
        Run in a CHILD PROCESS with a clean module registry: by this point in
-       the file the earlier tests have already imported the SDK, so
-       require.cache in this process is warm and would show nothing new. */
+       the file the earlier tests have imported the SDK, so require.cache in
+       this process is warm and would show nothing new. */
+    /* The invariant is NOT "no type:module packages" - lru-cache is
+       type:module and loads fine, because it ships a "require" condition
+       pointing at a CommonJS build. What breaks require() is a package with
+       NO CommonJS entry at all, which is exactly what jose 6 is: its main is
+       ./dist/webapi/index.js and there is no CJS build. jose 5 is plain
+       CommonJS. So the real assertion is that every package reachable by
+       require() from auth is require-able. */
     const script = [
-      "const fs = require('fs');",
+      "const fs = require('fs'); const path = require('path');",
       "const before = new Set(Object.keys(require.cache));",
       "require('firebase-admin/auth');",
       "const added = Object.keys(require.cache).filter(f => !before.has(f));",
-      "const esm = new Set();",
+      "const bad = new Set(); const esm = new Set();",
       "for (const file of added) {",
       "  const m = file.match(/^(.*node_modules\\/(?:@[^/]+\\/)?[^/]+)\\//);",
       "  if (!m) continue;",
-      "  try { const p = JSON.parse(fs.readFileSync(m[1] + '/package.json','utf8'));",
-      "        if (p.type === 'module') esm.add(p.name); } catch (e) {}",
+      "  try {",
+      "    const p = JSON.parse(fs.readFileSync(m[1] + '/package.json','utf8'));",
+      "    if (p.type !== 'module') continue;",
+      "    esm.add(p.name);",
+      "    const e = p.exports && p.exports['.'];",
+      "    const requireable = (e && e.require) || p.main;",
+      "    if (!requireable) bad.add(p.name + '@' + p.version);",
+      "  } catch (err) {}",
       "}",
-      "console.log('ESM_ONLY ' + [...esm].sort().join(','));"
+      "console.log(JSON.stringify({ esm: [...esm].sort(), bad: [...bad].sort() }));"
     ].join('');
 
     const out = execFileSync(process.execPath, ['-e', script],
       { cwd: ROOT, encoding: 'utf8' }).trim();
-    const names = out.replace('ESM_ONLY ', '').split(',').filter(Boolean);
-    assert.ok(names.length > 0,
-      'auth pulls in at least one type:module package - that is why require() '
-      + 'threw ERR_REQUIRE_ESM on a Node without require(esm). Got: ' + out);
-    assert.ok(names.includes('jose'),
-      'jose is the specific ESM-only dependency behind the production failure; '
-      + 'found: ' + names.join(','));
+    const { esm, bad } = JSON.parse(out);
+
+    assert.equal(esm.includes('jose'), false,
+      'jose must no longer resolve as an ESM-only package under auth - that '
+      + 'is the entire production fix. Found: ' + esm.join(','));
+    assert.deepEqual(bad, [],
+      'every package require()d from firebase-admin/auth must have a '
+      + 'CommonJS entry, or ERR_REQUIRE_ESM returns on a Node without '
+      + 'require(esm). Offenders: ' + bad.join(','));
   });
 });
 

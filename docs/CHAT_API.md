@@ -581,6 +581,45 @@ in production. `import()` resolves the package's `import` condition
 (`lib/esm/…`) and works on every Node 22. The specifiers stay literal so
 Vercel's tracer still follows them.
 
+### The transitive ERR_REQUIRE_ESM, and the one dependency pin
+
+Converting our own loads to `import()` was necessary but **not sufficient**.
+Production still reported `firebase_admin_auth_load_failed` /
+`ERR_REQUIRE_ESM`, because the failing `require()` was never ours:
+
+```
+firebase-admin/auth
+  -> firebase-admin/lib/auth/token-verifier.js
+    -> firebase-admin/lib/utils/jwt.js
+      -> jwks-rsa/src/index.js
+        -> jwks-rsa/src/JwksClient.js
+          -> jwks-rsa/src/utils.js   line 1:  const jose = require('jose');
+```
+
+`jwks-rsa@4.1.0` is `type: "commonjs"` and requires `jose`; its `jose@6` is
+`type: "module"` with no CommonJS build at all. `jwks-rsa`'s own engines field
+says the quiet part out loud — `^20.19.0 || ^22.12.0 || >= 23.0.0` — those are
+exactly the Node versions with `require(esm)`. `import()` in *our* code cannot
+change a `require()` written four levels down.
+
+The fix is one narrow, scoped npm override:
+
+```json
+"overrides": { "jwks-rsa": { "jose": "^5.10.0" } }
+```
+
+`jose@5` ships a CommonJS build, so `jwks-rsa`'s `require()` succeeds on every
+Node 22 with no reliance on `require(esm)`. Scoped to `jwks-rsa` deliberately:
+a bare `"jose"` key would repin it for every package, including ones that are
+fine on 6. `firebase-admin` stays at 14.3.0 — no downgrade. The lockfile diff
+is nine lines: the nested `jose@6` entry disappears and `jwks-rsa` uses the
+already-present hoisted `jose@5.10.0`.
+
+The regression gate is `node --no-experimental-require-module`, which disables
+`require(esm)` and reproduces Vercel's runtime exactly. Tests assert all three
+modules import, and that the endpoint reaches 401 rather than a module error,
+under that flag.
+
 Because `import()` is asynchronous, `initAdmin()` is async and every caller
 awaits it. Two memos guard the cost and the races: the SDK load promise is
 cached for the life of the instance (a failed load is *not* retried — whether
