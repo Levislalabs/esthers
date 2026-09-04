@@ -818,6 +818,181 @@
   color: var(--ink-faint);
 }
 
+/* ---------------------------------------------------------------------
+   Phone comparison: two materials, side by side.
+
+   Everything from here to the end of this block is inert above 719px -
+   .compare-ab is display:none by default and only the media query at the
+   bottom turns it on. The desktop table is not touched by any rule here,
+   so the approved layout cannot move.
+
+   Why a different arrangement rather than a smaller table: measured at
+   390px, the table's attribute column alone takes 53% of the screen and
+   leaves 1.3 of 8 material columns beside it; at 320px it is 0.6 of a
+   column. Comparing means seeing two things at once, and no amount of
+   shrinking the type makes that true - it only makes it unreadable as
+   well as impossible.
+   --------------------------------------------------------------------- */
+.compare-ab { display: none; }
+
+.compare-ab__picks {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.compare-ab__label {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-bottom: 7px;
+}
+.compare-ab__control {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 34px 0 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  /* The whole control is the touch target, comfortably past 44px. */
+  min-height: 52px;
+}
+.compare-ab__control:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.compare-ab__chip {
+  width: 26px; height: 26px;
+  border-radius: 7px;
+  flex: none;
+  overflow: hidden;
+  position: relative;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+.compare-ab__chip--sm { width: 18px; height: 18px; border-radius: 5px; }
+
+/* The native control, made invisible but left in place and full-size, so
+   the phone's own picker and the keyboard both behave as the OS intends.
+   Nothing here is a custom dropdown. */
+.compare-ab__select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0 34px 0 46px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 14.5px;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.compare-ab__select:focus { outline: none; }
+.compare-ab__select option { color: #12151a; background: #fff; }
+.compare-ab__caret {
+  position: absolute;
+  right: 11px;
+  width: 17px; height: 17px;
+  color: var(--ink-faint);
+  pointer-events: none;
+}
+
+/* The two names ride down the page with the reader. Offset by the height
+   of the site header so it never hides behind it. */
+.compare-ab__names {
+  position: sticky;
+  top: 67px;
+  z-index: 6;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+}
+.compare-ab__name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13.4px;
+  line-height: 1.25;
+}
+.compare-ab__name span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compare-ab__rows { margin-top: 12px; }
+.compare-ab__row {
+  padding: 15px 0 16px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.compare-ab__row:last-child { border-bottom: 0; }
+
+.compare-ab__attr {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 11px;
+}
+/* The pair sits on one grid so both values start on the same line no
+   matter how tall the other one is - which is what makes them comparable
+   at a glance. */
+.compare-ab__pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.compare-ab__value {
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: var(--bg-panel);
+}
+
+@media (max-width: 719px) {
+  .compare-ab { display: block; }
+  /* The table and the A/B view are the same twelve attributes; showing
+     both would be a duplicate, not a fallback. */
+  .compare__scroll { display: none; }
+
+  /* Sizes that hold up in a hand, not on a desk. The table's own values
+     are left alone - these only apply inside the phone view. */
+  .compare-ab .attr__label { font-size: 14.5px; }
+  .compare-ab .attr__hint { font-size: 12.2px; max-width: none; }
+  .compare-ab .attr__icon { width: 19px; height: 19px; margin-top: 1px; }
+  .compare-ab .cell-text { font-size: 13.6px; }
+  .compare-ab .meter__value { font-size: 12px; min-width: 30px; }
+  .compare-ab .meter__note { font-size: 11.6px; max-width: none; margin-top: 7px; }
+  .compare-ab .meter { flex-wrap: wrap; gap: 8px; }
+  .compare-ab .meter__track { max-width: none; min-width: 46px; }
+
+  .compare__legend { font-size: 12.4px; gap: 10px 20px; }
+}
+
+/* Narrow phones: the two picker controls stop fitting side by side long
+   before the values do, so they stack while the comparison itself stays
+   two-up. Stacking the values would end the comparison. */
+@media (max-width: 389px) {
+  .compare-ab__picks { grid-template-columns: 1fr; gap: 10px; }
+  .compare-ab__pair { gap: 8px; }
+  .compare-ab__value { padding: 9px 9px; }
+  .compare-ab__names { gap: 8px; padding: 10px; }
+}
+
 
 /* =====================================================================
    8. SERVICES

@@ -417,6 +417,43 @@
         </p>
       </div>
 
+      <!-- Two presentations of the same twelve attributes, one shown at a
+           time by a media query in configurator.css.
+
+           The table below is the desktop view and is unchanged: nine columns
+           at a 1010px minimum, which a laptop reads comfortably.
+
+           On a phone that same table puts the attribute column alone across
+           more than half the screen and leaves barely one material column
+           beside it, so a customer can never see two materials at once -
+           which is the entire point of a comparison. The block above it is
+           the phone view: pick any two of the eight and read them side by
+           side. Both are built from CM.comparison by buildCompare(). -->
+      <div class="compare-ab reveal" id="compare-ab">
+        <div class="compare-ab__picks">
+          <div class="compare-ab__pick">
+            <label class="compare-ab__label" for="compare-a">Material 1</label>
+            <div class="compare-ab__control">
+              <span class="compare-ab__chip paint" id="compare-a-chip" aria-hidden="true"></span>
+              <select class="compare-ab__select" id="compare-a"></select>
+              <svg class="compare-ab__caret" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9.5 6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+          </div>
+          <div class="compare-ab__pick">
+            <label class="compare-ab__label" for="compare-b">Material 2</label>
+            <div class="compare-ab__control">
+              <span class="compare-ab__chip paint" id="compare-b-chip" aria-hidden="true"></span>
+              <select class="compare-ab__select" id="compare-b"></select>
+              <svg class="compare-ab__caret" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9.5 6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+          </div>
+        </div>
+        <!-- Follows the reader down the attribute list so the two names stay
+             attached to the values underneath them. -->
+        <div class="compare-ab__names" id="compare-ab-names"></div>
+        <div class="compare-ab__rows" id="compare-ab-rows"></div>
+      </div>
+
       <div class="compare__scroll reveal">
         <table class="compare-table" id="compare-table">
           <caption class="visually-hidden">Comparison of eight sheet metal materials across twelve attributes</caption>

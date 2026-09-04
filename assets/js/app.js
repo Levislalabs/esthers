@@ -676,8 +676,116 @@
       body.appendChild(tr);
     });
 
+    buildCompareAB(cols);
     focusCompareColumn(state.materialId);
     observeMeters();
+  }
+
+  /*
+   * The phone view of the same twelve attributes.
+   *
+   * The table is right for a laptop and wrong for a phone: its attribute
+   * column alone is wider than half a 390px screen, which leaves room for
+   * about one material beside it. Comparing means seeing two things at once,
+   * so on a phone the customer picks two materials and gets exactly those
+   * two, full width, no sideways scrolling.
+   *
+   * Same data, same meters, same wording - only the arrangement differs.
+   */
+  function buildCompareAB(cols) {
+    var wrap = $('#compare-ab');
+    var rowsBox = $('#compare-ab-rows');
+    var namesBox = $('#compare-ab-names');
+    var selA = $('#compare-a');
+    var selB = $('#compare-b');
+    if (!wrap || !rowsBox || !selA || !selB) return;
+
+    /* Default to the first two, or to whatever the configurator is showing
+       so the two views agree when the customer arrives from the rail. */
+    var current = state.materialId;
+    var startA = cols.some(function (m) { return m.id === current; }) ? current : cols[0].id;
+    var startB = cols.filter(function (m) { return m.id !== startA; })[0].id;
+
+    [[selA, startA], [selB, startB]].forEach(function (pair) {
+      var sel = pair[0];
+      sel.innerHTML = '';
+      cols.forEach(function (m) {
+        sel.appendChild(el('option', { value: m.id, text: m.name }));
+      });
+      sel.value = pair[1];
+      sel.onchange = renderCompareAB;
+    });
+
+    function byId(id) {
+      return cols.filter(function (m) { return m.id === id; })[0] || cols[0];
+    }
+
+    function valueCell(row, m) {
+      var v = row.values[m.id];
+      var note = row.footnotes && row.footnotes[m.id];
+      if (row.type === 'rating') {
+        var fill = el('span', { class: 'meter__fill', 'data-target': (v / 5) * 100 });
+        return el('div', { class: 'compare-ab__value' }, [
+          el('span', { class: 'meter' }, [
+            el('span', { class: 'meter__track' }, [fill]),
+            el('span', { class: 'meter__value', text: v + '/5' })
+          ]),
+          note ? el('span', { class: 'meter__note', text: note }) : null
+        ]);
+      }
+      return el('div', { class: 'compare-ab__value' }, [
+        el('span', { class: 'cell-text', 'data-tier': String(v).length, text: v })
+      ]);
+    }
+
+    function renderCompareAB() {
+      var a = byId(selA.value);
+      var b = byId(selB.value);
+
+      /* The same material on both sides compares nothing. Rather than
+         disabling options - which hides materials from the list and reads as
+         a fault - the other side steps to its neighbour. */
+      if (a.id === b.id) {
+        var other = cols.filter(function (m) { return m.id !== a.id; })[0];
+        if (document.activeElement === selA) { selB.value = other.id; b = other; }
+        else { selA.value = other.id; a = other; }
+      }
+
+      $('#compare-a-chip').style.setProperty('--c', a.swatch);
+      $('#compare-b-chip').style.setProperty('--c', b.swatch);
+
+      namesBox.innerHTML = '';
+      [a, b].forEach(function (m) {
+        namesBox.appendChild(el('div', { class: 'compare-ab__name' }, [
+          el('span', { class: 'compare-ab__chip compare-ab__chip--sm paint',
+                       style: { '--c': m.swatch } }),
+          el('span', { text: m.short })
+        ]));
+      });
+
+      rowsBox.innerHTML = '';
+      CM.comparison.rows.forEach(function (row) {
+        rowsBox.appendChild(el('div', { class: 'compare-ab__row' }, [
+          el('div', { class: 'compare-ab__attr' }, [
+            el('span', { class: 'attr__icon', html: U.icon(row.icon) }),
+            el('span', {}, [
+              el('span', { class: 'attr__label', text: row.label }),
+              el('span', { class: 'attr__hint', text: row.hint })
+            ])
+          ]),
+          el('div', { class: 'compare-ab__pair' }, [valueCell(row, a), valueCell(row, b)])
+        ]));
+      });
+
+      /* These meters are new nodes, so they start at zero width like the
+         table's do. Fill them now: the customer is already looking at this
+         part of the page, so there is nothing to animate into view. */
+      $$('.meter__fill', rowsBox).forEach(function (f, i) {
+        window.setTimeout(function () { f.style.width = f.dataset.target + '%'; }, i * 9);
+      });
+    }
+
+    renderCompareAB();
   }
 
   function focusCompareColumn(id) {
