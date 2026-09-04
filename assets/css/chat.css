@@ -636,3 +636,37 @@
   .chat[data-open="true"] .chat__launcher { transform: none; }
   .chat__panel { transform: none; }
 }
+
+/* =====================================================================
+   5. OUT OF THE WAY OF THE COMPARISON
+   ===================================================================== */
+
+/* On a phone the comparison shows two columns of values across the full
+   width, and the bubble lands on top of the right-hand one - reported from
+   a real handset, around the Warranty row. While that section is what the
+   visitor is reading, the bubble steps aside.
+
+   Only the bubble. The mascot stays exactly where it is: visible,
+   draggable, tappable, and still carrying the launcher's aria-label, so
+   nothing is removed from assistive technology and the chat opens as
+   normal. Nothing here writes to the chat's stored state - if the visitor
+   had already dismissed help, .chat[data-hidden="true"] has hidden the
+   whole dock and this rule has nothing to act on.
+
+   body.compare-in-view is published by watchCompareInView() in app.js,
+   which knows nothing about the chat. This is the only rule that reads it.
+   Above 720px it is never consulted, which is the same breakpoint that
+   swaps the comparison table for the phone view. */
+@media (max-width: 719px) {
+  body.compare-in-view .chat__bubble { display: none; }
+
+  /* The focus ring is normally drawn on the bubble, so with the bubble gone
+     keyboard focus would have nothing visible. Put it on the mascot for as
+     long as that is the case - the launcher must never be focusable without
+     being visibly focused. */
+  body.compare-in-view .chat__launcher:focus-visible .chat__mascot {
+    outline: 2px solid var(--chat-accent);
+    outline-offset: 3px;
+    border-radius: 12px;
+  }
+}
