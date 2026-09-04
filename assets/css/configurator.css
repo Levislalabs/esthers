@@ -1001,8 +1001,14 @@
    caret have taken their 80px there is room for roughly eleven characters -
    so "24 Gauge SMP Steel" was being cut to "24 Gauge SM". Full width per
    control fixes that with no change to type size, touch height or the
-   native select. */
-@media (max-width: 430px) {
+   native select.
+
+   520px is where that stops being true rather than a round number: the
+   longest name, "24 Gauge PVDF Steel", measures 143px at this font, and a
+   side-by-side control only clears it once the viewport passes about 519px.
+   Below that the controls stack. The values beside them stay two-up at every
+   width - stacking those would end the comparison. */
+@media (max-width: 520px) {
   .compare-ab__picks { grid-template-columns: 1fr; gap: 10px; }
 }
 
