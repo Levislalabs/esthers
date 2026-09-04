@@ -571,8 +571,24 @@ different fixes. The three modules are now loaded separately at module scope
 and each reports its own token: `firebase_admin_app_not_found` versus
 `firebase_admin_app_load_failed`, and the same for `firestore` and `auth`.
 
-The SDK modules are loaded at **module scope** with literal specifiers, which
-is the position every bundler traces reliably. Loading the library needs no
+The SDK modules are loaded by **literal dynamic `import()`**, all three
+through one loader. `require('firebase-admin/auth')` was the second
+production fault: that module pulls in `jose`, an ESM-only package, and
+`require()` of ESM throws `ERR_REQUIRE_ESM` on any Node without `require(esm)`
+support — which landed in 22.12, while Vercel's Node 22.x was below it. A
+developer machine on a newer 22.x succeeds, which is why it only ever failed
+in production. `import()` resolves the package's `import` condition
+(`lib/esm/…`) and works on every Node 22. The specifiers stay literal so
+Vercel's tracer still follows them.
+
+Because `import()` is asynchronous, `initAdmin()` is async and every caller
+awaits it. Two memos guard the cost and the races: the SDK load promise is
+cached for the life of the instance (a failed load is *not* retried — whether
+a module loads is a property of the deployment, and this path runs before rate
+limiting), and the in-flight initialisation promise is cached so concurrent
+cold starts build exactly one Firebase app rather than one each. The load
+promise never rejects; it resolves to a result object, so a memoised rejection
+can never become an unhandled rejection. Loading the library needs no
 credentials — `initializeApp()` and `cert()` still happen lazily on the first
 request, so a Preview deployment without secrets still builds and still
 answers `not_configured`. The loads are wrapped in try/catch so a failure

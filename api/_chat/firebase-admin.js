@@ -38,6 +38,8 @@ const ENV = {
 
 /* Cached across invocations of a warm serverless instance. */
 let cached = null;
+/* The in-flight initialisation, so concurrent cold starts share one app. */
+let initPromise = null;
 
 /*
  * EVERY TOKEN THIS FILE IS ALLOWED TO PUT IN A LOG.
@@ -117,40 +119,44 @@ class ChatInitError extends Error {
 }
 
 /* ------------------------------------------------------------------------
- * THE SDK MODULES, LOADED AT MODULE SCOPE.
+ * THE SDK MODULES, LOADED BY LITERAL DYNAMIC import().
  *
- * Three require() calls with LITERAL specifiers, at the top level of the
- * module. That is the most conventional and most reliably traceable position
- * there is: Vercel bundles a function by static analysis of its dependency
- * graph, and a literal specifier at module scope is the case every version of
- * every bundler handles.
+ * WHY NOT require(), WHICH IS WHAT THIS USED TO DO
  *
- * LOADING THE LIBRARY NEEDS NO CREDENTIALS. Nothing here reads an
+ * Production told us exactly, and it is worth writing down:
+ *
+ *   chat: init failed [chat/start] firebase_admin_auth_load_failed
+ *   runtime=node:22,sdk_app:1,sdk_firestore:1,sdk_auth:0,
+ *   sdk_code:ERR_REQUIRE_ESM
+ *
+ * firebase-admin/auth pulls in `jose`, which is an ESM-only package
+ * (type: module). firebase-admin/app and /firestore do not, which is why
+ * exactly one of the three failed.
+ *
+ * require() of an ESM module throws ERR_REQUIRE_ESM unless the runtime has
+ * Node's require(esm) support, which landed in 22.12. Vercel reported
+ * node:22, but a 22.x BELOW 22.12 - so the require path was never going to
+ * work there, while it works on a developer machine on a newer 22.x. That
+ * gap is precisely why this failed only in production.
+ *
+ * import() has no such condition. It resolves the package's "import"
+ * export - lib/esm/auth/index.js rather than lib/auth/index.js - and works
+ * on every Node 22.
+ *
+ * THE SPECIFIERS STAY LITERAL. import(someVariable) would be untraceable and
+ * would drop the package out of the deployed function bundle; a literal
+ * import() is statically analysed by Vercel's tracer exactly like require().
+ *
+ * All three go through the same mechanism, not just auth. A file where one
+ * module is required and another imported is a file where the next person
+ * has to know which is which, and the reason would decay out of memory long
+ * before the code did.
+ *
+ * LOADING THE LIBRARY STILL NEEDS NO CREDENTIALS. Nothing here reads an
  * environment variable, parses a key or contacts Google. initializeApp() and
- * cert() still happen lazily, on the first request, inside initAdmin() - so a
- * Preview deployment with no production secrets still BUILDS and still
- * answers, failing closed with not_configured.
- *
- * Wrapped in try/catch, and each module separately, for two reasons:
- *
- *   1. An uncaught throw here would crash the function at cold start, before
- *      any handler could run, and the platform's generic invocation failure
- *      would tell us nothing. Recording it instead lets the first request
- *      answer with a precise, allow-listed diagnostic.
- *   2. The previous code loaded all three inside one wrapper whose FALLBACK
- *      token was firebase_admin_module_missing. That token was therefore
- *      emitted for a genuinely absent package AND for a package that was
- *      present but threw while loading - two very different faults with two
- *      very different fixes. Splitting them is the point.
- *
- * These are declared after DIAGNOSTIC_TOKENS on purpose: module scope runs
- * top to bottom, and moduleFailure() consults that list.
+ * cert() still happen lazily, on the first request - so a Preview deployment
+ * with no production secrets still builds and still answers, failing closed.
  * --------------------------------------------------------------------- */
-let sdkApp = null;
-let sdkFirestore = null;
-let sdkAuth = null;
-let sdkLoadFailure = null;      /* allow-listed token, or null */
-let sdkLoadCode = 'none';       /* allow-listed error-code class, or 'none' */
 
 /*
  * Node's module-resolution error codes. Fixed constants from the runtime,
@@ -162,22 +168,71 @@ const NOT_FOUND_CODES = [
 ];
 const OTHER_LOAD_CODES = ['ERR_REQUIRE_ESM', 'ERR_DLOPEN_FAILED', 'ERR_INVALID_ARG_TYPE'];
 
-try { sdkApp = require('firebase-admin/app'); }
-catch (err) { noteModuleFailure('app', err); }
+/* Resolved modules, kept for synchronous access once the load has finished. */
+let sdkApp = null;
+let sdkFirestore = null;
+let sdkAuth = null;
+let sdkLoadFailure = null;        /* allow-listed token, or null */
+let sdkLoadCode = 'not_attempted'; /* allow-listed code class */
 
-try { sdkFirestore = require('firebase-admin/firestore'); }
-catch (err) { noteModuleFailure('firestore', err); }
+/*
+ * The in-flight or completed load.
+ *
+ * CACHING: one import per instance, not one per request. The promise is
+ * memoised on first use and reused by every later request and by any
+ * concurrent cold-start request that arrives while it is still in flight -
+ * so three simultaneous first requests perform ONE import, not three.
+ *
+ * FAILURE BEHAVIOUR, DELIBERATE AND DOCUMENTED: a failed load is remembered
+ * for the life of the instance and is NOT retried. Whether a module can be
+ * loaded is a property of the deployment, not a transient condition, so
+ * retrying would burn work on every request to reach the same answer - and
+ * this runs before rate limiting, which would make it an amplifier. A new
+ * deployment, or any new instance, attempts the load again from scratch.
+ *
+ * The promise NEVER REJECTS. It resolves to a result object and the caller
+ * raises the error, so a memoised rejected promise can never become an
+ * unhandled rejection on a later tick.
+ */
+let sdkPromise = null;
 
-try { sdkAuth = require('firebase-admin/auth'); }
-catch (err) { noteModuleFailure('auth', err); }
+function loadSdk() {
+  if (!sdkPromise) sdkPromise = importSdk();
+  return sdkPromise;
+}
+
+async function importSdk() {
+  /* allSettled, not all: it lets each module be attributed individually, so
+     "auth failed" stays distinguishable from "app failed". */
+  const settled = await Promise.allSettled([
+    import('firebase-admin/app'),
+    import('firebase-admin/firestore'),
+    import('firebase-admin/auth')
+  ]);
+
+  const names = ['app', 'firestore', 'auth'];
+  const loaded = {};
+  for (let i = 0; i < settled.length; i += 1) {
+    if (settled[i].status === 'fulfilled') loaded[names[i]] = settled[i].value;
+    else noteModuleFailure(names[i], settled[i].reason);
+  }
+
+  sdkApp = loaded.app || null;
+  sdkFirestore = loaded.firestore || null;
+  sdkAuth = loaded.auth || null;
+  if (!sdkLoadFailure) sdkLoadCode = 'none';
+
+  return sdkLoadFailure
+    ? { ok: false, reason: sdkLoadFailure }
+    : { ok: true, sdk: { app: sdkApp, firestore: sdkFirestore, auth: sdkAuth } };
+}
 
 function noteModuleFailure(which, err) {
   const code = err && typeof err.code === 'string' ? err.code : '';
   const name = err && typeof err.name === 'string' ? err.name : '';
   const notFound = NOT_FOUND_CODES.indexOf(code) !== -1;
 
-  /* First failure wins: the later modules depend on the first, so a cascade
-     tells us less than the thing that actually broke. */
+  /* First failure wins: a cascade tells us less than the thing that broke. */
   if (!sdkLoadFailure) {
     sdkLoadFailure = 'firebase_admin_' + which + (notFound ? '_not_found' : '_load_failed');
     /* An allow-listed classification of the error code - never the message. */
@@ -185,17 +240,6 @@ function noteModuleFailure(which, err) {
     else if (name === 'SyntaxError') sdkLoadCode = 'syntax_error';
     else sdkLoadCode = 'other';
   }
-}
-
-/*
- * The loaded SDK, or a precise failure.
- *
- * Note there is no require() in here at all any more: by the time a request
- * arrives the modules are either loaded or known to have failed.
- */
-function loadSdk() {
-  if (sdkLoadFailure) throw new ChatInitError(sdkLoadFailure, false);
-  return { app: sdkApp, firestore: sdkFirestore, auth: sdkAuth };
 }
 
 /*
@@ -402,22 +446,48 @@ function readConfig(env) {
  * incomplete, which every handler turns into a 503 rather than a 500 - the
  * request was fine, the deployment is not finished.
  */
-function initAdmin(deps) {
+async function initAdmin(deps) {
   if (cached) return cached;
 
+  /*
+   * CONCURRENCY. initAdmin() became asynchronous when the SDK moved to
+   * import(), and that introduces a race the synchronous version could not
+   * have: two cold-start requests both see no cached app, both run
+   * initializeApp, and the instance ends up with two Firebase apps.
+   *
+   * Memoising the in-flight promise closes it. The assignment below happens
+   * synchronously, before buildAdmin() reaches its first await, so a second
+   * caller arriving in the same tick finds the promise rather than a null.
+   *
+   * On failure the memo is cleared, so a later request retries. That is the
+   * opposite of the SDK-load policy above, and deliberately so: a load
+   * failure is a fixed property of the deployment, whereas initialisation
+   * can fail on something transient, and there is nothing to amplify because
+   * a genuine configuration fault is refused by readConfig() before any of
+   * this runs.
+   */
+  if (initPromise) return initPromise;
+
+  initPromise = buildAdmin(deps);
+  try {
+    cached = await initPromise;
+    return cached;
+  } finally {
+    initPromise = null;
+  }
+}
+
+async function buildAdmin(deps) {
+  /* Configuration first: a deployment with no credentials is refused before
+     paying for the import, and gets 503 rather than a module error. */
   const config = readConfig(deps && deps.env);
 
-  /*
-   * Each SDK call is wrapped separately so a failure names the STAGE it
-   * happened in. Previously all of this was bare, every one of these errors
-   * carried the name "Error", and respondToError() did not recognise any of
-   * them - so a mistyped credential and a missing module produced the same
-   * useless line: "chat: unhandled [chat/start] Error".
-   *
-   * Nothing is caught and continued. Every branch rethrows.
-   */
-  /* Already loaded at module scope, or a precise per-module failure. */
-  const sdk = (deps && deps.sdk) || loadSdk();
+  let sdk = deps && deps.sdk;
+  if (!sdk) {
+    const result = await loadSdk();
+    if (!result.ok) throw new ChatInitError(result.reason, false);
+    sdk = result.sdk;
+  }
 
   /* A warm instance may already hold an app from a previous request. */
   const existing = stage('firebase_admin_initialize_failed', false,
@@ -446,8 +516,7 @@ function initAdmin(deps) {
   const auth = stage('firebase_auth_initialize_failed', false,
     () => sdk.auth.getAuth(app));
 
-  cached = { app: app, db: db, auth: auth, projectId: config.projectId };
-  return cached;
+  return { app: app, db: db, auth: auth, projectId: config.projectId };
 }
 
 /*
@@ -477,12 +546,31 @@ function stage(fallbackReason, fallbackConfigCaused, fn) {
  * test can substitute a fixed clock without stubbing a module.
  */
 function serverNow() {
-  if (!sdkFirestore) throw new ChatInitError(sdkLoadFailure || 'firebase_admin_firestore_not_found', false);
+  /* Always called after initAdmin() has resolved, so the module is loaded.
+     The guard is here because a silent undefined would become a corrupt
+     timestamp on a real message rather than a clean failure. */
+  if (!sdkFirestore) {
+    throw new ChatInitError(sdkLoadFailure || 'firebase_admin_firestore_not_found', false);
+  }
   return sdkFirestore.Timestamp.now();
 }
 
 /* Tests only: drop the memoised app so a fresh configuration can be read. */
-function _reset() { cached = null; }
+function _reset() {
+  cached = null;
+  initPromise = null;
+}
+
+/* Tests only: forget the memoised SDK load as well, so a load failure can be
+   simulated and then undone within one process. */
+function _resetSdk() {
+  sdkPromise = null;
+  sdkApp = null;
+  sdkFirestore = null;
+  sdkAuth = null;
+  sdkLoadFailure = null;
+  sdkLoadCode = 'not_attempted';
+}
 
 module.exports = {
   EXPECTED_PROJECT_ID, ENV, DIAGNOSTIC_TOKENS, SHAPE_FIELDS,
@@ -490,5 +578,5 @@ module.exports = {
   ChatConfigError, ChatInitError,
   normalisePrivateKey, inspectPrivateKeyShape, inspectClientEmailShape,
   describeConfigShape, classifyInitError,
-  readConfig, initAdmin, serverNow, _reset
+  readConfig, initAdmin, buildAdmin, serverNow, _reset, _resetSdk
 };

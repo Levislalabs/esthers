@@ -81,8 +81,10 @@ function firebaseAppError(code, message) {
   return err;
 }
 
-function caught(fn) {
-  try { fn(); } catch (err) { return err; }
+/* Async-aware: initAdmin() became asynchronous when the SDK moved to
+   literal dynamic import(). */
+async function caught(fn) {
+  try { await fn(); } catch (err) { return err; }
   assert.fail('expected a throw, got none');
 }
 
@@ -108,11 +110,11 @@ describe('the root cause', () => {
       'this is why logging err.name produced "chat: unhandled [chat/start] Error"');
   });
 
-  test('an SDK failure is now classified instead of falling through', () => {
+  test('an SDK failure is now classified instead of falling through', async () => {
     const admin = fakeSdk({
       cert: () => { throw firebaseAppError('app/invalid-credential', 'Failed to parse private key.'); }
     });
-    const err = caught(() => FB.initAdmin({ env: goodEnv(), sdk: admin.sdk }));
+    const err = await caught(() => FB.initAdmin({ env: goodEnv(), sdk: admin.sdk }));
     assert.ok(err instanceof FB.ChatInitError);
     assert.equal(err.reason, 'invalid_private_key_pem');
     assert.equal(err.notConfigured, true, 'a bad key is the environment, so 503');
@@ -121,30 +123,30 @@ describe('the root cause', () => {
 
 /* ================================================== STRUCTURAL VALIDATION */
 describe('structural configuration validation', () => {
-  const reasonFor = (env) => {
+  const reasonFor = async (env) => {
     const admin = fakeSdk();
-    const err = caught(() => FB.initAdmin({ env, sdk: admin.sdk }));
+    const err = await caught(() => FB.initAdmin({ env, sdk: admin.sdk }));
     assert.ok(err instanceof FB.ChatConfigError, 'expected a config error');
     assert.equal(admin.calls.length, 0, 'nothing may be initialised');
     return err.reason;
   };
 
-  test('missing project id', () => {
-    assert.equal(reasonFor(goodEnv({ FIREBASE_PROJECT_ID: '' })), 'missing_project_id');
+  test('missing project id', async () => {
+    assert.equal(await reasonFor(goodEnv({ FIREBASE_PROJECT_ID: '' })), 'missing_project_id');
   });
 
-  test('wrong project id', () => {
-    assert.equal(reasonFor(goodEnv({ FIREBASE_PROJECT_ID: 'some-other-project' })),
+  test('wrong project id', async () => {
+    assert.equal(await reasonFor(goodEnv({ FIREBASE_PROJECT_ID: 'some-other-project' })),
       'unexpected_project');
   });
 
-  test('missing client email', () => {
-    assert.equal(reasonFor(goodEnv({ FIREBASE_CLIENT_EMAIL: '' })), 'missing_client_email');
+  test('missing client email', async () => {
+    assert.equal(await reasonFor(goodEnv({ FIREBASE_CLIENT_EMAIL: '' })), 'missing_client_email');
   });
 
-  test('malformed client email', () => {
+  test('malformed client email', async () => {
     for (const bad of ['nope', 'a@b', 'a b@c.com', '@example.com', 'a@', 'a@@b.com']) {
-      assert.equal(reasonFor(goodEnv({ FIREBASE_CLIENT_EMAIL: bad })),
+      assert.equal(await reasonFor(goodEnv({ FIREBASE_CLIENT_EMAIL: bad })),
         'invalid_client_email_shape', bad + ' should be refused');
     }
   });
@@ -158,33 +160,33 @@ describe('structural configuration validation', () => {
     assert.match(FB.describeConfigShape(goodEnv()), /svcacct:1/);
   });
 
-  test('missing private key', () => {
-    assert.equal(reasonFor(goodEnv({ FIREBASE_PRIVATE_KEY: '' })), 'missing_private_key');
-    assert.equal(reasonFor(goodEnv({ FIREBASE_PRIVATE_KEY: '   ' })), 'missing_private_key');
+  test('missing private key', async () => {
+    assert.equal(await reasonFor(goodEnv({ FIREBASE_PRIVATE_KEY: '' })), 'missing_private_key');
+    assert.equal(await reasonFor(goodEnv({ FIREBASE_PRIVATE_KEY: '   ' })), 'missing_private_key');
   });
 
-  test('a value that is not a PEM at all', () => {
-    assert.equal(reasonFor(goodEnv({ FIREBASE_PRIVATE_KEY: 'just some text' })),
+  test('a value that is not a PEM at all', async () => {
+    assert.equal(await reasonFor(goodEnv({ FIREBASE_PRIVATE_KEY: 'just some text' })),
       'private_key_not_pem');
   });
 
-  test('a PEM whose newlines were never applied', () => {
+  test('a PEM whose newlines were never applied', async () => {
     /* The classic Vercel mistake: the value is stored with real BEGIN/END
        markers but as a single line, so crypto cannot parse it. */
     const oneLine = REAL_PEM.replace(/\n/g, ' ');
-    assert.equal(reasonFor(goodEnv({ FIREBASE_PRIVATE_KEY: oneLine })),
+    assert.equal(await reasonFor(goodEnv({ FIREBASE_PRIVATE_KEY: oneLine })),
       'private_key_single_line');
   });
 
-  test('a truncated PEM - BEGIN present, END missing', () => {
+  test('a truncated PEM - BEGIN present, END missing', async () => {
     const truncated = REAL_PEM.split('\n').slice(0, 4).join('\n') + '\n';
-    assert.equal(reasonFor(goodEnv({ FIREBASE_PRIVATE_KEY: truncated })),
+    assert.equal(await reasonFor(goodEnv({ FIREBASE_PRIVATE_KEY: truncated })),
       'private_key_pem_truncated');
   });
 
-  test('a PEM whose body is not base64', () => {
+  test('a PEM whose body is not base64', async () => {
     const corrupt = '-----BEGIN PRIVATE KEY-----\nNOT valid base64 !!!\n-----END PRIVATE KEY-----\n';
-    assert.equal(reasonFor(goodEnv({ FIREBASE_PRIVATE_KEY: corrupt })),
+    assert.equal(await reasonFor(goodEnv({ FIREBASE_PRIVATE_KEY: corrupt })),
       'private_key_body_not_base64');
   });
 
@@ -204,9 +206,9 @@ describe('structural configuration validation', () => {
     assert.equal(FB.inspectPrivateKeyShape(FB.normalisePrivateKey(REAL_PEM)), null);
   });
 
-  test('a fully valid configuration initialises', () => {
+  test('a fully valid configuration initialises', async () => {
     const admin = fakeSdk();
-    const result = FB.initAdmin({ env: goodEnv(), sdk: admin.sdk });
+    const result = await FB.initAdmin({ env: goodEnv(), sdk: admin.sdk });
     assert.deepEqual(admin.calls, ['cert', 'initializeApp']);
     assert.equal(result.projectId, FB.EXPECTED_PROJECT_ID);
   });
@@ -214,36 +216,37 @@ describe('structural configuration validation', () => {
 
 /* ================================================== ERROR CLASSIFICATION */
 describe('SDK error classification', () => {
-  const failAt = (stage, err) => {
+  const failAt = async (stage, err) => {
+    FB._reset();
     const admin = fakeSdk({ [stage]: () => { throw err; } });
     return caught(() => FB.initAdmin({ env: goodEnv(), sdk: admin.sdk }));
   };
 
-  test('a private-key parse failure', () => {
-    const e = failAt('cert', firebaseAppError('app/invalid-credential',
+  test('a private-key parse failure', async () => {
+    const e = await failAt('cert', firebaseAppError('app/invalid-credential',
       'Failed to parse private key.'));
     assert.equal(e.reason, 'invalid_private_key_pem');
     assert.equal(e.notConfigured, true);
   });
 
-  test('a service-account object missing a field', () => {
-    const e = failAt('cert', firebaseAppError('app/invalid-credential',
+  test('a service-account object missing a field', async () => {
+    const e = await failAt('cert', firebaseAppError('app/invalid-credential',
       'Service account object must contain a string "client_email" property.'));
     assert.equal(e.reason, 'invalid_service_account_credential');
     assert.equal(e.notConfigured, true);
   });
 
-  test('a duplicate app is NOT the environment\'s fault', () => {
-    const e = failAt('initializeApp', firebaseAppError('app/invalid-app-options',
+  test('a duplicate app is NOT the environment\'s fault', async () => {
+    const e = await failAt('initializeApp', firebaseAppError('app/invalid-app-options',
       'An existing app named "[DEFAULT]" already exists'));
     assert.equal(e.reason, 'firebase_admin_invalid_app_options');
     assert.equal(e.notConfigured, false, 'this is our bug, so 500 not 503');
   });
 
-  test('Firestore and Auth name their own stage', () => {
-    assert.equal(failAt('getFirestore', new Error('boom')).reason,
+  test('Firestore and Auth name their own stage', async () => {
+    assert.equal((await failAt('getFirestore', new Error('boom'))).reason,
       'firebase_firestore_initialize_failed');
-    assert.equal(failAt('getAuth', new Error('boom')).reason,
+    assert.equal((await failAt('getAuth', new Error('boom'))).reason,
       'firebase_auth_initialize_failed');
   });
 
@@ -254,20 +257,20 @@ describe('SDK error classification', () => {
     assert.equal(FB.classifyInitError(err).configCaused, false);
   });
 
-  test('an unrecognised failure falls back, it does not invent a token', () => {
-    const e = failAt('getApps', new Error('something nobody predicted'));
+  test('an unrecognised failure falls back, it does not invent a token', async () => {
+    const e = await failAt('getApps', new Error('something nobody predicted'));
     assert.equal(e.reason, 'firebase_admin_initialize_failed');
     assert.equal(FB.classifyInitError(new Error('x')).reason, 'unknown_initialization_error');
   });
 
-  test('every emitted reason is on the allow-list', () => {
+  test('every emitted reason is on the allow-list', async () => {
     const errors = [
-      failAt('cert', firebaseAppError('app/invalid-credential', 'Failed to parse private key.')),
-      failAt('cert', firebaseAppError('app/invalid-credential', 'Service account object')),
-      failAt('initializeApp', firebaseAppError('app/invalid-app-options', 'dup')),
-      failAt('initializeApp', firebaseAppError('app/network-error', 'net')),
-      failAt('getFirestore', new Error('boom')),
-      failAt('getAuth', new Error('boom'))
+      await failAt('cert', firebaseAppError('app/invalid-credential', 'Failed to parse private key.')),
+      await failAt('cert', firebaseAppError('app/invalid-credential', 'Service account object')),
+      await failAt('initializeApp', firebaseAppError('app/invalid-app-options', 'dup')),
+      await failAt('initializeApp', firebaseAppError('app/network-error', 'net')),
+      await failAt('getFirestore', new Error('boom')),
+      await failAt('getAuth', new Error('boom'))
     ];
     for (const e of errors) {
       assert.ok(FB.DIAGNOSTIC_TOKENS.includes(e.reason), 'not allow-listed: ' + e.reason);
@@ -280,13 +283,13 @@ describe('SDK error classification', () => {
     assert.equal(e.message.includes(CLIENT_EMAIL), false);
   });
 
-  test('nothing is caught and continued - every branch rethrows', () => {
+  test('nothing is caught and continued - every branch rethrows', async () => {
     const admin = fakeSdk({ cert: () => { throw firebaseAppError('app/invalid-credential', 'Failed to parse private key.'); } });
-    assert.throws(() => FB.initAdmin({ env: goodEnv(), sdk: admin.sdk }));
+    await assert.rejects(() => FB.initAdmin({ env: goodEnv(), sdk: admin.sdk }));
     /* And nothing was memoised, so the next request re-checks rather than
        serving a half-built app. */
     const admin2 = fakeSdk();
-    const ok = FB.initAdmin({ env: goodEnv(), sdk: admin2.sdk });
+    const ok = await FB.initAdmin({ env: goodEnv(), sdk: admin2.sdk });
     assert.equal(ok.projectId, FB.EXPECTED_PROJECT_ID);
   });
 });
@@ -503,11 +506,11 @@ describe('no diagnostic ever contains anything sensitive', () => {
     assert.ok(handler.includes('safeReason'), 'the config path must too');
   });
 
-  test('ChatInitError does not carry the originating error along', () => {
+  test('ChatInitError does not carry the originating error along', async () => {
     const admin = fakeSdk({
       cert: () => { throw firebaseAppError('app/invalid-credential', 'Failed to parse private key.'); }
     });
-    const err = caught(() => FB.initAdmin({ env: goodEnv(), sdk: admin.sdk }));
+    const err = await caught(() => FB.initAdmin({ env: goodEnv(), sdk: admin.sdk }));
     assert.equal(err.cause, undefined, 'a cause chain is what gets stringified later');
     assert.equal(err.original, undefined);
     assert.equal(String(err.stack).includes('SECRET-CAUSE-MATERIAL'), false);

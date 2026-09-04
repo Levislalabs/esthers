@@ -102,69 +102,86 @@ describe('the modular entry points resolve', () => {
 });
 
 /* ============================================== STATICALLY TRACEABLE LOADS */
-describe('the SDK is loaded in a statically traceable way', () => {
+describe('the SDK is loaded by literal dynamic import, never require', () => {
   const source = fs.readFileSync(ROOT + '/api/_chat/firebase-admin.js', 'utf8');
+  /* Comments are stripped: this file discusses require() and import() in
+     prose, and matching that would make the test lie in both directions. */
+  const code = source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
 
-  test('every specifier is a literal string, never a variable', () => {
-    /* import(name) or require(someVar) is what a bundler cannot follow.
-       Comments are stripped first: this file discusses require() in prose,
-       and matching that would make the test lie in both directions. */
-    const code = source
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/^\s*\/\/.*$/gm, '');
-    const dynamic = code.match(/require\(\s*(?!['"])/g) || [];
-    assert.equal(dynamic.length, 0,
-      'a computed specifier cannot be traced into a function bundle: '
-      + JSON.stringify(dynamic));
-    assert.ok(code.includes("require('firebase-admin/app')"),
-      'the comment-stripper must not have eaten the real code');
+  test('THE ERR_REQUIRE_ESM REGRESSION: no require() of any SDK module', () => {
+    /* firebase-admin/auth pulls in `jose`, which is ESM-only. require()ing it
+       throws ERR_REQUIRE_ESM on any Node without require(esm) support, which
+       landed in 22.12 - and Vercel's Node 22.x was below that. Going back to
+       require() here would reproduce the production 500 exactly. */
     for (const spec of ['firebase-admin/app', 'firebase-admin/firestore',
       'firebase-admin/auth']) {
-      assert.ok(source.includes("require('" + spec + "')"), spec);
+      assert.equal(code.includes("require('" + spec + "')"), false,
+        'require(' + spec + ') is what caused ERR_REQUIRE_ESM in production');
+      assert.equal(code.includes('require("' + spec + '")'), false, spec);
     }
   });
 
-  test('the loads are at module scope, not nested inside a function', () => {
-    /* Module scope is the position every version of every bundler handles.
-       A require buried in a callback is a needless bet on the tracer. */
+  test('all three use literal import(), consistently', () => {
+    for (const spec of ['firebase-admin/app', 'firebase-admin/firestore',
+      'firebase-admin/auth']) {
+      assert.ok(code.includes("import('" + spec + "')"),
+        'expected a literal dynamic import of ' + spec);
+    }
+  });
+
+  test('every specifier is a literal string, never a variable', () => {
+    const dynamicImport = code.match(/[^.\w]import\(\s*(?!['"])/g) || [];
+    assert.equal(dynamicImport.length, 0,
+      'import(someVariable) cannot be traced into a function bundle: '
+      + JSON.stringify(dynamicImport));
+    const dynamicRequire = code.match(/require\(\s*(?!['"])/g) || [];
+    assert.equal(dynamicRequire.length, 0, JSON.stringify(dynamicRequire));
+    assert.ok(code.includes("import('firebase-admin/app')"),
+      'the comment-stripper must not have eaten the real code');
+  });
+
+  test('the imports sit together in one loader, not scattered', () => {
+    assert.ok(code.includes('async function importSdk()'));
+    const loader = code.slice(code.indexOf('async function importSdk()'));
     for (const spec of ['app', 'firestore', 'auth']) {
-      const line = "try { sdk" + spec[0].toUpperCase() + spec.slice(1)
-        + " = require('firebase-admin/" + spec + "'); }";
-      assert.ok(source.includes(line), 'expected a top-level load for ' + spec);
+      assert.ok(loader.slice(0, 900).includes("import('firebase-admin/" + spec + "')"),
+        spec + ' must be loaded by the shared loader');
     }
-  });
-
-  test('no require of the SDK survives inside a function body', () => {
-    const afterLoads = source.slice(source.indexOf('function noteModuleFailure'));
-    assert.equal(afterLoads.includes("require('firebase-admin"), false,
-      'serverNow() used to require the SDK on every call');
   });
 
   test('nothing loads the removed pre-v14 monolithic namespace', () => {
-    assert.equal(source.includes("require('firebase-admin')"), false,
-      "firebase-admin 14 has no single-namespace export");
+    assert.equal(code.includes("require('firebase-admin')"), false,
+      'firebase-admin 14 has no single-namespace export');
+    assert.equal(code.includes("import('firebase-admin')"), false);
   });
 });
 
 /* ============================ LOADING NEEDS NO CREDENTIALS, INIT IS LAZY */
 describe('module loading needs no credentials and initialises nothing', () => {
-  test('the SDK modules are already loaded in this process', () => {
+  test('the SDK modules load with no credentials present', async () => {
     /* Importing api/_chat/firebase-admin.js at the top of this file loaded
        them, with no FIREBASE_* variable set anywhere in this test run. */
     for (const v of ['FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL',
       'FIREBASE_PRIVATE_KEY']) {
       assert.equal(process.env[v], undefined, v + ' must not be set for this test');
     }
-    const sdk = FB.loadSdk();
-    assert.equal(typeof sdk.app.initializeApp, 'function');
-    assert.equal(typeof sdk.firestore.getFirestore, 'function');
-    assert.equal(typeof sdk.auth.getAuth, 'function');
+    const result = await FB.loadSdk();
+    assert.equal(result.ok, true, 'reason: ' + result.reason);
+    assert.equal(typeof result.sdk.app.initializeApp, 'function');
+    assert.equal(typeof result.sdk.firestore.getFirestore, 'function');
+    assert.equal(typeof result.sdk.auth.getAuth, 'function',
+      'THE MODULE THAT FAILED IN PRODUCTION');
   });
 
-  test('loadSdk() does not create an app', () => {
-    const before = require('firebase-admin/app').getApps().length;
-    FB.loadSdk(); FB.loadSdk();
-    assert.equal(require('firebase-admin/app').getApps().length, before,
+  test('loadSdk() does not create an app, and imports only once', async () => {
+    const appMod = (await FB.loadSdk()).sdk.app;
+    const before = appMod.getApps().length;
+    const a = FB.loadSdk(); const b = FB.loadSdk();
+    assert.equal(a, b, 'the load promise must be memoised, not re-run');
+    await a; await b;
+    assert.equal(appMod.getApps().length, before,
       'loading the library must not initialise Firebase');
   });
 
@@ -173,8 +190,12 @@ describe('module loading needs no credentials and initialises nothing', () => {
        anything credential-related ran at import, this would throw. */
     const script =
       "const m = require('" + ROOT + "/api/_chat/firebase-admin.js');" +
-      "if (require('firebase-admin/app').getApps().length !== 0) throw new Error('app created at import');" +
-      "console.log('IMPORT_OK ' + m.describeRuntime());";
+      "m.loadSdk().then(async (r) => {" +
+      "  if (!r.ok) throw new Error('sdk load failed: ' + r.reason);" +
+      "  const app = (await import('firebase-admin/app'));" +
+      "  if (app.getApps().length !== 0) throw new Error('app created by loading');" +
+      "  console.log('IMPORT_OK ' + m.describeRuntime());" +
+      "});";
     const env = Object.assign({}, process.env);
     for (const v of ['FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL',
       'FIREBASE_PRIVATE_KEY', 'CHAT_RATE_LIMIT_SECRET']) delete env[v];
@@ -186,7 +207,7 @@ describe('module loading needs no credentials and initialises nothing', () => {
       'all three modules must load with no configuration at all');
   });
 
-  test('repeated initAdmin calls reuse one app rather than duplicating it', () => {
+  test('repeated initAdmin calls reuse one app rather than duplicating it', async () => {
     FB._reset();
     let inits = 0;
     const sdk = {
@@ -205,9 +226,9 @@ describe('module loading needs no credentials and initialises nothing', () => {
         + 'Tk9ULUEtUkVBTC1LRVktcGxhY2Vob2xkZXItZm9yLXRlc3Rz\\n'
         + '-----END PRIVATE KEY-----\\n'
     };
-    const a = FB.initAdmin({ env, sdk });
-    const b = FB.initAdmin({ env, sdk });
-    const c = FB.initAdmin({ env, sdk });
+    const a = await FB.initAdmin({ env, sdk });
+    const b = await FB.initAdmin({ env, sdk });
+    const c = await FB.initAdmin({ env, sdk });
     assert.equal(inits, 1, 'a warm instance must not build a second app');
     assert.equal(a, b); assert.equal(b, c);
     assert.equal(a.projectId, FB.EXPECTED_PROJECT_ID);
@@ -223,7 +244,8 @@ describe('module loading needs no credentials and initialises nothing', () => {
 
 /* ================================= THE SHARPENED MODULE-FAILURE DIAGNOSTIC */
 describe('a module failure now names itself precisely', () => {
-  test('the runtime line reports Node and which modules loaded', () => {
+  test('the runtime line reports Node and which modules loaded', async () => {
+    await FB.loadSdk();
     const runtime = FB.describeRuntime();
     assert.match(runtime,
       /^node:\d{1,3},sdk_app:[01],sdk_firestore:[01],sdk_auth:[01],sdk_code:[A-Za-z_]+$/,
@@ -231,13 +253,14 @@ describe('a module failure now names itself precisely', () => {
     assert.match(runtime, /sdk_app:1,sdk_firestore:1,sdk_auth:1,sdk_code:none/);
   });
 
-  test('the Node major version is visible, which settles the >=22 question', () => {
+  test('the Node major version is visible, which settles the >=22 question', async () => {
     const major = Number(FB.describeRuntime().match(/^node:(\d+)/)[1]);
     assert.equal(major, Number(process.versions.node.split('.')[0]));
     assert.ok(major >= 22, 'this test run itself satisfies firebase-admin 14');
   });
 
-  test('the runtime line contains nothing sensitive', () => {
+  test('the runtime line contains nothing sensitive', async () => {
+    await FB.loadSdk();
     const runtime = FB.describeRuntime();
     for (const secret of ['esther-s-chat', 'PRIVATE', 'gserviceaccount', '@',
       'FIREBASE', 'secret']) {
@@ -268,13 +291,13 @@ describe('a module failure now names itself precisely', () => {
     assert.ok(source.includes("'ERR_PACKAGE_PATH_NOT_EXPORTED'"));
   });
 
-  test('the code classifier is declared before the loads that use it', () => {
-    /* NOT_FOUND_CODES is a const, so calling noteModuleFailure() before its
+  test('the code classifier is declared before the loader that uses it', () => {
+    /* NOT_FOUND_CODES is a const, so reaching noteModuleFailure() before its
        initialiser would hit the temporal dead zone - and only ever on the
        failure path, which is exactly when the diagnostic is needed. */
     const source = fs.readFileSync(ROOT + '/api/_chat/firebase-admin.js', 'utf8');
     assert.ok(source.indexOf('const NOT_FOUND_CODES')
-      < source.indexOf("require('firebase-admin/app')"),
+      < source.indexOf("import('firebase-admin/app')"),
       'the constants must be initialised before any load can fail');
   });
 });

@@ -23,9 +23,10 @@ const RL = require('/home/user/esthers/api/_chat/rate-limit.js');
 const FB = require('/home/user/esthers/api/_chat/firebase-admin.js');
 
 /* assert.throws() returns nothing, so it cannot be used to inspect the error
-   that was raised. This returns it. */
-function caught(fn) {
-  try { fn(); } catch (err) { return err; }
+   that was raised. This returns it. Async-aware, because initAdmin() became
+   asynchronous when the SDK moved to import(). */
+async function caught(fn) {
+  try { await fn(); } catch (err) { return err; }
   assert.fail('expected this to throw, and it did not');
 }
 
@@ -395,31 +396,32 @@ describe('fail closed without Firebase credentials', () => {
 
   beforeEach(() => { FB._reset(); });
 
-  test('an empty environment is rejected before anything is initialised', () => {
+  test('an empty environment is rejected before anything is initialised', async () => {
     const admin = fakeAdmin();
-    assert.throws(() => FB.initAdmin({ env: {}, sdk: admin.sdk }), FB.ChatConfigError);
+    await assert.rejects(() => FB.initAdmin({ env: {}, sdk: admin.sdk }), FB.ChatConfigError);
     assert.equal(admin.calls.length, 0,
       'nothing may be initialised when the environment is incomplete');
   });
 
-  test('THE ACCIDENTAL PROJECT: a different project id is refused', () => {
+  test('THE ACCIDENTAL PROJECT: a different project id is refused', async () => {
     /* The Admin SDK bypasses Firestore rules entirely, so a wrong project id
        is not caught by any rule - it would just quietly write somewhere else.
        This guard is the only thing standing between a typo and that. */
     const admin = fakeAdmin();
     const env = Object.assign(goodEnv(), { FIREBASE_PROJECT_ID: 'esthers-chat' });
-    const err = caught(() => FB.initAdmin({ env, sdk: admin.sdk }));
+    const err = await caught(() => FB.initAdmin({ env, sdk: admin.sdk }));
     assert.ok(err instanceof FB.ChatConfigError);
     assert.equal(err.reason, 'unexpected_project');
     assert.equal(admin.calls.length, 0, 'the wrong project must never be opened');
   });
 
-  test('a plausible neighbouring project id is still refused', () => {
+  test('a plausible neighbouring project id is still refused', async () => {
     const admin = fakeAdmin();
     for (const wrong of ['esther-s-chat-dev', 'esther-s-chat ', 'Esther-S-Chat', 'demo-esther-s-chat']) {
       const env = Object.assign(goodEnv(), { FIREBASE_PROJECT_ID: wrong });
       let threw = false;
-      try { FB.initAdmin({ env, sdk: admin.sdk }); } catch (e) { threw = e instanceof FB.ChatConfigError; }
+      try { await FB.initAdmin({ env, sdk: admin.sdk }); }
+      catch (e) { threw = e instanceof FB.ChatConfigError; }
       /* A trailing space is trimmed and is the same project, so it is allowed;
          everything else must be refused. */
       if (wrong.trim() === FB.EXPECTED_PROJECT_ID) {
@@ -431,7 +433,7 @@ describe('fail closed without Firebase credentials', () => {
     }
   });
 
-  test('each missing piece names itself with a short safe token', () => {
+  test('each missing piece names itself with a short safe token', async () => {
     const admin = fakeAdmin();
     const cases = [
       [{}, 'missing_project_id'],
@@ -444,17 +446,17 @@ describe('fail closed without Firebase credentials', () => {
         'missing_private_key']
     ];
     for (const [env, reason] of cases) {
-      const err = caught(() => FB.initAdmin({ env, sdk: admin.sdk }));
+      const err = await caught(() => FB.initAdmin({ env, sdk: admin.sdk }));
       assert.ok(err instanceof FB.ChatConfigError);
       assert.equal(err.reason, reason);
     }
     assert.equal(admin.calls.length, 0);
   });
 
-  test('a config error never quotes the credential it rejected', () => {
+  test('a config error never quotes the credential it rejected', async () => {
     const admin = fakeAdmin();
     const env = Object.assign(goodEnv(), { FIREBASE_PRIVATE_KEY: 'PRETEND-SECRET-MATERIAL' });
-    const err = caught(() => FB.initAdmin({ env, sdk: admin.sdk }));
+    const err = await caught(() => FB.initAdmin({ env, sdk: admin.sdk }));
     assert.ok(err instanceof FB.ChatConfigError);
     const text = String(err.message) + ' ' + String(err.reason) + ' ' + String(err.stack);
     assert.equal(text.includes('PRETEND-SECRET-MATERIAL'), false,
@@ -463,10 +465,10 @@ describe('fail closed without Firebase credentials', () => {
       'nor the service account address');
   });
 
-  test('a complete environment initialises exactly once and is then cached', () => {
+  test('a complete environment initialises exactly once and is then cached', async () => {
     const admin = fakeAdmin();
-    const first = FB.initAdmin({ env: goodEnv(), sdk: admin.sdk });
-    const second = FB.initAdmin({ env: goodEnv(), sdk: admin.sdk });
+    const first = await FB.initAdmin({ env: goodEnv(), sdk: admin.sdk });
+    const second = await FB.initAdmin({ env: goodEnv(), sdk: admin.sdk });
     assert.equal(admin.calls.length, 1, 'a warm instance must not re-initialise');
     assert.equal(first, second);
     assert.equal(first.projectId, FB.EXPECTED_PROJECT_ID);
