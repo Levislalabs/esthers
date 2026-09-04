@@ -1,1 +1,42 @@
 node_modules/
+
+# ---------------------------------------------------------------------
+# Secrets.
+#
+# Nothing matching these should ever be committed. A ".example" file with
+# placeholders in it is the exception, and is how a new machine learns
+# what to fill in.
+#
+# IF A FIREBASE PRIVATE KEY IS EVER COMMITTED, IT IS COMPROMISED. Rotate
+# the service account in the Firebase console immediately. Removing the
+# file, amending the commit or rewriting history does NOT undo the
+# exposure - the key was published the moment it was pushed.
+# ---------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# Service-account keys. Deliberately narrow: each pattern requires a
+# recognisable substring, so the site's own tracked JSON - package.json,
+# firebase.json, firestore.indexes.json - is unaffected.
+*firebase-adminsdk*.json
+*service-account*.json
+*service_account*.json
+
+# ---------------------------------------------------------------------
+# Firebase local tooling.
+#
+# .firebaserc binds a checkout to a real Firebase project, which is
+# exactly the binding that turns a stray "firebase deploy" into a
+# production change. It is ignored on purpose: developers may create one
+# locally, but it must never travel with the repository.
+# ---------------------------------------------------------------------
+.firebaserc
+.firebase/
+firebase-debug.log
+firebase-debug.log.*
+firestore-debug.log
+firestore-debug.log.*
+database-debug.log
+pubsub-debug.log
+ui-debug.log

@@ -1,0 +1,513 @@
+/**
+ * Esther's - Firestore Security Rules test suite
+ *
+ * Runs against the Firestore EMULATOR only. It needs no production
+ * credentials, no service-account key, and never contacts the real
+ * esther-s-chat project - the project id below is a "demo-" id, which the
+ * Firebase tooling refuses to connect to any live backend.
+ *
+ *   npm run test:firestore-rules
+ *
+ * The suite exists because, in this architecture, these rules are the ONLY
+ * thing standing between a browser and the chat data. Everything else the
+ * browser wants goes through the Vercel API. So the questions asked here
+ * are deliberately blunt: can the wrong person read this, and can anybody
+ * at all write it.
+ */
+
+import { test, describe, before, after, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {
+  initializeTestEnvironment,
+  assertFails,
+  assertSucceeds,
+} from '@firebase/rules-unit-testing';
+import {
+  doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
+  collection, query, where, orderBy, limit, getDocs, onSnapshot,
+} from 'firebase/firestore';
+
+const PROJECT_ID = 'demo-esthers-rules';
+
+/* The two customers and the one staff member the matrix is built around. */
+const UID_A     = 'anon-A';
+const UID_B     = 'anon-B';
+const UID_STAFF = 'staff-test';
+
+const CONV_A = 'convA';
+const CONV_B = 'convB';
+
+/* The ceiling in firestore.rules. A query must ask for a limit, and the
+   limit must not exceed this. */
+const MAX_QUERY = 200;
+
+/* How many messages conversation A gets. Deliberately larger than the
+   Firestore rules access-call limit, to prove the dependent get() in
+   ownsConversation() is cached per request rather than performed once per
+   returned document. If it were not, this number would break the query. */
+const BULK_MESSAGES = 60;
+
+let env;
+let unauth, customerA, customerB, staff;
+
+/* A staff member signs in with Email/Password, so their token carries a
+   different sign_in_provider. That single field is what the rules key on,
+   and it is why holding a staff account grants no direct data access. */
+const ANON_TOKEN  = { firebase: { sign_in_provider: 'anonymous' } };
+const STAFF_TOKEN = { firebase: { sign_in_provider: 'password' }, email: 'manager@esthers.ca' };
+
+before(async () => {
+  env = await initializeTestEnvironment({
+    projectId: PROJECT_ID,
+    firestore: {
+      rules: fs.readFileSync('firestore.rules', 'utf8'),
+      host: '127.0.0.1',
+      port: 8080,
+    },
+  });
+  unauth    = env.unauthenticatedContext();
+  customerA = env.authenticatedContext(UID_A, ANON_TOKEN);
+  customerB = env.authenticatedContext(UID_B, ANON_TOKEN);
+  staff     = env.authenticatedContext(UID_STAFF, STAFF_TOKEN);
+});
+
+after(async () => { if (env) await env.cleanup(); });
+
+/*
+ * Seeding, with the rules switched off - the way the future Vercel API
+ * will write, through the Admin SDK, which bypasses rules. Nothing in this
+ * suite creates data through the rules, because nothing in production may.
+ *
+ * NOTE THE MESSAGE SHAPE. There is no staffUserId field. Message documents
+ * are directly readable by the customer who owns the conversation, and a
+ * rule cannot hide a field inside a document it has allowed, so anything
+ * stored here is customer-visible by definition. Staff-identifying
+ * metadata is deliberately not stored on a message.
+ */
+async function seed({ includeB }) {
+  await env.clearFirestore();
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    const base = Date.now();
+
+    await setDoc(doc(db, 'chatConversations', CONV_A), {
+      customerUid: UID_A, customerName: 'Alice', customerEmail: 'alice@example.com',
+      status: 'open', createdAt: new Date(base), updatedAt: new Date(base),
+      lastMessageAt: new Date(base), messageCount: BULK_MESSAGES,
+      staffLastReadAt: null, customerLastReadAt: null,
+      staffNotifiedAt: null, closedAt: null,
+    });
+    for (let i = 0; i < BULK_MESSAGES; i++) {
+      await setDoc(doc(db, 'chatMessages', `a-${String(i).padStart(3, '0')}`), {
+        conversationId: CONV_A, createdAt: new Date(base + i),
+        senderType: i % 2 ? 'staff' : 'customer',
+        body: `A message ${i}`,
+      });
+    }
+
+    if (includeB) {
+      await setDoc(doc(db, 'chatConversations', CONV_B), {
+        customerUid: UID_B, customerName: 'Bob', customerEmail: 'bob@example.com',
+        status: 'open', createdAt: new Date(base), updatedAt: new Date(base),
+        lastMessageAt: new Date(base), messageCount: 1,
+        staffLastReadAt: null, customerLastReadAt: null,
+        staffNotifiedAt: null, closedAt: null,
+      });
+      await setDoc(doc(db, 'chatMessages', 'b-000'), {
+        conversationId: CONV_B, createdAt: new Date(base),
+        senderType: 'customer', body: 'B message',
+      });
+    }
+
+    /* Mirrors the two real allow-list documents. Values are illustrative;
+       the real UIDs are not needed to prove the collection is sealed. */
+    await setDoc(doc(db, 'staff', UID_STAFF), {
+      email: 'manager@esthers.ca', displayName: 'EJay',
+      isActive: true, role: 'admin',
+    });
+    await setDoc(doc(db, 'chatRateLimits', 'chat-send__deadbeef__1700000000'), {
+      hits: 3, windowStart: 1700000000,
+    });
+  });
+}
+
+beforeEach(async () => { await seed({ includeB: true }); });
+
+/* ------------------------------------------------------------- helpers */
+
+const convRef = (ctx, id) => doc(ctx.firestore(), 'chatConversations', id);
+const msgRef  = (ctx, id) => doc(ctx.firestore(), 'chatMessages', id);
+
+/* The exact query shape the future realtime listener will use: scoped to
+   one conversation, ordered, and explicitly limited. */
+const transcriptQuery = (ctx, conversationId, lim = MAX_QUERY) =>
+  query(
+    collection(ctx.firestore(), 'chatMessages'),
+    where('conversationId', '==', conversationId),
+    orderBy('createdAt', 'asc'),
+    limit(lim),
+  );
+
+/*
+ * Resolve on the first SERVER-CONFIRMED snapshot, or reject on the first
+ * error. Realtime is the entire point of the design, so it is tested as
+ * realtime rather than inferred from a one-shot read.
+ *
+ * The metadata.fromCache guard is load-bearing, not decoration. The
+ * Firestore SDK answers a listener from its local cache first and only
+ * then goes to the server, so a listener whose query the rules REFUSE
+ * still delivers a cached snapshot before the permission error arrives -
+ * if an earlier query in the same context happened to warm the cache with
+ * matching documents. Resolving on that first snapshot made a denied
+ * listener look permitted. Waiting for fromCache === false asks the only
+ * question worth asking: what does the SERVER allow?
+ */
+function firstSnapshot(q, timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { stop(); reject(new Error('listener timed out')); }, timeoutMs);
+    const stop = onSnapshot(q, { includeMetadataChanges: true },
+      (snap) => {
+        if (snap.metadata.fromCache) return;   // local echo; keep waiting
+        clearTimeout(timer); stop(); resolve(snap);
+      },
+      (err) => { clearTimeout(timer); stop(); reject(err); },
+    );
+  });
+}
+
+/* =====================================================================
+   1. UNAUTHENTICATED - a visitor with no Firebase session at all
+   ===================================================================== */
+describe('unauthenticated', () => {
+  test('cannot get a conversation', async () => {
+    await assertFails(getDoc(convRef(unauth, CONV_A)));
+  });
+  test('cannot query messages, even correctly scoped and limited', async () => {
+    await assertFails(getDocs(transcriptQuery(unauth, CONV_A)));
+  });
+  test('cannot get a single message', async () => {
+    await assertFails(getDoc(msgRef(unauth, 'a-000')));
+  });
+  test('cannot read a staff document', async () => {
+    await assertFails(getDoc(doc(unauth.firestore(), 'staff', UID_STAFF)));
+  });
+  test('cannot read rate-limit data', async () => {
+    await assertFails(getDoc(doc(unauth.firestore(), 'chatRateLimits', 'chat-send__deadbeef__1700000000')));
+  });
+  test('cannot create a conversation', async () => {
+    await assertFails(addDoc(collection(unauth.firestore(), 'chatConversations'), { customerUid: 'x' }));
+  });
+  test('cannot create a message', async () => {
+    await assertFails(addDoc(collection(unauth.firestore(), 'chatMessages'), { conversationId: CONV_A, body: 'x' }));
+  });
+  test('cannot update a conversation', async () => {
+    await assertFails(updateDoc(convRef(unauth, CONV_A), { status: 'closed' }));
+  });
+  test('cannot update a message', async () => {
+    await assertFails(updateDoc(msgRef(unauth, 'a-000'), { body: 'tampered' }));
+  });
+  test('cannot delete a conversation', async () => {
+    await assertFails(deleteDoc(convRef(unauth, CONV_A)));
+  });
+  test('cannot delete a message', async () => {
+    await assertFails(deleteDoc(msgRef(unauth, 'a-000')));
+  });
+});
+
+/* =====================================================================
+   2. chatConversations IS CLIENT-PRIVATE
+   Nobody reads it from a browser - not even the anonymous customer who
+   owns it - because a rule cannot hide the operational fields inside.
+   ===================================================================== */
+describe('chatConversations is completely client-private', () => {
+  test('owner cannot get its OWN conversation', async () => {
+    await assertFails(getDoc(convRef(customerA, CONV_A)));
+  });
+  test('owner cannot get another customer\'s conversation', async () => {
+    await assertFails(getDoc(convRef(customerA, CONV_B)));
+  });
+  test('owner cannot list the collection', async () => {
+    await assertFails(getDocs(collection(customerA.firestore(), 'chatConversations')));
+  });
+  test('owner cannot query it, even filtered to its own uid', async () => {
+    await assertFails(getDocs(query(
+      collection(customerA.firestore(), 'chatConversations'),
+      where('customerUid', '==', UID_A),
+      limit(1),
+    )));
+  });
+  test('owner cannot realtime-listen to its own conversation', async () => {
+    await assert.rejects(() => firstSnapshot(convRef(customerA, CONV_A)));
+  });
+  test('staff cannot get it', async () => {
+    await assertFails(getDoc(convRef(staff, CONV_A)));
+  });
+  test('unauthenticated cannot get it', async () => {
+    await assertFails(getDoc(convRef(unauth, CONV_A)));
+  });
+
+  /* The point of the whole revision: the document is unreadable by the
+     client, yet the rules engine still consults it to decide who owns a
+     message. A rules get() is not subject to these rules. */
+  test('BUT the rules still authorise messages using it', async () => {
+    await assertFails(getDoc(convRef(customerA, CONV_A)));
+    const snap = await assertSucceeds(getDoc(msgRef(customerA, 'a-000')));
+    assert.equal(snap.data().conversationId, CONV_A);
+  });
+});
+
+/* =====================================================================
+   3. ANONYMOUS CUSTOMER A - what a real visitor is allowed to do
+   ===================================================================== */
+describe('anonymous customer A - allowed', () => {
+  test('queries its own transcript with an explicit limit', async () => {
+    const snap = await assertSucceeds(getDocs(transcriptQuery(customerA, CONV_A)));
+    assert.equal(snap.size, BULK_MESSAGES);
+  });
+
+  test('gets a single message from its own conversation', async () => {
+    const snap = await assertSucceeds(getDoc(msgRef(customerA, 'a-000')));
+    assert.equal(snap.data().body, 'A message 0');
+  });
+
+  test('realtime listener on its own transcript works', async () => {
+    const snap = await firstSnapshot(transcriptQuery(customerA, CONV_A));
+    assert.equal(snap.size, BULK_MESSAGES);
+  });
+
+  test('a small limit is fine', async () => {
+    const snap = await assertSucceeds(getDocs(transcriptQuery(customerA, CONV_A, 1)));
+    assert.equal(snap.size, 1);
+  });
+
+  /* The dependent get() in ownsConversation() runs for every document a
+     query returns. Firestore caches access calls by path within one
+     request, so this 60-document query costs ONE conversation read, not
+     60 - and stays inside the access-call limit. If that ever stops being
+     true, this test is where it surfaces. */
+  test(`transcript query of ${BULK_MESSAGES} docs stays inside the access-call limit`, async () => {
+    const snap = await assertSucceeds(getDocs(transcriptQuery(customerA, CONV_A)));
+    assert.equal(snap.size, BULK_MESSAGES);
+    assert.ok(BULK_MESSAGES > 10, 'must exceed the documented access-call limit to be meaningful');
+  });
+
+  test('message documents carry no staff-identifying metadata', async () => {
+    const snap = await assertSucceeds(getDocs(transcriptQuery(customerA, CONV_A)));
+    for (const d of snap.docs) {
+      assert.equal(d.data().staffUserId, undefined, 'staffUserId must not be customer-readable');
+      assert.deepEqual(
+        Object.keys(d.data()).sort(),
+        ['body', 'conversationId', 'createdAt', 'senderType'],
+      );
+    }
+  });
+});
+
+/* =====================================================================
+   4. THE QUERY LIMIT - mandatory, and capped
+   ===================================================================== */
+describe('customer transcript query limit', () => {
+  test('a query with NO limit is denied', async () => {
+    await assertFails(getDocs(query(
+      collection(customerA.firestore(), 'chatMessages'),
+      where('conversationId', '==', CONV_A),
+      orderBy('createdAt', 'asc'),
+    )));
+  });
+  test(`limit(${MAX_QUERY}) is allowed`, async () => {
+    await assertSucceeds(getDocs(transcriptQuery(customerA, CONV_A, MAX_QUERY)));
+  });
+  test(`limit(${MAX_QUERY + 1}) is denied`, async () => {
+    await assertFails(getDocs(transcriptQuery(customerA, CONV_A, MAX_QUERY + 1)));
+  });
+  test('a huge limit is denied', async () => {
+    await assertFails(getDocs(transcriptQuery(customerA, CONV_A, 10000)));
+  });
+  test('a realtime listener without a limit is denied', async () => {
+    await assert.rejects(() => firstSnapshot(query(
+      collection(customerA.firestore(), 'chatMessages'),
+      where('conversationId', '==', CONV_A),
+      orderBy('createdAt', 'asc'),
+    )));
+  });
+  test('a single-document get needs no limit', async () => {
+    await assertSucceeds(getDoc(msgRef(customerA, 'a-000')));
+  });
+});
+
+/* =====================================================================
+   5. ANONYMOUS CUSTOMER A - denied
+   ===================================================================== */
+describe('anonymous customer A - denied', () => {
+  test('cannot query another customer\'s transcript', async () => {
+    await assertFails(getDocs(transcriptQuery(customerA, CONV_B)));
+  });
+  test('cannot realtime-listen to another customer\'s transcript', async () => {
+    await assert.rejects(() => firstSnapshot(transcriptQuery(customerA, CONV_B)));
+  });
+  test('cannot get another customer\'s message directly', async () => {
+    await assertFails(getDoc(msgRef(customerA, 'b-000')));
+  });
+  test('cannot read a staff document', async () => {
+    await assertFails(getDoc(doc(customerA.firestore(), 'staff', UID_STAFF)));
+  });
+  test('cannot read rate-limit data', async () => {
+    await assertFails(getDoc(doc(customerA.firestore(), 'chatRateLimits', 'chat-send__deadbeef__1700000000')));
+  });
+  test('cannot create a conversation', async () => {
+    await assertFails(addDoc(collection(customerA.firestore(), 'chatConversations'), { customerUid: UID_A }));
+  });
+  test('cannot create a message, even in its own conversation', async () => {
+    await assertFails(addDoc(collection(customerA.firestore(), 'chatMessages'), {
+      conversationId: CONV_A, senderType: 'customer', body: 'direct write', createdAt: new Date(),
+    }));
+  });
+  test('cannot forge a staff message', async () => {
+    await assertFails(addDoc(collection(customerA.firestore(), 'chatMessages'), {
+      conversationId: CONV_A, senderType: 'staff', body: 'we will do it free',
+    }));
+  });
+  test('cannot update its own conversation', async () => {
+    await assertFails(updateDoc(convRef(customerA, CONV_A), { status: 'closed' }));
+  });
+  test('cannot update its own message', async () => {
+    await assertFails(updateDoc(msgRef(customerA, 'a-000'), { body: 'rewritten' }));
+  });
+  test('cannot delete its own conversation', async () => {
+    await assertFails(deleteDoc(convRef(customerA, CONV_A)));
+  });
+  test('cannot delete its own message', async () => {
+    await assertFails(deleteDoc(msgRef(customerA, 'a-000')));
+  });
+  test('cannot write a staff document', async () => {
+    await assertFails(setDoc(doc(customerA.firestore(), 'staff', UID_A), { isActive: true, role: 'admin' }));
+  });
+});
+
+/* =====================================================================
+   6. ANONYMOUS CUSTOMER B - the mirror, so isolation is proven both ways
+   ===================================================================== */
+describe('anonymous customer B - isolation mirrors A', () => {
+  test('queries its own transcript', async () => {
+    const snap = await assertSucceeds(getDocs(transcriptQuery(customerB, CONV_B)));
+    assert.equal(snap.size, 1);
+  });
+  test('cannot get its own conversation document either', async () => {
+    await assertFails(getDoc(convRef(customerB, CONV_B)));
+  });
+  test('cannot query customer A\'s transcript', async () => {
+    await assertFails(getDocs(transcriptQuery(customerB, CONV_A)));
+  });
+  test('cannot get customer A\'s message directly', async () => {
+    await assertFails(getDoc(msgRef(customerB, 'a-000')));
+  });
+});
+
+/* =====================================================================
+   7. EMAIL/PASSWORD USER - a real staff account gets nothing directly
+   ===================================================================== */
+describe('email/password user (staff) has no direct Firestore access', () => {
+  test('cannot get a conversation', async () => {
+    await assertFails(getDoc(convRef(staff, CONV_A)));
+  });
+  test('cannot query any transcript, correctly scoped and limited', async () => {
+    await assertFails(getDocs(transcriptQuery(staff, CONV_A)));
+  });
+  test('cannot get a single message', async () => {
+    await assertFails(getDoc(msgRef(staff, 'a-000')));
+  });
+  test('cannot list chatMessages', async () => {
+    await assertFails(getDocs(collection(staff.firestore(), 'chatMessages')));
+  });
+  test('cannot list chatConversations', async () => {
+    await assertFails(getDocs(collection(staff.firestore(), 'chatConversations')));
+  });
+  test('cannot read its OWN staff document', async () => {
+    await assertFails(getDoc(doc(staff.firestore(), 'staff', UID_STAFF)));
+  });
+  test('cannot read rate-limit data', async () => {
+    await assertFails(getDoc(doc(staff.firestore(), 'chatRateLimits', 'chat-send__deadbeef__1700000000')));
+  });
+  test('cannot reply directly to a conversation', async () => {
+    await assertFails(addDoc(collection(staff.firestore(), 'chatMessages'), {
+      conversationId: CONV_A, senderType: 'staff', body: 'direct reply',
+    }));
+  });
+  test('cannot close a conversation directly', async () => {
+    await assertFails(updateDoc(convRef(staff, CONV_A), { status: 'closed' }));
+  });
+  test('cannot promote itself in the staff collection', async () => {
+    await assertFails(updateDoc(doc(staff.firestore(), 'staff', UID_STAFF), { role: 'superadmin' }));
+  });
+});
+
+/* =====================================================================
+   8. RULES ARE NOT FILTERS
+   Firestore evaluates a query against its POTENTIAL result set, not
+   against whichever documents happen to exist. A query that COULD return
+   an unauthorised document is refused outright - it is never silently
+   narrowed to the subset the caller may read.
+   ===================================================================== */
+describe('rules are not filters', () => {
+  /* The decisive case. Only customer A's data exists, so an unconstrained
+     query could not, in fact, return anybody else's document. It is still
+     denied - which is what proves the evaluation is over the potential
+     result set and not over the current contents of the collection. */
+  test('unconstrained query is denied even when ONLY customer A data exists', async () => {
+    await seed({ includeB: false });
+    const solo = await getDocs(transcriptQuery(customerA, CONV_A)).then(s => s.size);
+    assert.equal(solo, BULK_MESSAGES, 'customer A data really is present and readable');
+    await assertFails(getDocs(collection(customerA.firestore(), 'chatMessages')));
+    await assertFails(getDocs(query(collection(customerA.firestore(), 'chatMessages'), limit(MAX_QUERY))));
+  });
+
+  test('unconstrained query is denied with A and B data present', async () => {
+    await assertFails(getDocs(collection(customerA.firestore(), 'chatMessages')));
+  });
+
+  test('query with ordering and a limit but no ownership constraint is denied', async () => {
+    await assertFails(getDocs(query(
+      collection(customerA.firestore(), 'chatMessages'),
+      orderBy('createdAt', 'asc'),
+      limit(MAX_QUERY),
+    )));
+  });
+
+  test('swapping only the conversationId to another customer\'s is denied', async () => {
+    await assertFails(getDocs(transcriptQuery(customerA, CONV_B)));
+  });
+
+  test('an "in" query spanning both conversations is denied', async () => {
+    await assertFails(getDocs(query(
+      collection(customerA.firestore(), 'chatMessages'),
+      where('conversationId', 'in', [CONV_A, CONV_B]),
+      limit(MAX_QUERY),
+    )));
+  });
+
+  test('limit(1) does not smuggle another customer\'s message out', async () => {
+    await assertFails(getDocs(query(
+      collection(customerA.firestore(), 'chatMessages'),
+      where('conversationId', '==', CONV_B),
+      limit(1),
+    )));
+  });
+
+  test('a filter on senderType alone is denied', async () => {
+    await assertFails(getDocs(query(
+      collection(customerA.firestore(), 'chatMessages'),
+      where('senderType', '==', 'staff'),
+      limit(MAX_QUERY),
+    )));
+  });
+
+  test('querying a conversation that does not exist is denied', async () => {
+    await assertFails(getDocs(transcriptQuery(customerA, 'no-such-conversation')));
+  });
+
+  test('an unknown collection is denied by the catch-all', async () => {
+    await assertFails(getDoc(doc(customerA.firestore(), 'someFutureCollection', 'x')));
+    await assertFails(setDoc(doc(customerA.firestore(), 'someFutureCollection', 'x'), { a: 1 }));
+  });
+});
