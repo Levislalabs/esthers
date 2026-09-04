@@ -46,7 +46,8 @@ years.
 ```
 CUSTOMER
   send     browser -> Vercel /api/chat/*        -> Admin SDK -> Firestore
-  receive  browser -> Firestore listener, DIRECT, READ-ONLY
+  receive  browser -> Firestore listener on chatMessages ONLY,
+                      DIRECT, READ-ONLY, scoped + limited,
                       governed by firestore.rules
 
 STAFF
@@ -60,15 +61,55 @@ account grants **no** Firestore access at all.
 
 ### Direct customer READ — exactly what is granted
 
-Only these two, and only to an anonymously authenticated caller:
+Only `chatMessages`, and only to an anonymously authenticated caller:
 
-1. `get` on `chatConversations/{id}` where `customerUid == request.auth.uid`
-2. `get`/`list` on `chatMessages` where the referenced conversation exists
+1. `get` on `chatMessages/{id}` where the referenced conversation exists
    and its `customerUid == request.auth.uid`
+2. `list` on `chatMessages` under the same ownership test, **and** with a
+   limit: `request.query.limit != null && request.query.limit <= 200`
 
-`list` on `chatConversations` is refused outright. A customer already
-holds the one id it needs, so the collection can never be walked,
-counted, or sampled — not even for rows the caller owns.
+That is the whole of it. `chatConversations` is **completely
+client-private** — see below.
+
+### Why the conversation document is client-private
+
+Firestore reads are document-level. A rule decides whether you may read a
+document; it cannot hide individual fields inside one. The conversation
+record carries operational metadata a customer has no business receiving
+— `staffLastReadAt`, `staffNotifiedAt`, `messageCount`, `closedAt`, and
+whatever a later phase adds. Granting read access to "your own"
+conversation would hand all of it over, and would keep doing so as the
+document grows.
+
+So there is no client read on `chatConversations` at all: not `get`, not
+`list`, not for the anonymous customer who owns the row, not for staff.
+
+**This does not weaken message authorisation.** The rules still consult
+the conversation document internally via `get()` to decide who owns a
+message, and a rules `get()` is performed by the rules engine itself —
+it is not subject to these rules. Proven by test: the owner cannot read
+its own conversation, yet can read its own messages in the same breath.
+
+The customer learns what it needs — that a conversation exists, and its
+status — from the Vercel API response when the conversation is started or
+recovered, and later from append-only `system` messages in the
+transcript. No conversation listener is required, and none is granted.
+
+### The mandatory query limit
+
+A direct Firestore listener bypasses the Vercel API and therefore every
+rate limit that lives there. The `list` rule compensates by requiring the
+client to *ask* for a limit and capping it at 200:
+
+```
+request.query.limit != null && request.query.limit <= 200
+```
+
+`request.query.limit` is null when the caller supplied none, so an
+unbounded listener is refused outright rather than quietly capped. The
+future customer query must therefore always include `limit(200)` (or
+less) alongside the `conversationId` constraint. A single-document `get`
+involves no query, so no limit applies there.
 
 ### Direct customer WRITE — none
 
@@ -122,6 +163,26 @@ phases:
   staff-author rule, status transitions) are enforced in code **and
   covered by tests**, because tests are now the only thing enforcing them
 
+## 5a. Rules are not filters — corrected
+
+An earlier draft of this document suggested that an unconstrained query
+might succeed if only one customer's documents happened to exist. **That
+was wrong, and it has been corrected.**
+
+Firestore evaluates a query against its **potential result set**, not
+against whichever documents are currently stored. A query that *could*
+return a document the caller may not read is refused outright — it is
+never silently narrowed to the subset the caller is allowed.
+
+This is verified rather than asserted. The suite seeds **only** customer
+A's conversation and messages, confirms customer A can read them, and
+then shows an unconstrained `chatMessages` query is still denied — with
+no other customer's data in the database at all.
+
+The practical consequence for later phases: the client query must carry
+the `conversationId` equality constraint and a limit. There is no
+fallback where a broader query "just returns less".
+
 ## 6. Ownership model
 
 `chatConversations.customerUid` is the Firebase Anonymous UID that owns
@@ -132,6 +193,38 @@ read permission.
 A conversation id is **not** a credential. It is an ordinary identifier;
 knowing one grants nothing. Ownership is proved by the Firebase session,
 which the page cannot forge.
+
+## 6a. What a customer can see — the message schema rule
+
+`chatMessages` documents are directly readable by the anonymous customer
+who owns the conversation, and **a rule cannot hide a field inside a
+document it has allowed**. Therefore:
+
+> **Every field stored on a message document is customer-visible.**
+
+The approved customer-readable message schema is exactly:
+
+| Field | Why it is safe |
+|---|---|
+| `conversationId` | the customer already holds it |
+| `createdAt` | a timestamp |
+| `senderType` | `customer` \| `staff` \| `system` — a role, not a person |
+| `body` | it is the message |
+
+**`staffUserId` is deliberately NOT stored on a message.** It is internal
+authorisation metadata, and storing it would hand every customer in the
+thread the Firebase UID of the staff member who replied. `senderType:
+'staff'` already tells the customer everything they need — that Esther's
+answered — without naming anyone.
+
+If a staff-authorship audit trail is wanted later it must either live in
+a separate server-only collection, or be dropped from V1 if it is not
+actually needed. That collection is **not** created now.
+
+Nothing internal, operational or staff-identifying may be added to a
+message document without re-reading this section first. A test asserts
+the exact field set, so an accidental addition fails the suite rather
+than quietly shipping.
 
 ## 7. Append-only transcript
 
@@ -193,6 +286,16 @@ The suite seeds data with rules disabled (as the Admin SDK will) and then
 proves what each caller can and cannot do: unauthenticated, two separate
 anonymous customers, and an Email/Password user standing in for staff.
 
+One detail worth knowing before editing the listener tests. The Firestore
+SDK answers a listener from its **local cache first** and only then goes
+to the server, so a listener whose query the rules refuse can still
+deliver a cached snapshot moments before the permission error arrives —
+which made a denied listener briefly look permitted. Every listener
+assertion therefore waits for a **server-confirmed** snapshot
+(`metadata.fromCache === false`) rather than the first one delivered. Do
+not relax that; it is the difference between testing the rules and
+testing the cache.
+
 ## 11. Indexes
 
 Two composite indexes, both required, neither speculative:
@@ -219,7 +322,54 @@ empirically with a 60-document query — comfortably past the documented
 limit — in the test suite.
 
 **Budget:** a customer transcript read costs `N` message reads **plus 1**
-conversation read.
+conversation read. Dependent reads are **not** free, and the direct
+listener path is not covered by any Vercel-side rate limit — see the App
+Check section below.
+
+## 12a. App Check — required before customer realtime goes live
+
+**Not configured in this phase. No Firebase Console action has been
+taken.** This records the requirement.
+
+### Why it is needed
+
+A customer's realtime listener talks to Firestore **directly**. It does
+not pass through the Vercel API, so none of the server-side rate
+limiting, request validation or abuse handling that protects
+`/api/chat/*` applies to it. The Security Rules constrain *what* can be
+read; they do nothing about *how often*, or by *what*. The mandatory
+`limit(200)` caps the size of any single read, but a script holding a
+valid anonymous session can still re-read in a loop.
+
+App Check closes part of that gap by attesting that the request comes
+from the real Esther's website rather than from a script, a scraper or a
+copied page.
+
+### Intended production approach
+
+- configure App Check for the existing **Esther's Website** web app,
+  using the current supported web provider — expected to be **reCAPTCHA
+  Enterprise** (verify the current recommendation at configuration time)
+- initialise App Check **only** as part of the Firebase/chat client. It
+  must not pull in analytics, tracking or any unrelated Firebase product
+  — the public site ships no third-party script today and that is worth
+  keeping
+- run in **monitoring mode first**: watch the App Check metrics for real
+  traffic before turning anything on
+- enable **Firestore App Check enforcement only after** that monitoring
+  shows legitimate traffic is passing
+- use **Firebase debug tokens** for local and preview testing. Never
+  disable enforcement or widen a rule to make a test environment work
+- verify current App Check and reCAPTCHA Enterprise **quotas and terms**
+  before launch, and confirm they remain within the no-cost tier
+
+### Honest limits
+
+App Check is an attestation layer, not a guarantee. It raises the cost of
+abuse; it does not eliminate it. A determined attacker running a real
+browser against the real site can still obtain valid tokens. It does not
+replace the query limit, the ownership rules, or server-side rate
+limiting on the write path — all of which remain necessary.
 
 ## 13. Reminders
 
