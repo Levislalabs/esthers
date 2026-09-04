@@ -60,7 +60,34 @@
 
   var DEMO_DELAY = 1100;
 
+  /* ---- placement ----------------------------------------------------
+     The launcher can be dragged out of the way. Where the visitor put it
+     is remembered per browser (localStorage) and whether they dismissed
+     it is remembered per tab (sessionStorage) - dismissing is a "not
+     right now", not a permanent opt-out, so it lapses when the tab does.
+
+     Both are best-effort. Private modes and blocked-storage settings make
+     these throw on access, not just on write, so every touch is wrapped
+     and a failure simply means the default position and a visible
+     mascot. ------------------------------------------------------- */
+  var POS_KEY    = 'esthers.chat.position';
+  var HIDDEN_KEY = 'esthers.chat.hidden';
+
+  /* How far a pointer must travel before the gesture stops being a tap
+     and becomes a drag. Below this, a shaky finger still opens the chat. */
+  var DRAG_THRESHOLD = 6;
+
+  /* Kept between the launcher and the edge of the screen, on top of any
+     device safe-area inset. Also absorbs the dismiss button, which sits
+     a few pixels outside the dock's own box. */
+  var EDGE_GAP = 12;
+
+  var pos = { dx: 0, dy: 0 };
+  var drag = null;
+  var suppressClick = false;
+
   var root, launcher, panel, log, form, input, send, closeBtn, mascot;
+  var dock, dismissBtn, restoreBtn;
   var replyTimer = null;
   var nudgeTimer = null;
   var lastFocus = null;
@@ -215,6 +242,142 @@
 
   function toggle() { isOpen() ? close() : open(); }
 
+  /* ------------------------------------------------------------ placement */
+
+  function readNum(v) {
+    var n = parseFloat(v);
+    return isFinite(n) ? n : 0;
+  }
+
+  /* Device safe-area insets, published as custom properties by chat.css so
+     they can be read here. Browsers that do not resolve env() inside a
+     custom property hand back something unparseable, which readNum turns
+     into 0 - the plain EDGE_GAP then carries the clamp on its own. */
+  function insets() {
+    var cs = window.getComputedStyle(root);
+    return {
+      top:    readNum(cs.getPropertyValue('--chat-safe-t')),
+      right:  readNum(cs.getPropertyValue('--chat-safe-r')),
+      bottom: readNum(cs.getPropertyValue('--chat-safe-b')),
+      left:   readNum(cs.getPropertyValue('--chat-safe-l'))
+    };
+  }
+
+  /*
+   * Hold an offset inside the visible viewport.
+   *
+   * The dock is moved with a transform, so its layout position never
+   * changes: subtracting the offset already applied gives the anchored
+   * position CSS would put it at, and the legal range of offsets follows
+   * from that. Doing it this way means the media queries that reposition
+   * the launcher on small screens keep working untouched - they move the
+   * anchor, and the offset is re-clamped around wherever it lands.
+   */
+  function clamp(dx, dy) {
+    if (!dock) return { dx: 0, dy: 0 };
+
+    var r = dock.getBoundingClientRect();
+    var pad = insets();
+    var baseLeft = r.left - pos.dx;
+    var baseTop = r.top - pos.dy;
+
+    var minLeft = EDGE_GAP + pad.left;
+    var maxLeft = window.innerWidth - EDGE_GAP - pad.right - r.width;
+    var minTop = EDGE_GAP + pad.top;
+    var maxTop = window.innerHeight - EDGE_GAP - pad.bottom - r.height;
+
+    /* A launcher taller or wider than the viewport (a very short landscape
+       phone) has no legal range at all. Pin it to the top-left of what is
+       available rather than letting the maths invert. */
+    if (maxLeft < minLeft) maxLeft = minLeft;
+    if (maxTop < minTop) maxTop = minTop;
+
+    var left = Math.min(Math.max(baseLeft + dx, minLeft), maxLeft);
+    var top = Math.min(Math.max(baseTop + dy, minTop), maxTop);
+
+    return { dx: Math.round(left - baseLeft), dy: Math.round(top - baseTop) };
+  }
+
+  function applyPos() {
+    dock.style.setProperty('--chat-dx', pos.dx + 'px');
+    dock.style.setProperty('--chat-dy', pos.dy + 'px');
+  }
+
+  function setPos(dx, dy) {
+    var c = clamp(dx, dy);
+    pos.dx = c.dx;
+    pos.dy = c.dy;
+    applyPos();
+  }
+
+  function savePos() {
+    try {
+      window.localStorage.setItem(POS_KEY, JSON.stringify({ dx: pos.dx, dy: pos.dy }));
+    } catch (err) { /* storage unavailable - the position is simply not kept */ }
+  }
+
+  function loadPos() {
+    var raw = null;
+    try { raw = window.localStorage.getItem(POS_KEY); } catch (err) { return; }
+    if (!raw) return;
+    var v;
+    try { v = JSON.parse(raw); } catch (err) { return; }
+    if (!v || typeof v.dx !== 'number' || typeof v.dy !== 'number') return;
+    if (!isFinite(v.dx) || !isFinite(v.dy)) return;
+    /* The viewport may be nothing like the one this was saved in, so the
+       stored offset is a request, not an instruction: clamp decides. */
+    setPos(v.dx, v.dy);
+  }
+
+  /* Re-clamp after anything that changes the viewport. An offset that was
+     legal in landscape can strand the launcher off-screen in portrait. */
+  function reclamp() {
+    if (!dock) return;
+    setPos(pos.dx, pos.dy);
+  }
+
+  /* ----------------------------------------------------------- visibility */
+
+  function isHidden() { return root.getAttribute('data-hidden') === 'true'; }
+
+  /*
+   * Hide or show the full launcher.
+   *
+   * Hiding never removes customer help - it swaps the mascot for the small
+   * round button, which is the same feature at a tenth of the footprint.
+   * Focus is moved to whichever control replaces the one being hidden, so
+   * a keyboard visitor is never left standing on an element that has just
+   * gone away.
+   */
+  function setHidden(hidden, moveFocus) {
+    /* Already in the requested state: nothing to move, nothing to store. */
+    if (isHidden() === !!hidden) return;
+
+    if (hidden) {
+      /* An open panel with no launcher behind it is a floating orphan.
+         Close it first, and do not send focus to the launcher on the way
+         out - it is about to disappear. */
+      if (isOpen()) close(false);
+      root.setAttribute('data-hidden', 'true');
+      if (moveFocus) restoreBtn.focus();
+    } else {
+      root.setAttribute('data-hidden', 'false');
+      /* The viewport may have changed while it was out of sight. */
+      reclamp();
+      if (moveFocus) launcher.focus();
+    }
+    try {
+      if (hidden) window.sessionStorage.setItem(HIDDEN_KEY, '1');
+      else window.sessionStorage.removeItem(HIDDEN_KEY);
+    } catch (err) { /* session storage unavailable - state lives for this page only */ }
+  }
+
+  function loadHidden() {
+    var v = null;
+    try { v = window.sessionStorage.getItem(HIDDEN_KEY); } catch (err) { return; }
+    if (v === '1') root.setAttribute('data-hidden', 'true');
+  }
+
   /* -------------------------------------------------------------- markup */
 
   function build() {
@@ -233,6 +396,10 @@
       src: 'assets/img/chat-mascot-240.webp',
       width: '1240', height: '1191',
       loading: 'lazy', decoding: 'async',
+      /* An image is natively draggable, and that drag hijacks the gesture:
+         the browser starts its own drag-and-drop, fires pointercancel and
+         the launcher stops following the pointer after one frame. */
+      draggable: 'false',
       /* Decorative: the button beside it already carries the accessible
          name, and describing the drawing twice only adds noise. */
       alt: ''
@@ -318,9 +485,44 @@
       'aria-labelledby': 'chat-title'
     }, [head, log, form]);
 
+    /* ---- dismiss, and the small button it leaves behind ---- */
+
+    /* A sibling of the launcher, not a child: a button inside a button is
+       invalid and browsers disagree about which one a tap belongs to.
+       Positioned over the top corner of the speech bubble by chat.css,
+       well clear of the mascot's face. */
+    dismissBtn = el('button', {
+      class: 'chat__dismiss',
+      type: 'button',
+      'aria-label': 'Hide customer help'
+    });
+    dismissBtn.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
+      '<path d="M7 7l10 10M17 7L7 17" fill="none" stroke="currentColor" ' +
+      'stroke-width="2.2" stroke-linecap="round"/></svg>';
+
+    /* The launcher and its dismiss button travel together, so the drag
+       offset is applied to this wrapper rather than to the launcher
+       itself. It also keeps the launcher's own transform free for the
+       hover, press and panel-open states already in chat.css. */
+    dock = el('div', { class: 'chat__dock' }, [launcher, dismissBtn]);
+
+    restoreBtn = el('button', {
+      class: 'chat__restore',
+      type: 'button',
+      'aria-label': 'Show customer help'
+    });
+    restoreBtn.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
+      '<path d="M21 11.5a7.5 7.5 0 0 1-10.9 6.7L4 20l1.8-5.1A7.5 7.5 0 1 1 21 11.5Z" ' +
+      'fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>' +
+      '</svg>';
+
     root.appendChild(panel);
-    root.appendChild(launcher);
+    root.appendChild(dock);
+    root.appendChild(restoreBtn);
     root.setAttribute('data-open', 'false');
+    root.setAttribute('data-hidden', 'false');
 
     /* ---- opening lines ---- */
     addMessage('them', 'Hi! How can we help with your sheet metal project?');
@@ -335,7 +537,84 @@
   /* --------------------------------------------------------------- wiring */
 
   function wire() {
-    launcher.addEventListener('click', function () { nudge(); toggle(); });
+    launcher.addEventListener('click', function () {
+      /* Set by the drag that just finished. Every real click is preceded by
+         a pointerdown, which clears the flag, so a stale one cannot swallow
+         a later tap - and a keyboard Enter/Space never sets it at all. */
+      if (suppressClick) { suppressClick = false; return; }
+      nudge();
+      toggle();
+    });
+
+    /* ---- drag ----
+       One Pointer Events implementation covers mouse, touch and pen.
+       Capture keeps the gesture attached to the launcher even when the
+       pointer outruns it, which is most of the time on a phone. */
+    launcher.addEventListener('pointerdown', function (e) {
+      if (!e.isPrimary) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      suppressClick = false;
+      drag = {
+        id: e.pointerId,
+        x: e.clientX,
+        y: e.clientY,
+        dx: pos.dx,
+        dy: pos.dy,
+        moved: false
+      };
+      try { launcher.setPointerCapture(e.pointerId); } catch (err) { /* not fatal */ }
+    });
+
+    launcher.addEventListener('pointermove', function (e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      var mx = e.clientX - drag.x;
+      var my = e.clientY - drag.y;
+      if (!drag.moved) {
+        /* Still inside the threshold: this is a tap so far, so leave it
+           alone. Moving on the first stray pixel would make the mascot
+           impossible to simply press on a touchscreen. */
+        if (Math.sqrt(mx * mx + my * my) < DRAG_THRESHOLD) return;
+        drag.moved = true;
+        root.setAttribute('data-dragging', 'true');
+      }
+      setPos(drag.dx + mx, drag.dy + my);
+    });
+
+    function endDrag(e) {
+      if (!drag || e.pointerId !== drag.id) return;
+      var moved = drag.moved;
+      drag = null;
+      root.removeAttribute('data-dragging');
+      if (moved) {
+        /* It was a drag, not a tap: do not open the panel on the click
+           the browser is about to send. */
+        suppressClick = true;
+        savePos();
+      }
+    }
+    launcher.addEventListener('pointerup', endDrag);
+    launcher.addEventListener('pointercancel', endDrag);
+
+    /* Belt and braces alongside draggable="false" and the CSS: anything
+       inside the launcher that a browser decides is draggable must not be,
+       because a native drag cancels the pointer stream mid-gesture. */
+    launcher.addEventListener('dragstart', function (e) { e.preventDefault(); });
+
+    /* ---- hide and restore ---- */
+    dismissBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      setHidden(true, true);
+    });
+    restoreBtn.addEventListener('click', function () { setHidden(false, true); });
+
+    /* A rotation or a resize can strand the launcher outside the new
+       viewport. orientationchange fires before the new dimensions settle
+       on some phones, hence the second pass. */
+    window.addEventListener('resize', reclamp);
+    window.addEventListener('orientationchange', function () {
+      reclamp();
+      setTimeout(reclamp, 300);
+    });
 
     closeBtn.addEventListener('click', function () { close(); });
 
@@ -376,7 +655,15 @@
   function init() {
     if (!build()) return;
     wire();
-    window.CM.chat = { open: open, close: close, toggle: toggle };
+    loadHidden();
+    loadPos();
+    window.CM.chat = {
+      open: open,
+      close: close,
+      toggle: toggle,
+      hide: function () { setHidden(true, false); },
+      show: function () { setHidden(false, false); }
+    };
   }
 
   if (document.readyState === 'loading') {

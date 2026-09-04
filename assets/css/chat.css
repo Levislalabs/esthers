@@ -29,13 +29,22 @@
   --chat-bubble: #f4f5f3;   /* the speech bubble, near-white */
   --chat-bubble-ink: #15181b;
 
+  /* Published so chat.js can read the device safe area when it clamps a
+     dragged launcher. A browser that does not resolve env() inside a
+     custom property yields something unparseable, which that code treats
+     as zero and falls back to its own edge gap. */
+  --chat-safe-t: env(safe-area-inset-top, 0px);
+  --chat-safe-r: env(safe-area-inset-right, 0px);
+  --chat-safe-b: env(safe-area-inset-bottom, 0px);
+  --chat-safe-l: env(safe-area-inset-left, 0px);
+
   /* Above the topbar (60), below the favourites drawer (89/90) so that
      drawer still covers everything, and below the toast (100) which is a
      transient centre-bottom pill. */
   position: fixed;
   z-index: 80;
-  right: clamp(16px, 2.2vw, 28px);
-  bottom: clamp(16px, 2.2vw, 28px);
+  right: calc(clamp(16px, 2.2vw, 28px) + var(--chat-safe-r));
+  bottom: calc(clamp(16px, 2.2vw, 28px) + var(--chat-safe-b));
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -44,6 +53,112 @@
   pointer-events: none;
 }
 .chat > * { pointer-events: auto; }
+
+/* =====================================================================
+   0. THE DOCK - what the visitor can move and put away
+   ===================================================================== */
+
+/*
+ * Wraps the launcher and its dismiss button so the two move as one.
+ *
+ * The offset is a transform, not a change of left/top, for two reasons:
+ * it never touches layout, so the panel above keeps the position the
+ * media queries give it; and it composites on the GPU, which is what
+ * makes dragging on a phone feel attached to the finger.
+ */
+.chat__dock {
+  position: relative;
+  display: block;
+  transform: translate3d(var(--chat-dx, 0px), var(--chat-dy, 0px), 0);
+  transition: transform var(--dur) var(--ease-out);
+}
+
+/* While a finger is down the transform must track it exactly. Any easing
+   here reads as lag, so it is removed for the length of the gesture. */
+.chat[data-dragging="true"] .chat__dock { transition: none; }
+.chat[data-dragging="true"] .chat__launcher { cursor: grabbing; }
+
+/* The gesture belongs to the launcher: the browser must not claim it for
+   a scroll, for a native image drag, or for a text selection. All three
+   cancel the pointer stream part-way through a drag. Scoped to this
+   element only - the rest of the page scrolls and selects as it did. */
+.chat__launcher {
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.chat__launcher img {
+  -webkit-user-drag: none;
+  user-drag: none;
+  pointer-events: none;
+}
+
+/* --- dismiss --- */
+
+.chat__dismiss {
+  position: absolute;
+  /* Over the speech bubble's top corner. The mascot is the lower half of
+     the launcher, so nothing here crosses its face. */
+  top: -4px;
+  right: -4px;
+  z-index: 1;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: var(--chat-panel);
+  color: var(--ink-muted);
+  cursor: pointer;
+  box-shadow: 0 6px 16px -8px rgba(0, 0, 0, 0.95);
+  transition: color var(--dur-fast) var(--ease),
+              background var(--dur-fast) var(--ease),
+              border-color var(--dur-fast) var(--ease);
+}
+/* 26px reads correctly beside the bubble but is under the 44px a thumb
+   wants. The visible circle stays small and the hit area is grown around
+   it instead, which costs nothing and misses nothing. */
+.chat__dismiss::before {
+  content: "";
+  position: absolute;
+  inset: -9px;
+}
+.chat__dismiss:hover {
+  color: var(--ink);
+  background: var(--chat-raised);
+  border-color: var(--chat-accent-line);
+}
+.chat__dismiss:focus-visible { outline: 2px solid var(--chat-accent); outline-offset: 2px; }
+.chat__dismiss svg { width: 13px; height: 13px; }
+
+/* --- the small button left behind --- */
+
+.chat__restore {
+  display: none;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--chat-accent-line);
+  background: var(--chat-panel);
+  color: var(--chat-accent);
+  cursor: pointer;
+  box-shadow: 0 14px 30px -16px rgba(0, 0, 0, 0.95);
+  transition: color var(--dur-fast) var(--ease),
+              background var(--dur-fast) var(--ease),
+              transform var(--dur-fast) var(--ease);
+}
+.chat__restore:hover { background: var(--chat-raised); transform: translateY(-2px); }
+.chat__restore:focus-visible { outline: 2px solid var(--chat-accent); outline-offset: 3px; }
+.chat__restore svg { width: 20px; height: 20px; }
+
+/* Hidden state: the mascot steps aside, the small button takes its place.
+   Customer help is never removed - only made smaller. */
+.chat[data-hidden="true"] .chat__dock { display: none; }
+.chat[data-hidden="true"] .chat__restore { display: grid; }
 
 /* =====================================================================
    1. CLOSED STATE - bubble above, mascot below
@@ -444,7 +559,11 @@
 /* Phones. The toast sits centre-bottom 30px up, so the launcher lifts clear
    of that band, and the panel takes the full width it can get. */
 @media (max-width: 560px) {
-  .chat { right: 12px; bottom: 14px; gap: 10px; }
+  .chat {
+    right: calc(12px + var(--chat-safe-r));
+    bottom: calc(14px + var(--chat-safe-b));
+    gap: 10px;
+  }
   .chat__mascot { height: 76px; }
   .chat__bubble { max-width: 12.5rem; font-size: 12.5px; padding: 9px 13px 10px; }
   .chat__bubble::after { right: 20px; }
@@ -464,7 +583,10 @@
 /* The narrowest phones still in real use. Everything has to fit at 320px
    with nothing clipped and the Send button still reachable by thumb. */
 @media (max-width: 380px) {
-  .chat { right: 10px; bottom: 12px; }
+  .chat {
+    right: calc(10px + var(--chat-safe-r));
+    bottom: calc(12px + var(--chat-safe-b));
+  }
   .chat__mascot { height: 66px; }
   .chat__bubble { max-width: 11rem; font-size: 12px; }
   .chat__panel { width: calc(100vw - 20px); }
@@ -497,9 +619,13 @@
   .chat__panel,
   .chat__bubble,
   .chat__close,
-  .chat__send {
+  .chat__send,
+  .chat__dock,
+  .chat__dismiss,
+  .chat__restore {
     transition-duration: 1ms !important;
   }
+  .chat__restore:hover { transform: none; }
   .chat__launcher:hover .chat__mascot,
   .chat__launcher:focus-visible .chat__mascot,
   .chat__launcher:active .chat__mascot,
