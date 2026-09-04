@@ -107,6 +107,7 @@
     renderDetail();
     renderColours({ resetSelection: true });
     focusCompareColumn(id);
+    followCompareAB(id);
 
     /* Bring the rail card into view when selection is driven from elsewhere. */
     var card = $('#material-rail .mat-card[data-material="' + id + '"]');
@@ -677,8 +678,50 @@
     });
 
     buildCompareAB(cols);
+    watchCompareInView();
     focusCompareColumn(state.materialId);
     observeMeters();
+  }
+
+  /*
+   * Flags the page while the comparison is the thing being read.
+   *
+   * On a phone the help mascot's speech bubble sits over the right-hand
+   * column of values - reported from a real handset, around Warranty. This
+   * publishes a single state class and stops there; what reacts to it is
+   * chat.css's business, so nothing here knows or cares how the chat is
+   * built. Removing that one CSS rule disables this with no change to the
+   * comparison.
+   *
+   * The class is set at every width. The rule that uses it is inside a
+   * mobile media query, so the media query stays the one place that decides
+   * where this applies.
+   *
+   * Nothing is written to storage and no chat state is touched: the bubble
+   * is suppressed while you are reading, and whatever the chat was doing
+   * resumes untouched when you leave.
+   */
+  var compareWatcher = null;
+  var compareAB = null;
+
+  function watchCompareInView() {
+    var section = $('#compare');
+    if (!section || compareWatcher) return;
+
+    if (!('IntersectionObserver' in window)) return;   /* no observer, no change */
+
+    /* The section is taller than a phone screen, so "in view" has to mean
+       more than grazing an edge. Shrinking the root to its middle half means
+       the section has to genuinely occupy the screen, and the enter and
+       leave points end up hundreds of pixels apart - far enough that
+       ordinary scrolling cannot flutter between them. */
+    compareWatcher = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        document.body.classList.toggle('compare-in-view', entry.isIntersecting);
+      });
+    }, { rootMargin: '-25% 0px -25% 0px', threshold: 0 });
+
+    compareWatcher.observe(section);
   }
 
   /*
@@ -700,11 +743,33 @@
     var selB = $('#compare-b');
     if (!wrap || !rowsBox || !selA || !selB) return;
 
-    /* Default to the first two, or to whatever the configurator is showing
-       so the two views agree when the customer arrives from the rail. */
+    /*
+     * The opening pair has to earn the section. Two painted-steel gauges
+     * differ by a few tenths of a millimetre and read as "why am I looking
+     * at this"; a painted steel against a solid metal shows in one screen
+     * what the tool is for.
+     *
+     * Side one follows the configurator so the two views agree when the
+     * customer arrives from the rail. Side two prefers copper, and failing
+     * that any material from a different `collection` - which is the
+     * category already in the data, so nothing here depends on the order
+     * the materials happen to be listed in.
+     */
     var current = state.materialId;
     var startA = cols.some(function (m) { return m.id === current; }) ? current : cols[0].id;
-    var startB = cols.filter(function (m) { return m.id !== startA; })[0].id;
+    var a = cols.filter(function (m) { return m.id === startA; })[0];
+
+    var preferred = cols.filter(function (m) { return m.id === 'copper' && m.id !== startA; })[0];
+    var differentKind = cols.filter(function (m) {
+      return m.id !== startA && m.collection !== a.collection;
+    })[0];
+    var anyOther = cols.filter(function (m) { return m.id !== startA; })[0];
+
+    var startB = (preferred || differentKind || anyOther).id;
+
+    /* Remembered so the two views can stay in step without ever overruling
+       the customer - see followCompareAB(). */
+    compareAB = { cols: cols, touched: false };
 
     [[selA, startA], [selB, startB]].forEach(function (pair) {
       var sel = pair[0];
@@ -713,7 +778,11 @@
         sel.appendChild(el('option', { value: m.id, text: m.name }));
       });
       sel.value = pair[1];
-      sel.onchange = renderCompareAB;
+      sel.onchange = function () {
+        /* From here on the pair is theirs, not the configurator's. */
+        if (compareAB) compareAB.touched = true;
+        renderCompareAB();
+      };
     });
 
     function byId(id) {
@@ -785,7 +854,38 @@
       });
     }
 
+    compareAB.render = renderCompareAB;
     renderCompareAB();
+  }
+
+  /*
+   * Keeps side one on whatever the configurator is showing, the way the
+   * desktop table highlights that material's column.
+   *
+   * It stops the moment the customer picks for themselves. Someone who has
+   * deliberately set up copper against zinc should not have it rearranged
+   * underneath them because they tapped a card in the rail afterwards.
+   */
+  function followCompareAB(id) {
+    if (!compareAB || compareAB.touched || !compareAB.render) return;
+
+    var selA = $('#compare-a');
+    var selB = $('#compare-b');
+    var cols = compareAB.cols;
+    if (!selA || !selB || !cols.some(function (m) { return m.id === id; })) return;
+
+    selA.value = id;
+
+    /* Side two only moves if side one has just landed on top of it, and then
+       by the same preference the opening pair used. */
+    if (selB.value === id) {
+      var a = cols.filter(function (m) { return m.id === id; })[0];
+      var next = cols.filter(function (m) { return m.id === 'copper' && m.id !== id; })[0] ||
+                 cols.filter(function (m) { return m.id !== id && m.collection !== a.collection; })[0] ||
+                 cols.filter(function (m) { return m.id !== id; })[0];
+      selB.value = next.id;
+    }
+    compareAB.render();
   }
 
   function focusCompareColumn(id) {

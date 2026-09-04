@@ -835,6 +835,11 @@
    --------------------------------------------------------------------- */
 .compare-ab { display: none; }
 
+/* The short lede belongs to the phone view, so it is hidden by default for
+   the same reason .compare-ab is: above 720px it does not apply. Only one of
+   the two is ever in the document flow. */
+.lede--narrow { display: none; }
+
 .compare-ab__picks {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -968,6 +973,10 @@
   /* The table and the A/B view are the same twelve attributes; showing
      both would be a duplicate, not a fallback. */
   .compare__scroll { display: none; }
+
+  /* Same swap for the two ledes. */
+  #compare .lede--wide { display: none; }
+  #compare .lede--narrow { display: block; }
 
   /* Sizes that hold up in a hand, not on a desk. The table's own values
      are left alone - these only apply inside the phone view. */
