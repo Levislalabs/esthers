@@ -16,7 +16,7 @@
 const H = require('./http.js');
 const {
   initAdmin, serverNow, ChatConfigError, ChatInitError,
-  DIAGNOSTIC_TOKENS, describeConfigShape
+  DIAGNOSTIC_TOKENS, describeConfigShape, describeRuntime
 } = require('./firebase-admin.js');
 const { AuthError, authenticateCustomer, authenticateStaff } = require('./auth.js');
 const { ValidationError } = require('./validation.js');
@@ -58,7 +58,7 @@ function respondToError(res, err, route) {
   if (err instanceof ChatConfigError || err instanceof RL.RateLimitConfigError ||
       (err && err.notConfigured)) {
     console.error('chat: not configured [' + route + '] ' + safeReason(err)
-      + ' ' + safeShape());
+      + ' ' + safeShape() + ' ' + safeRuntime());
     return H.fail(res, 503, 'not_configured',
       'Online messaging is temporarily unavailable.', { notConfigured: true });
   }
@@ -72,7 +72,7 @@ function respondToError(res, err, route) {
    */
   if (err instanceof ChatInitError) {
     console.error('chat: init failed [' + route + '] ' + safeReason(err)
-      + ' ' + safeShape());
+      + ' ' + safeShape() + ' ' + safeRuntime());
     return H.fail(res, 500, 'server_error',
       'Something went wrong at our end. Please try again.');
   }
@@ -96,6 +96,13 @@ function safeReason(err) {
    the diagnostic must not become the outage. */
 function safeShape() {
   try { return 'shape=' + describeConfigShape(); } catch (err) { return 'shape=unavailable'; }
+}
+
+/* The Node major version and which SDK modules loaded. All public facts -
+   nothing here is derived from a credential. This is what tells a missing
+   package apart from a package the runtime could not evaluate. */
+function safeRuntime() {
+  try { return 'runtime=' + describeRuntime(); } catch (err) { return 'runtime=unavailable'; }
 }
 
 /*

@@ -63,6 +63,15 @@ const DIAGNOSTIC_TOKENS = [
   'invalid_private_key_pem',
   'invalid_service_account_credential',
   'firebase_admin_module_missing',
+  /* Per-module, and telling "the package is not there" apart from "the
+     package is there and threw while loading". The old single token could
+     not distinguish those, and they have completely different fixes. */
+  'firebase_admin_app_not_found',
+  'firebase_admin_app_load_failed',
+  'firebase_admin_firestore_not_found',
+  'firebase_admin_firestore_load_failed',
+  'firebase_admin_auth_not_found',
+  'firebase_admin_auth_load_failed',
   'firebase_admin_invalid_app_options',
   'firebase_admin_initialize_failed',
   'firebase_firestore_initialize_failed',
@@ -105,6 +114,102 @@ class ChatInitError extends Error {
     this.reason = _assertToken(reason);
     this.notConfigured = !!configCaused;
   }
+}
+
+/* ------------------------------------------------------------------------
+ * THE SDK MODULES, LOADED AT MODULE SCOPE.
+ *
+ * Three require() calls with LITERAL specifiers, at the top level of the
+ * module. That is the most conventional and most reliably traceable position
+ * there is: Vercel bundles a function by static analysis of its dependency
+ * graph, and a literal specifier at module scope is the case every version of
+ * every bundler handles.
+ *
+ * LOADING THE LIBRARY NEEDS NO CREDENTIALS. Nothing here reads an
+ * environment variable, parses a key or contacts Google. initializeApp() and
+ * cert() still happen lazily, on the first request, inside initAdmin() - so a
+ * Preview deployment with no production secrets still BUILDS and still
+ * answers, failing closed with not_configured.
+ *
+ * Wrapped in try/catch, and each module separately, for two reasons:
+ *
+ *   1. An uncaught throw here would crash the function at cold start, before
+ *      any handler could run, and the platform's generic invocation failure
+ *      would tell us nothing. Recording it instead lets the first request
+ *      answer with a precise, allow-listed diagnostic.
+ *   2. The previous code loaded all three inside one wrapper whose FALLBACK
+ *      token was firebase_admin_module_missing. That token was therefore
+ *      emitted for a genuinely absent package AND for a package that was
+ *      present but threw while loading - two very different faults with two
+ *      very different fixes. Splitting them is the point.
+ *
+ * These are declared after DIAGNOSTIC_TOKENS on purpose: module scope runs
+ * top to bottom, and moduleFailure() consults that list.
+ * --------------------------------------------------------------------- */
+let sdkApp = null;
+let sdkFirestore = null;
+let sdkAuth = null;
+let sdkLoadFailure = null;      /* allow-listed token, or null */
+let sdkLoadCode = 'none';       /* allow-listed error-code class, or 'none' */
+
+/*
+ * Node's module-resolution error codes. Fixed constants from the runtime,
+ * not data of ours, so naming one in a log discloses nothing.
+ */
+const NOT_FOUND_CODES = [
+  'MODULE_NOT_FOUND', 'ERR_MODULE_NOT_FOUND', 'ERR_PACKAGE_PATH_NOT_EXPORTED',
+  'ERR_INVALID_MODULE_SPECIFIER', 'ERR_PACKAGE_IMPORT_NOT_DEFINED'
+];
+const OTHER_LOAD_CODES = ['ERR_REQUIRE_ESM', 'ERR_DLOPEN_FAILED', 'ERR_INVALID_ARG_TYPE'];
+
+try { sdkApp = require('firebase-admin/app'); }
+catch (err) { noteModuleFailure('app', err); }
+
+try { sdkFirestore = require('firebase-admin/firestore'); }
+catch (err) { noteModuleFailure('firestore', err); }
+
+try { sdkAuth = require('firebase-admin/auth'); }
+catch (err) { noteModuleFailure('auth', err); }
+
+function noteModuleFailure(which, err) {
+  const code = err && typeof err.code === 'string' ? err.code : '';
+  const name = err && typeof err.name === 'string' ? err.name : '';
+  const notFound = NOT_FOUND_CODES.indexOf(code) !== -1;
+
+  /* First failure wins: the later modules depend on the first, so a cascade
+     tells us less than the thing that actually broke. */
+  if (!sdkLoadFailure) {
+    sdkLoadFailure = 'firebase_admin_' + which + (notFound ? '_not_found' : '_load_failed');
+    /* An allow-listed classification of the error code - never the message. */
+    if (notFound || OTHER_LOAD_CODES.indexOf(code) !== -1) sdkLoadCode = code;
+    else if (name === 'SyntaxError') sdkLoadCode = 'syntax_error';
+    else sdkLoadCode = 'other';
+  }
+}
+
+/*
+ * The loaded SDK, or a precise failure.
+ *
+ * Note there is no require() in here at all any more: by the time a request
+ * arrives the modules are either loaded or known to have failed.
+ */
+function loadSdk() {
+  if (sdkLoadFailure) throw new ChatInitError(sdkLoadFailure, false);
+  return { app: sdkApp, firestore: sdkFirestore, auth: sdkAuth };
+}
+
+/*
+ * What the runtime looks like, for the log. Node's major version and which
+ * modules loaded - all public facts, none of them derived from a secret.
+ */
+function describeRuntime() {
+  const major = String((process.versions && process.versions.node) || '')
+    .split('.')[0].replace(/[^0-9]/g, '').slice(0, 3) || 'unknown';
+  return 'node:' + major
+    + ',sdk_app:' + (sdkApp ? '1' : '0')
+    + ',sdk_firestore:' + (sdkFirestore ? '1' : '0')
+    + ',sdk_auth:' + (sdkAuth ? '1' : '0')
+    + ',sdk_code:' + sdkLoadCode;
 }
 
 /*
@@ -311,11 +416,8 @@ function initAdmin(deps) {
    *
    * Nothing is caught and continued. Every branch rethrows.
    */
-  const sdk = (deps && deps.sdk) || stage('firebase_admin_module_missing', false, () => ({
-    app: require('firebase-admin/app'),
-    firestore: require('firebase-admin/firestore'),
-    auth: require('firebase-admin/auth')
-  }));
+  /* Already loaded at module scope, or a precise per-module failure. */
+  const sdk = (deps && deps.sdk) || loadSdk();
 
   /* A warm instance may already hold an app from a previous request. */
   const existing = stage('firebase_admin_initialize_failed', false,
@@ -375,7 +477,8 @@ function stage(fallbackReason, fallbackConfigCaused, fn) {
  * test can substitute a fixed clock without stubbing a module.
  */
 function serverNow() {
-  return require('firebase-admin/firestore').Timestamp.now();
+  if (!sdkFirestore) throw new ChatInitError(sdkLoadFailure || 'firebase_admin_firestore_not_found', false);
+  return sdkFirestore.Timestamp.now();
 }
 
 /* Tests only: drop the memoised app so a fresh configuration can be read. */
@@ -383,6 +486,7 @@ function _reset() { cached = null; }
 
 module.exports = {
   EXPECTED_PROJECT_ID, ENV, DIAGNOSTIC_TOKENS, SHAPE_FIELDS,
+  loadSdk, describeRuntime,
   ChatConfigError, ChatInitError,
   normalisePrivateKey, inspectPrivateKeyShape, inspectClientEmailShape,
   describeConfigShape, classifyInitError,
