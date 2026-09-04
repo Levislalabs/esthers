@@ -552,6 +552,32 @@ digits — no length, no count, no fragment of any value. Which structural check
 a *valid* key passes is already public knowledge, so this discloses nothing
 while saying exactly which check failed.
 
+Every diagnostic log also carries a runtime segment:
+
+```
+runtime=node:22,sdk_app:1,sdk_firestore:1,sdk_auth:1,sdk_code:none
+```
+
+Node's major version and which SDK modules loaded — all public facts, none
+derived from a credential. `sdk_code` is an allow-listed classification of the
+module-load error (`MODULE_NOT_FOUND`, `ERR_PACKAGE_PATH_NOT_EXPORTED`,
+`ERR_REQUIRE_ESM`, `syntax_error`, `other`, `none`), never a message.
+
+This exists because the first token the deployed diagnostics produced —
+`firebase_admin_module_missing` — was the *fallback* of a single wrapper
+around all three `require()` calls, so it meant either "the package is absent"
+**or** "the package is present and threw while loading". Those have completely
+different fixes. The three modules are now loaded separately at module scope
+and each reports its own token: `firebase_admin_app_not_found` versus
+`firebase_admin_app_load_failed`, and the same for `firestore` and `auth`.
+
+The SDK modules are loaded at **module scope** with literal specifiers, which
+is the position every bundler traces reliably. Loading the library needs no
+credentials — `initializeApp()` and `cert()` still happen lazily on the first
+request, so a Preview deployment without secrets still builds and still
+answers `not_configured`. The loads are wrapped in try/catch so a failure
+becomes a precise diagnostic rather than a cold-start crash with no log line.
+
 Three log prefixes, three meanings:
 
 | prefix | status | meaning |
