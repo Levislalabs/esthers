@@ -381,7 +381,12 @@ describe('fail closed without Firebase credentials', () => {
     };
   }
 
-  const GOOD_KEY = '-----BEGIN PRIVATE KEY-----\\nnot-a-real-key-placeholder\\n-----END PRIVATE KEY-----\\n';
+  /* Structurally a PEM - the body must be base64 or readConfig now refuses
+     it - but decodes to the ASCII text "NOT-A-REAL-KEY-placeholder-for-tests".
+     It is a credential for nothing. */
+  const GOOD_KEY = '-----BEGIN PRIVATE KEY-----\\n'
+    + 'Tk9ULUEtUkVBTC1LRVktcGxhY2Vob2xkZXItZm9yLXRlc3Rz\\n'
+    + '-----END PRIVATE KEY-----\\n';
   const goodEnv = () => ({
     FIREBASE_PROJECT_ID: FB.EXPECTED_PROJECT_ID,
     FIREBASE_CLIENT_EMAIL: 'placeholder@example.iam.gserviceaccount.test',
@@ -431,11 +436,12 @@ describe('fail closed without Firebase credentials', () => {
     const cases = [
       [{}, 'missing_project_id'],
       [{ FIREBASE_PROJECT_ID: FB.EXPECTED_PROJECT_ID }, 'missing_client_email'],
+      /* An address with no @ is now told apart from one that is absent. */
       [{ FIREBASE_PROJECT_ID: FB.EXPECTED_PROJECT_ID, FIREBASE_CLIENT_EMAIL: 'nope' },
-        'missing_client_email'],
+        'invalid_client_email_shape'],
       [{ FIREBASE_PROJECT_ID: FB.EXPECTED_PROJECT_ID,
         FIREBASE_CLIENT_EMAIL: 'placeholder@example.test' },
-        'missing_or_malformed_private_key']
+        'missing_private_key']
     ];
     for (const [env, reason] of cases) {
       const err = caught(() => FB.initAdmin({ env, sdk: admin.sdk }));

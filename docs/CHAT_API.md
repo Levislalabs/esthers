@@ -506,7 +506,11 @@ Two configuration failures are treated as reasons to refuse service, not to
 carry on:
 
 - **Missing or malformed Firebase credentials** → `initAdmin()` throws before
-  anything is initialised, and the route answers **503 `not_configured`**.
+  anything is initialised, and the route answers **503 `not_configured`** with
+  the body `Online messaging is temporarily unavailable.` The private key is
+  checked structurally (PEM header, footer, real newlines, base64 body) before
+  the SDK is touched, so "the variable never held a PEM" is told apart from
+  "the PEM looked right and crypto still refused it".
 - **Missing or too-short `CHAT_RATE_LIMIT_SECRET`** → mutating routes answer
   **503**. An unlimited chat endpoint is worse than an unavailable one.
   Read-only staff routes still work; refusing the inbox as well would take the
@@ -527,13 +531,46 @@ Initialisation is **lazy and cached**. Nothing touches Firebase at import
 time, so a Preview deployment without credentials still builds and still
 answers; the first request is what initialises, and a warm instance reuses it.
 
-### What is never logged
+### Diagnostics, and what is never logged
 
 No message body, no customer email, no Firebase ID token, no private key, no
-raw IP address. An unrecognised error logs its route and its error *name* and
-nothing more; a configuration error logs a short token such as
-`unexpected_project`. A test asserts that a rejected credential never travels
-inside the error that rejected it.
+raw IP address, and **no error message, stack or cause** — a test scans every
+`console.*` call in `api/_chat/` and fails if one interpolates raw error data.
+
+A log line carries only an **allow-listed token** from `DIAGNOSTIC_TOKENS` in
+`firebase-admin.js`, plus a value-free shape summary:
+
+```
+chat: not configured [chat/start] invalid_private_key_pem shape=pid:1,pid_ok:1,\
+email:1,email_ok:1,svcacct:1,key:1,key_begin:1,key_end:1,key_multiline:1,\
+key_body:0,secret:1
+```
+
+The shape is built from a fixed list of field names with `0`/`1` values, so by
+construction the only characters that can appear are those names and those two
+digits — no length, no count, no fragment of any value. Which structural checks
+a *valid* key passes is already public knowledge, so this discloses nothing
+while saying exactly which check failed.
+
+Three log prefixes, three meanings:
+
+| prefix | status | meaning |
+|---|---|---|
+| `chat: not configured` | 503 | the environment is wrong; fix it in Vercel |
+| `chat: init failed` | 500 | the SDK failed for a reason that is not the environment |
+| `chat: unhandled` | 500 | an unexpected runtime fault, also allow-listed |
+
+**Why this exists.** The first production deploy answered 500 and logged only
+`chat: unhandled [chat/start] Error`, which identified nothing. Two causes:
+firebase-admin's `FirebaseAppError` does **not** override `.name` — it is
+literally `"Error"` — and `respondToError()` recognised only this project's own
+`ChatConfigError`, so every SDK initialisation failure fell through to the
+generic branch. Each SDK call is now wrapped separately, so a failure names the
+stage it happened in, and known Firebase error codes map to tokens.
+
+A test asserts that a rejected credential never travels inside the error that
+rejected it: `ChatInitError` deliberately carries no `cause`, because a cause
+chain is exactly what a future edit stringifies into a log.
 
 ---
 
