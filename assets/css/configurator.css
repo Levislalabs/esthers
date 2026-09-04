@@ -992,11 +992,23 @@
   .compare__legend { font-size: 12.4px; gap: 10px 20px; }
 }
 
-/* Narrow phones: the two picker controls stop fitting side by side long
-   before the values do, so they stack while the comparison itself stays
-   two-up. Stacking the values would end the comparison. */
-@media (max-width: 389px) {
+/* Phones: the two picker controls stop fitting side by side long before the
+   values do, so they stack while the comparison itself stays two-up.
+   Stacking the values would end the comparison.
+
+   Half of a phone's width is not enough for a material name. Sharing 390px
+   between two controls leaves each about 169px, and once the swatch and the
+   caret have taken their 80px there is room for roughly eleven characters -
+   so "24 Gauge SMP Steel" was being cut to "24 Gauge SM". Full width per
+   control fixes that with no change to type size, touch height or the
+   native select. */
+@media (max-width: 430px) {
   .compare-ab__picks { grid-template-columns: 1fr; gap: 10px; }
+}
+
+/* Narrower still: tighten the spacing around the values themselves. The
+   pickers are already stacked by the rule above. */
+@media (max-width: 389px) {
   .compare-ab__pair { gap: 8px; }
   .compare-ab__value { padding: 9px 9px; }
   .compare-ab__names { gap: 8px; padding: 10px; }
