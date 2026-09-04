@@ -14,13 +14,20 @@
 'use strict';
 
 const H = require('./http.js');
-const { initAdmin, serverNow, ChatConfigError } = require('./firebase-admin.js');
+const {
+  initAdmin, serverNow, ChatConfigError, ChatInitError,
+  DIAGNOSTIC_TOKENS, describeConfigShape
+} = require('./firebase-admin.js');
 const { AuthError, authenticateCustomer, authenticateStaff } = require('./auth.js');
 const { ValidationError } = require('./validation.js');
 const { ServiceError } = require('./service.js');
 const RL = require('./rate-limit.js');
 
 const RATE_SECRET_ENV = 'CHAT_RATE_LIMIT_SECRET';
+
+/* RateLimitConfigError's token. It lives in rate-limit.js rather than the
+   firebase-admin allow-list, so safeReason() admits it explicitly. */
+const RATE_SECRET_REASON = 'missing_rate_limit_secret';
 
 /*
  * Errors are translated here, once. A handler never sends a Firebase message
@@ -38,21 +45,82 @@ function respondToError(res, err, route) {
   if (err instanceof ValidationError) return H.fail(res, err.status, err.code, err.message);
   if (err instanceof ServiceError) return H.fail(res, err.status, err.code, err.message);
 
-  /* Missing or malformed deployment configuration. 503, not 500: the request
-     was fine, the deployment is unfinished. The reason is a short token and
-     never contains any part of a credential. */
+  /*
+   * Missing or malformed deployment configuration. 503, not 500: the request
+   * was fine, the deployment is unfinished. The reason is an allow-listed
+   * token from firebase-admin.js and can never contain part of a credential.
+   *
+   * The shape suffix is a fixed set of field names with 0/1 values and
+   * nothing else, so it says WHICH structural check failed without
+   * disclosing any value. It is what turns "not configured" into something
+   * actionable from a production log alone.
+   */
   if (err instanceof ChatConfigError || err instanceof RL.RateLimitConfigError ||
       (err && err.notConfigured)) {
-    console.error('chat: not configured [' + route + '] ' + (err.reason || 'unknown'));
+    console.error('chat: not configured [' + route + '] ' + safeReason(err)
+      + ' ' + safeShape());
     return H.fail(res, 503, 'not_configured',
-      'Online messaging is not available just now.', { notConfigured: true });
+      'Online messaging is temporarily unavailable.', { notConfigured: true });
   }
 
-  /* Anything else. Log the shape, never the content: no message body, no
-     email address, no token, no address. */
-  console.error('chat: unhandled [' + route + '] ' + (err && err.name ? err.name : 'Error'));
+  /*
+   * The SDK failed for a reason that is NOT the environment's fault - a
+   * missing module, a bad app option, this code being wrong. Still a 500,
+   * but with a token that says which stage died instead of the bare word
+   * "Error", which is all the previous version could manage: every
+   * firebase-admin error carries name === 'Error'.
+   */
+  if (err instanceof ChatInitError) {
+    console.error('chat: init failed [' + route + '] ' + safeReason(err)
+      + ' ' + safeShape());
+    return H.fail(res, 500, 'server_error',
+      'Something went wrong at our end. Please try again.');
+  }
+
+  /* Anything else. An allow-listed token only - never err.message, never
+     err.stack, never err.cause, never the error object. */
+  console.error('chat: unhandled [' + route + '] ' + classifyRuntimeError(err));
   return H.fail(res, 500, 'server_error',
     'Something went wrong at our end. Please try again.');
+}
+
+/* Only ever an allow-listed token. An unrecognised reason is replaced, not
+   printed, so a future error class cannot smuggle text into the log. */
+function safeReason(err) {
+  const reason = err && typeof err.reason === 'string' ? err.reason : '';
+  if (reason === RATE_SECRET_REASON) return reason;
+  return DIAGNOSTIC_TOKENS.indexOf(reason) === -1 ? 'unknown_initialization_error' : reason;
+}
+
+/* describeConfigShape() reads process.env structurally. If it ever throws,
+   the diagnostic must not become the outage. */
+function safeShape() {
+  try { return 'shape=' + describeConfigShape(); } catch (err) { return 'shape=unavailable'; }
+}
+
+/*
+ * A closed vocabulary for unexpected runtime failures.
+ *
+ * err.name is NOT logged directly. It is usually harmless, but it is
+ * attacker- and library-influenced text, and the whole point of this file is
+ * that nothing unvetted reaches a log line.
+ */
+const RUNTIME_TOKENS = {
+  TypeError: 'runtime_type_error',
+  RangeError: 'runtime_range_error',
+  ReferenceError: 'runtime_reference_error',
+  SyntaxError: 'runtime_syntax_error',
+  ChatConfigError: 'unknown_initialization_error',
+  ChatInitError: 'unknown_initialization_error'
+};
+
+function classifyRuntimeError(err) {
+  if (!err) return 'unknown_error';
+  const name = typeof err.name === 'string' ? err.name : '';
+  if (Object.prototype.hasOwnProperty.call(RUNTIME_TOKENS, name)) return RUNTIME_TOKENS[name];
+  /* A Firestore/gRPC failure arrives with a numeric code and name 'Error'. */
+  if (typeof err.code === 'number') return 'firestore_call_failed';
+  return 'unknown_error';
 }
 
 /*
