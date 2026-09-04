@@ -71,6 +71,27 @@ node_modules/
 # ---------------------------------------------------------------------
 assets/img/work/*.jpg
 
+# ---------------------------------------------------------------------
+# Firebase configuration and the Firestore rules tests.
+#
+# These are repository files, not website files. firestore.rules and
+# firestore.indexes.json are deployed to Firebase by a deliberate,
+# separate step - never by the web deploy - and publishing them would
+# hand a stranger a precise map of the chat data model and of exactly
+# which reads are permitted. tests/ is development tooling.
+#
+# Nothing here is needed to render a page.
+# ---------------------------------------------------------------------
+firestore.rules
+firestore.indexes.json
+firebase.json
+.firebaserc
+.firebase/
+tests/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
 # This file itself. It names the paths it holds back, which is a map
 # worth not handing out, and it is of no use to a browser.
 .vercelignore

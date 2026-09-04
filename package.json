@@ -2,7 +2,15 @@
   "name": "esthers-site",
   "private": true,
   "description": "Server-side dependencies for the quote-request API functions. The website itself is plain HTML, CSS and JavaScript with no build step.",
+  "scripts": {
+    "test:firestore-rules": "firebase emulators:exec --only firestore --project demo-esthers-rules \"node --test tests/firestore-rules/rules.test.mjs\""
+  },
   "dependencies": {
     "@vercel/blob": "^2.8.0"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "5.0.2",
+    "firebase": "12.18.0",
+    "firebase-tools": "15.29.0"
   }
 }

@@ -1,0 +1,178 @@
+rules_version = '2';
+
+// =========================================================================
+// Esther's Sheet Metal - customer messaging
+// Cloud Firestore Security Rules
+//
+// PROJECT esther-s-chat   REGION northamerica-northeast2 (Toronto)
+//
+// -------------------------------------------------------------------------
+// WHAT THIS FILE IS, AND WHAT IT IS NOT
+//
+// These rules govern DIRECT ACCESS FROM A BROWSER ONLY, through the
+// Firebase client SDK. They do not, and cannot, constrain the server:
+// the Firebase Admin SDK used by the Vercel API BYPASSES Security Rules
+// entirely. That is by design and it is the whole shape of the system.
+//
+//   customer WRITE  ->  Vercel /api/chat/*        -> Admin SDK -> Firestore
+//   customer READ   ->  Firestore listener, DIRECT, governed by this file
+//   staff  READ+WRITE-> Vercel /api/admin/chat/*  -> Admin SDK -> Firestore
+//
+// So this file has exactly one job: guarantee that the only thing any
+// browser can ever do to chat data is READ A CONVERSATION IT OWNS. Every
+// write, and every byte of staff access, is somebody else's problem -
+// specifically the Vercel API's, which is the sole authorization boundary
+// for those paths.
+//
+// -------------------------------------------------------------------------
+// WHY ANONYMOUS AUTH RATHER THAN A BEARER TOKEN
+//
+// A customer never signs in. Firebase Anonymous Auth mints them a UID,
+// and that UID - request.auth.uid, asserted by Firebase, not by the page -
+// is the identity a conversation is owned by. A conversation id remains a
+// plain identifier: knowing one grants nothing at all.
+//
+// -------------------------------------------------------------------------
+// WHY "request.auth != null" IS NOT ENOUGH
+//
+// Esther's staff have real Email/Password accounts in the same Firebase
+// project. A rule that admitted any signed-in user would hand every staff
+// member direct database access, which is precisely what the API-mediated
+// design refuses to do. So the customer rules test the SIGN-IN PROVIDER,
+// not merely the presence of a session.
+// =========================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------------------------------------------------------- who
+
+    // A customer, and only a customer. An Email/Password session - which
+    // is what every member of Esther's staff holds - fails this, so staff
+    // get nothing directly from these rules. Their access is the Vercel
+    // API's to grant, after it has checked staff/{uid}.isActive.
+    function isAnonymousCustomer() {
+      return request.auth != null
+          && request.auth.token.firebase.sign_in_provider == 'anonymous';
+    }
+
+    // Does the caller own the conversation this document belongs to?
+    //
+    // The isAnonymousCustomer() test is deliberately FIRST. Rules
+    // short-circuit, so an unauthenticated visitor or a staff account is
+    // rejected before the get() below is ever reached - which keeps the
+    // dependent read (see the note at the foot of this file) off the
+    // common rejection paths entirely.
+    function ownsConversation(conversationId) {
+      return isAnonymousCustomer()
+          && conversationOwner(conversationId) == request.auth.uid;
+    }
+
+    // Split out so the get() appears exactly once. get() on a document
+    // that does not exist returns null, and null.data would abort rule
+    // evaluation - which denies, but noisily. Checking explicitly keeps a
+    // deleted or mistyped conversation an ordinary, quiet refusal.
+    function conversationOwner(conversationId) {
+      return exists(/databases/$(database)/documents/chatConversations/$(conversationId))
+        ? get(/databases/$(database)/documents/chatConversations/$(conversationId)).data.customerUid
+        : null;
+    }
+
+    // ------------------------------------------------------ conversations
+
+    match /chatConversations/{conversationId} {
+
+      // GET only, and only your own. This is what makes a realtime
+      // listener on one conversation document work: onSnapshot of a
+      // single document is authorized as a `get`.
+      allow get: if isAnonymousCustomer()
+                 && resource.data.customerUid == request.auth.uid;
+
+      // LIST is refused outright.
+      //
+      // A customer never needs to enumerate conversations - the browser
+      // already holds the one id it started. Denying list means no query
+      // over this collection can succeed at all, so the collection cannot
+      // be walked, counted, or sampled, not even for documents the caller
+      // happens to own.
+      allow list: if false;
+
+      // Every write goes through the Vercel API. No exceptions, including
+      // for the customer who owns the row.
+      allow create, update, delete: if false;
+    }
+
+    // ----------------------------------------------------------- messages
+
+    match /chatMessages/{messageId} {
+
+      // Read your own conversation's transcript, live.
+      //
+      // Firestore evaluates this rule against EVERY document a query would
+      // return, and rules are not filters: if one returned document fails,
+      // the entire query fails. So a query that reaches across
+      // conversations is refused as a whole, and the only queries that can
+      // succeed are ones confined to a conversation the caller owns.
+      //
+      // `get` is listed alongside `list` so a direct read of one message
+      // is held to the identical ownership test.
+      allow get, list: if ownsConversation(resource.data.conversationId);
+
+      // Append-only, from the browser's point of view: it cannot append.
+      // The transcript is written solely by the Vercel API, which sets
+      // senderType and any staff author from a verified session and never
+      // from a request body.
+      allow create, update, delete: if false;
+    }
+
+    // -------------------------------------------------------------- staff
+
+    // The staff allow-list. Read server-side by the Vercel API with the
+    // Admin SDK, which bypasses these rules; no browser has any business
+    // here. Denying read as well as write means the team cannot be
+    // enumerated even by someone holding a valid staff session.
+    match /staff/{staffUid} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------- internal plumbing
+
+    // Server-side rate-limit counters. No personal data (the visitor's IP
+    // is hashed before it becomes a key), and no reason for a browser to
+    // see them - reading them would reveal how close an attacker is to a
+    // limit.
+    match /chatRateLimits/{bucket} {
+      allow read, write: if false;
+    }
+
+    // ------------------------------------------------------ default deny
+
+    // Anything not named above, including any collection added later,
+    // is refused. A new collection is therefore private the moment it
+    // exists, and stays private until somebody deliberately writes a rule
+    // for it in this file.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+
+// =========================================================================
+// NOTE ON THE DEPENDENT READ, AND WHAT IT COSTS
+//
+// ownsConversation() performs a get() against chatConversations. In
+// Firestore that is an "access call": it is billed as a document read,
+// and it counts against the per-request access-call limit.
+//
+// The saving grace is that access calls are CACHED PER REQUEST by
+// identical path. Every message in one properly-scoped query resolves the
+// same conversation path, so a query returning fifty messages performs
+// ONE dependent read, not fifty. tests/firestore-rules/rules.test.mjs
+// proves this empirically against the emulator with a 60-document query -
+// see "access-call limit" there. Had it not held, this construction would
+// have been unusable and the ownership check would have had to move onto
+// the message documents themselves.
+//
+// Budget accordingly: a customer's realtime transcript query costs
+// N message reads + 1 conversation read.
+// =========================================================================
