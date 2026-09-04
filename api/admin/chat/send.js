@@ -21,14 +21,24 @@ const OPTIONS = {
   needsRateSecret: true,
   run: async (ctx) => {
     const input = V.validateSend(ctx.body);
-
-    await RL.consume(ctx.db, 'staff_write', ctx.actor.uid, ctx.rateSecret);
-
-    const result = await S.sendStaffMessage(ctx.db, ctx.deps, {
+    const request = {
       conversationId: input.conversationId,
       message: input.message,
       clientMessageId: input.clientMessageId
-    });
+    };
+
+    /* Same as the customer route: a proven replay spends the replay
+       allowance, a new reply spends the staff-write allowance. */
+    const replay = await S.peekMessage(ctx.db, request);
+    if (replay) {
+      await RL.consume(ctx.db, 'replay_uid', ctx.actor.uid, ctx.rateSecret);
+      return H.ok(ctx.res,
+        { messageId: replay.messageId, conversationId: input.conversationId });
+    }
+
+    await RL.consume(ctx.db, 'staff_write', ctx.actor.uid, ctx.rateSecret);
+
+    const result = await S.sendStaffMessage(ctx.db, ctx.deps, request);
 
     return H.ok(ctx.res, { messageId: result.messageId, conversationId: input.conversationId });
   }

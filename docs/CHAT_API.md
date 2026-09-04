@@ -40,8 +40,8 @@ Two consequences worth keeping in mind:
 ## 2. File layout
 
 Vercel does not route anything under `api/` whose name begins with an
-underscore, which is how `api/_lib.js` already works in production. So
-`api/_chat/` is shared code, not endpoints.
+underscore. `api/_chat/` is shared code, not endpoints — see §2a for the
+proof, which does not rest on analogy with the existing `api/_lib.js`.
 
 ```
 api/
@@ -65,6 +65,68 @@ api/
 
 `api/_chat/` **must not** be added to `.vercelignore` — the endpoints require
 it at runtime. `tests/` and `docs/` are excluded and should stay that way.
+
+---
+
+## 2a. Proof that the helpers are not routable
+
+`api/_lib.js` has an underscore-prefixed **file** basename. The chat helpers
+have ordinary basenames inside an underscore-prefixed **directory**, which is
+a different rule, so the existing file proves nothing about them by analogy.
+
+The question was settled against Vercel's own detection library —
+`@vercel/fs-detectors`, the package the Vercel CLI uses to decide which files
+under `api/` become Serverless Functions. It was fed this repository's real
+`git ls-files` output, its real `package.json` and its real `vercel.json`,
+plus one fabricated `api/negative-control.js` as a control.
+
+Result:
+
+```
+builders produced for api/:
+  api/admin/chat/close.js          api/chat/send.js
+  api/admin/chat/conversations.js  api/chat/start.js
+  api/admin/chat/messages.js       api/quote.js
+  api/admin/chat/send.js           api/upload-token.js
+  api/negative-control.js     <- control WAS detected
+builders for api/_chat/**:  NONE
+routes mentioning _chat:    []
+errors: null   warnings: []
+```
+
+The control was detected, so the detector was discriminating rather than
+returning nothing. Neither `api/_chat/*` nor `api/_lib.js` produces a builder,
+and no generated route mentions `_chat`. The static builder's pattern excludes
+all of `api/**`, so these files are not served as static assets either — they
+are pulled into the function bundles by dependency tracing, exactly as
+`api/_lib.js` already is.
+
+Reproduce with `@vercel/fs-detectors` 7.2.1 and `detectBuilders()`. This should
+be re-checked if the project ever moves to a Vercel build pipeline that
+resolves `api/` differently.
+
+---
+
+## 2b. Node runtime — a hard pre-deployment requirement
+
+`firebase-admin@14.3.0` declares `engines: { "node": ">=22" }`.
+
+**This repository does not currently guarantee that.** `package.json` has no
+`engines` field and `vercel.json` declares no `functions.runtime`, so the
+runtime is whatever the Vercel project setting says.
+
+> **Before the chat API is enabled, Esther's Vercel project must be set to
+> Node 22.x or 24.x.** Verify it in Project → Settings → Node.js Version.
+
+No runtime declaration was added here, because adding `engines.node` to
+`package.json` changes how Vercel selects the runtime for the **whole**
+project, including the working quote and upload endpoints — that is a
+production change and belongs in a deliberate step, not smuggled into a
+hardening pass.
+
+For the record, pinning `>=22` later would not break anything currently
+deployed: `@vercel/blob` requires `>=20` and `@google-cloud/firestore`
+requires `>=18`, so Node 22 satisfies every dependency the quote flow uses.
 
 ---
 
@@ -223,7 +285,12 @@ server-only collection, not on the message.
 `customerUid` (from the verified token, never the body), `customerName`,
 `customerEmail`, `status`, `createdAt`, `updatedAt`, `lastMessageAt`,
 `messageCount`, `closedAt`, `staffLastReadAt`, `customerLastReadAt`,
-`staffNotifiedAt`.
+`staffNotifiedAt`, `startRequestHash`.
+
+A conversation document is server-private — the deployed rules let a customer
+read their own, but nothing here is secret from its own owner, and
+`publicConversation()` serialises an explicit allow-list that excludes both
+`customerUid` and `startRequestHash`.
 
 ---
 
@@ -233,6 +300,13 @@ server-only collection, not on the message.
 origins, **or** matches the host actually serving the request. Matching
 against the request's own host is what lets a Vercel Preview deployment work
 without anybody enumerating preview hostnames.
+
+Matching is on the whole host, never a prefix or suffix, so
+`www.esthers.ca.attacker.example` is refused. The scheme is compared too — the
+same host over a different scheme is a different origin — with `http` accepted
+only for a local development hostname, where there is no TLS to speak of. The
+URL parser normalises a default port away, so `https://www.esthers.ca:443` and
+`www.esthers.ca` match while `:8443` does not.
 
 A request with **no** `Origin` header is allowed through this gate. That is
 not a trust decision: a browser attaches `Origin` to every cross-origin
@@ -248,8 +322,11 @@ willing to do with them.
 
 ## 8. Idempotency
 
-A retried request must not append a second copy of the same message — a
-flaky connection should not double-post to the shop's inbox.
+A retried request must not append a second copy of the same message, or open
+a second conversation — a flaky connection should not double-post to the
+shop's inbox.
+
+### Messages
 
 The client generates a UUIDv4 `clientMessageId`. The server derives the
 Firestore document id from it:
@@ -274,6 +351,105 @@ A duplicate returns success with the same `messageId` and does **not**
 increment `messageCount` — counting it twice is the exact bug idempotency
 exists to prevent.
 
+### Conversations — and the defect this replaced
+
+The message id above is only idempotent if the conversation id is stable.
+It was not. `startConversation()` originally used a random Firestore auto-id:
+
+```js
+const convRef = db.collection(CONVERSATIONS).doc();   // fresh id every call
+```
+
+which fed a fresh message id on every attempt, which meant the duplicate check
+inside the transaction was unreachable dead code. A customer whose response
+was dropped opened a **second conversation** and appeared twice in the inbox.
+
+The conversation id is now derived:
+
+```
+conversationId = sha256("esthers:chat:conversation:v1" \0 uid \0 clientMessageId)
+                 -> first 32 hex
+```
+
+The uid comes from the **verified token**, never the body, so one visitor
+cannot derive another's conversation id. Nothing identifying goes into the
+hash — no name, no email, no message body. The id is **not** a credential and
+is not treated as one: ownership is checked against `customerUid` on every
+read and write, and the deployed rules do the same.
+
+### The same key with a different payload
+
+Reusing one `clientMessageId` for a genuinely different request is neither a
+retry nor a new conversation. Creating a second conversation would defeat the
+key; overwriting the first would silently discard a message somebody sent. So
+neither happens and the caller gets **409 `idempotency_conflict`**.
+
+To tell the two apart, the conversation carries `startRequestHash` — a SHA-256
+of the canonicalised name, email and first message. It lives on the
+**conversation**, which is server-private and never serialised by
+`publicConversation()`; putting it on a message would break §6.
+
+Canonicalisation means casing in an address and doubled spaces in a name are
+treated as the same request typed twice, not a conflict.
+
+### Atomicity and races
+
+The create is one transaction, so there is never a conversation without its
+first message or a message without its conversation. The duplicate check is
+repeated **inside** the transaction, which is what makes simultaneous
+identical starts safe: the loser of the race retries, sees the document and
+returns it. A test fires six concurrent identical starts and asserts exactly
+one conversation and one message result.
+
+### Rate-limit accounting for retries
+
+A proven replay spends a separate `replay_uid` allowance instead of the
+`start_*` or `send_*` allowance, so a dropped response does not cost the
+customer their ability to send real messages. This is decided by a cheap
+read-only pre-check; correctness never depends on it, because the transaction
+repeats the check.
+
+A **new** message or conversation never takes that path, so an invented
+idempotency key cannot be used to skip the ordinary limits.
+
+**Known limit:** the replay discount can only apply once something is stored.
+Callers racing *simultaneously*, before the first write lands, are
+indistinguishable from callers opening new conversations, and each spends a
+start allowance — some are refused with 429. Sequential retries, which is what
+a dropped response actually produces, take the replay path. No duplicate data
+is created in either case, and there is a test for it.
+
+---
+
+## 8a. Client address, and which header is trusted
+
+Extraction order, first value that parses as an IP address wins:
+
+1. `x-vercel-forwarded-for` — set by Vercel's edge, not supplyable by a caller
+2. `x-forwarded-for` — also overwritten (not appended to) by Vercel, but a
+   header every proxy in the world writes, so it is the fallback
+3. `x-real-ip`
+4. the socket address, which no client can forge
+
+A candidate that does not parse is **skipped, not used**. Taking the left-most
+element of an attacker-supplied comma list and storing whatever it contains is
+the classic version of this bug; every candidate must survive Node's
+`net.isIP()` first, and a header full of nonsense falls through to the next
+source. `::ffff:1.2.3.4` is folded to `1.2.3.4` so one caller does not get two
+allowances, and a `host:port` or `[v6]:port` form is unwrapped.
+
+`cf-connecting-ip` is **not** consulted. This project's topology does not
+currently include a proxy that sets it, and trusting a header no trusted hop
+writes is exactly how spoofing works.
+
+**Operational caveat.** This ordering describes traffic reaching Vercel
+directly — DNS-only, including Cloudflare in DNS-only mode. If Esther's
+production traffic is ever put behind another reverse proxy *in front of*
+Vercel, the effective client-IP semantics must be re-verified before these
+headers are trusted: a proxy that appends rather than overwrites changes which
+element of the chain is the real client. No DNS or Cloudflare change was made
+as part of this work.
+
 ---
 
 ## 9. Rate limiting, and why no raw IP is stored
@@ -291,6 +467,7 @@ observe the same counter.
 | `send_uid` | 20 | 60 s | customer message, per anonymous uid |
 | `send_ip` | 60 | 60 s | customer message, per hashed address |
 | `staff_write` | 60 | 60 s | staff reply or close, per staff uid |
+| `replay_uid` | 120 | 60 s | a **proven replay** of something already stored |
 
 Both a uid limit and an address limit exist because a browser can mint a fresh
 Anonymous Auth uid whenever it likes. A per-uid limit alone stops an honest
@@ -405,7 +582,7 @@ service-account key, no real staff password, and the production project is
 never named as a target.
 
 ```
-npm run test:chat-api        # 98 tests, Firestore emulator
+npm run test:chat-api        # 144 tests, Firestore emulator
 npm run test:firestore-rules # 67 tests, the Phase 1 rules
 npm test                     # both
 ```
@@ -415,11 +592,15 @@ the real auth code path with a stand-in verifier. Each test file gets its own
 `demo-` namespace, because `node --test` runs files in parallel and the
 teardown deletes whole collections.
 
-The suite was checked by deliberately regressing the code and confirming it
-goes red — removing the ownership check, adding a `staffUserId` to a message,
-dropping the anonymous-provider check, making the rate-limit secret fall back
-to a default, relaxing `isActive` to truthy, and removing the project guard
-each produced failures.
+The suite is checked by deliberately regressing the code and confirming it
+goes red. Each of these produced failures: removing the ownership check;
+adding a `staffUserId` to a message; dropping the anonymous-provider check;
+making the rate-limit secret fall back to a default; relaxing `isActive` to
+truthy; removing the project guard; reverting the conversation id to a random
+auto-id; removing the payload-conflict check; consulting `x-forwarded-for`
+ahead of the Vercel header; removing IP validation; removing the same-origin
+scheme check; putting a window number back in the rate-limit document id; and
+removing the ownership check from the replay pre-check.
 
 ---
 
@@ -453,6 +634,10 @@ copy the three fields into the Vercel dashboard and delete the file.
   transaction: a notification failing must never decide whether the
   customer's message was saved.
 - **Retention / cleanup.** Nothing is deleted, including rate-limit documents,
-  which carry `updatedAt` in plain milliseconds for a future sweep.
+  which carry `updatedAt` in plain milliseconds for a future sweep. Note that
+  no cleanup job is *needed* to bound `chatRateLimits`: the window start lives
+  inside the document, so one identity keeps exactly one document per scope
+  forever rather than accumulating one per window. A test drives fifty
+  consecutive windows and asserts a single document remains.
 - **Read receipts.** `staffLastReadAt` and `customerLastReadAt` exist on the
   conversation and are never written by this API.

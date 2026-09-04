@@ -71,6 +71,59 @@ function messageId(conversationId, clientMessageId) {
     .slice(0, 40);
 }
 
+/*
+ * THE CONVERSATION ID IS DERIVED, NOT RANDOM.
+ *
+ * This is what makes /api/chat/start idempotent, and it is the one thing a
+ * random Firestore auto-id cannot do. With an auto-id, a retried start minted
+ * a fresh conversation id, which fed a fresh message id, which meant the
+ * duplicate check inside the transaction could never fire - so a customer
+ * whose response was dropped by a flaky connection opened a SECOND
+ * conversation, and Esther's inbox showed the same person twice.
+ *
+ * Deriving the id from the verified uid and the client's idempotency key
+ * makes the retry land on the same document, where it can be recognised.
+ *
+ * The uid comes from the VERIFIED token, never from the request body, so one
+ * visitor cannot derive another visitor's conversation id. The domain string
+ * keeps this hash from ever colliding with the message-id hash below, and NUL
+ * separates the parts because neither a uid nor a UUID can contain one.
+ *
+ * The id is NOT a credential and is not treated as one: ownership is checked
+ * against customerUid on every read and write, and the deployed rules do the
+ * same. Nothing identifying goes into it - no name, no email, no message.
+ */
+const START_ID_DOMAIN = 'esthers:chat:conversation:v1';
+
+function startConversationId(customerUid, clientMessageId) {
+  return crypto.createHash('sha256')
+    .update(START_ID_DOMAIN + '\0' + customerUid + '\0' + clientMessageId)
+    .digest('hex')
+    .slice(0, 32);
+}
+
+/*
+ * A fingerprint of what the customer actually asked for, so the same
+ * idempotency key used with a DIFFERENT payload can be told apart from an
+ * honest retry. Stored on the conversation, which is server-private - never
+ * on a message, which is customer-readable and fixed at four fields.
+ *
+ * Canonicalised first: a name that differs only in spacing, or an address
+ * that differs only in case, is the same request typed twice, not a
+ * conflicting one.
+ */
+const START_HASH_DOMAIN = 'esthers:chat:start-request:v1';
+
+function startRequestHash(input) {
+  const canonical = [
+    START_HASH_DOMAIN,
+    String(input.name || '').trim().replace(/\s+/g, ' '),
+    String(input.email || '').trim().toLowerCase(),
+    String(input.message || '')
+  ].join('\0');
+  return crypto.createHash('sha256').update(canonical).digest('hex');
+}
+
 /* The only constructor for a message document. Four fields, no exceptions. */
 function buildMessage(conversationId, senderType, body, now) {
   return {
@@ -94,12 +147,19 @@ function buildMessage(conversationId, senderType, body, now) {
  */
 async function startConversation(db, deps, input) {
   const now = deps.now();
-  const convRef = db.collection(CONVERSATIONS).doc();
-  const msgRef = db.collection(MESSAGES).doc(messageId(convRef.id, input.clientMessageId));
+  const conversationId = startConversationId(input.customerUid, input.clientMessageId);
+  const convRef = db.collection(CONVERSATIONS).doc(conversationId);
+  const msgRef = db.collection(MESSAGES).doc(messageId(conversationId, input.clientMessageId));
+  const requestHash = startRequestHash(input);
 
-  await db.runTransaction(async (tx) => {
-    const existing = await tx.get(msgRef);
-    if (existing.exists) return;         /* a retry; nothing more to do */
+  return db.runTransaction(async (tx) => {
+    const conv = await tx.get(convRef);
+
+    /* The authoritative duplicate check. peekStart() below does the same
+       check first without a transaction, to save the rate-limit allowance,
+       but this one is what makes two SIMULTANEOUS identical starts safe: the
+       loser of the race retries, sees the document, and returns it. */
+    if (conv.exists) return resolveExistingStart(conv, input, msgRef.id, requestHash);
 
     tx.set(convRef, {
       customerUid: input.customerUid,    /* from the verified token, never the body */
@@ -113,12 +173,89 @@ async function startConversation(db, deps, input) {
       closedAt: null,
       staffLastReadAt: null,
       customerLastReadAt: null,
-      staffNotifiedAt: null
+      staffNotifiedAt: null,
+      /* Server-private. A conversation document is never readable by a
+         browser and publicConversation() does not serialise this. */
+      startRequestHash: requestHash
     });
-    tx.set(msgRef, buildMessage(convRef.id, 'customer', input.message, now));
-  });
+    tx.set(msgRef, buildMessage(conversationId, 'customer', input.message, now));
 
-  return { conversationId: convRef.id, messageId: msgRef.id, status: 'open' };
+    return { conversationId: conversationId, messageId: msgRef.id, status: 'open',
+      duplicate: false };
+  });
+}
+
+/*
+ * What an already-existing conversation means for this start request.
+ *
+ * Shared by the pre-check and the transaction so the two can never disagree
+ * about whether something is a retry, a conflict or somebody else's thread.
+ */
+function resolveExistingStart(conv, input, existingMessageId, requestHash) {
+  const data = conv.data() || {};
+
+  /* The id is derived from the uid, so a mismatch here is not a normal
+     situation. Answer exactly as if the conversation did not exist. */
+  if (data.customerUid !== input.customerUid) throw notFoundForCustomer();
+
+  /*
+   * Same key, different request. Creating a second conversation would defeat
+   * the idempotency key, and overwriting the first would silently discard a
+   * message somebody actually sent - so neither happens and the caller is
+   * told plainly.
+   */
+  if (data.startRequestHash !== requestHash) {
+    throw new ServiceError(409, 'idempotency_conflict',
+      'That request was already used to start a different conversation.');
+  }
+
+  return {
+    conversationId: conv.id,
+    messageId: existingMessageId,
+    status: data.status || 'open',
+    duplicate: true
+  };
+}
+
+/*
+ * A read-only look for an already-stored start, so a retry does not spend the
+ * customer's allowance for NEW conversations. Returns null when this is a
+ * genuinely new request, in which case the caller must rate limit normally.
+ *
+ * Correctness does not rest on this: startConversation() repeats the check
+ * inside its transaction. This only decides which rate-limit bucket is used.
+ */
+async function peekStart(db, input) {
+  const conversationId = startConversationId(input.customerUid, input.clientMessageId);
+  const conv = await db.collection(CONVERSATIONS).doc(conversationId).get();
+  if (!conv.exists) return null;
+  return resolveExistingStart(conv, input,
+    messageId(conversationId, input.clientMessageId), startRequestHash(input));
+}
+
+/*
+ * The same idea for a message send: is this exact message already stored?
+ *
+ * The conversation is checked too, so a caller who guessed an id cannot use
+ * this to learn whether somebody else's message exists. Returns null when the
+ * message is new, and the caller then rate limits normally.
+ */
+async function peekMessage(db, input) {
+  const msgRef = db.collection(MESSAGES)
+    .doc(messageId(input.conversationId, input.clientMessageId));
+  const msg = await msgRef.get();
+  if (!msg.exists) return null;
+
+  const conv = await db.collection(CONVERSATIONS).doc(input.conversationId).get();
+  if (!conv.exists) return null;
+  const data = conv.data() || {};
+
+  /* customerUid is only supplied for the customer route. Staff are authorised
+     for every conversation, so there is nothing to compare for them. */
+  if (input.customerUid !== undefined && data.customerUid !== input.customerUid) {
+    throw notFoundForCustomer();
+  }
+  return { messageId: msgRef.id, duplicate: true };
 }
 
 /*
@@ -310,8 +447,10 @@ async function readTranscript(db, opts) {
 
 module.exports = {
   CONVERSATIONS, MESSAGES, MAX_TRANSCRIPT, MAX_INBOX,
-  ServiceError, messageId, buildMessage,
+  START_ID_DOMAIN, START_HASH_DOMAIN,
+  ServiceError, messageId, buildMessage, startConversationId, startRequestHash,
   startConversation, sendCustomerMessage, sendStaffMessage, closeConversation,
+  peekStart, peekMessage, resolveExistingStart,
   listConversations, readTranscript,
   publicConversation, publicMessage, toMillis
 };

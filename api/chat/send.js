@@ -21,16 +21,27 @@ const OPTIONS = {
   needsRateSecret: true,
   run: async (ctx) => {
     const input = V.validateSend(ctx.body);
+    const request = {
+      customerUid: ctx.actor.uid,      /* verified token, never the body */
+      conversationId: input.conversationId,
+      message: input.message,
+      clientMessageId: input.clientMessageId
+    };
+
+    /* A retry of a message already stored spends the replay allowance rather
+       than the send allowance. A NEW message never takes this path, so an
+       invented idempotency key cannot be used to skip the send limit. */
+    const replay = await S.peekMessage(ctx.db, request);
+    if (replay) {
+      await RL.consume(ctx.db, 'replay_uid', ctx.actor.uid, ctx.rateSecret);
+      return H.ok(ctx.res,
+        { messageId: replay.messageId, conversationId: input.conversationId });
+    }
 
     await RL.consume(ctx.db, 'send_uid', ctx.actor.uid, ctx.rateSecret);
     if (ctx.ip) await RL.consume(ctx.db, 'send_ip', ctx.ip, ctx.rateSecret);
 
-    const result = await S.sendCustomerMessage(ctx.db, ctx.deps, {
-      customerUid: ctx.actor.uid,
-      conversationId: input.conversationId,
-      message: input.message,
-      clientMessageId: input.clientMessageId
-    });
+    const result = await S.sendCustomerMessage(ctx.db, ctx.deps, request);
 
     return H.ok(ctx.res, { messageId: result.messageId, conversationId: input.conversationId });
   }

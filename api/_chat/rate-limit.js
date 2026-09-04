@@ -59,7 +59,21 @@ const RULES = {
   /* customer message, per hashed IP */
   send_ip:     { limit: 60, windowMs:      60 * 1000 },
   /* any staff mutation (reply or close), per staff uid */
-  staff_write: { limit: 60, windowMs:      60 * 1000 }
+  staff_write: { limit: 60, windowMs:      60 * 1000 },
+  /*
+   * A PROVEN REPLAY of a request that was already stored.
+   *
+   * A retry after a dropped response must not eat the customer's allowance
+   * for real messages - that would punish a bad connection - so a replay
+   * consumes this bucket instead of start_* or send_*. It is deliberately
+   * generous, because an honest retry loop is not abuse.
+   *
+   * It is not zero, though. A replay still costs the server reads, and an
+   * endpoint that can be called without limit is a cost amplifier even when
+   * it writes nothing. Reaching this bucket requires already owning a stored
+   * message, which itself had to pass the ordinary limits.
+   */
+  replay_uid:  { limit: 120, windowMs:     60 * 1000 }
 };
 
 class RateLimitError extends Error {

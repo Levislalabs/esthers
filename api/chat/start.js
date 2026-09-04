@@ -21,6 +21,31 @@ const OPTIONS = {
   needsRateSecret: true,
   run: async (ctx) => {
     const input = V.validateStart(ctx.body);
+    const request = {
+      customerUid: ctx.actor.uid,      /* verified token, never the body */
+      name: input.name,
+      email: input.email,
+      message: input.message,
+      clientMessageId: input.clientMessageId
+    };
+
+    /*
+     * Is this a retry of a start we already stored? If so it must not spend
+     * the allowance for NEW conversations - a dropped response is the
+     * customer's connection failing, not the customer misbehaving. It still
+     * costs a replay allowance, so the path stays bounded.
+     *
+     * This also raises 409 on the same key with a different payload.
+     */
+    const replay = await S.peekStart(ctx.db, request);
+    if (replay) {
+      await RL.consume(ctx.db, 'replay_uid', ctx.actor.uid, ctx.rateSecret);
+      return H.ok(ctx.res, {
+        conversationId: replay.conversationId,
+        messageId: replay.messageId,
+        status: replay.status
+      });
+    }
 
     /* Per-uid first: it is the cheaper bucket and the one an honest retry
        loop trips. The per-IP bucket is the one a fresh anonymous uid cannot
@@ -28,13 +53,7 @@ const OPTIONS = {
     await RL.consume(ctx.db, 'start_uid', ctx.actor.uid, ctx.rateSecret);
     if (ctx.ip) await RL.consume(ctx.db, 'start_ip', ctx.ip, ctx.rateSecret);
 
-    const result = await S.startConversation(ctx.db, ctx.deps, {
-      customerUid: ctx.actor.uid,
-      name: input.name,
-      email: input.email,
-      message: input.message,
-      clientMessageId: input.clientMessageId
-    });
+    const result = await S.startConversation(ctx.db, ctx.deps, request);
 
     /* An explicit allow-list. No customerUid, no email, no internal
        timestamps, no rate-limit state. */
