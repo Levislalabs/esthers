@@ -157,9 +157,13 @@ function createHandler(options) {
 
       /* Lazy: nothing touched Firebase at import time, so a Preview
          deployment without credentials still builds and still answers. */
-      const admin = (options.deps && options.deps.initAdmin)
+      /* initAdmin() is asynchronous now that the SDK is loaded by import().
+         Awaiting is what keeps a Promise from being handed on as if it were
+         the Admin object; an injected test dependency returning a plain
+         object awaits harmlessly. */
+      const admin = await ((options.deps && options.deps.initAdmin)
         ? options.deps.initAdmin()
-        : initAdmin();
+        : initAdmin());
 
       const db = admin.db;
       const verifyIdToken = (options.deps && options.deps.verifyIdToken)
