@@ -20,7 +20,11 @@
  *
  * There are two consumers, and they are protected differently:
  *
- *   Firestore (if the customer ever reads it directly)
+ *   Firestore - and the customer DOES read it directly
+ *       Decided, not hypothetical: the customer's realtime transcript is an
+ *       onSnapshot() listener straight at chatMessages, so Firestore App
+ *       Check enforcement is squarely in scope for this project. See
+ *       chat-customer.js and docs/CHAT_CUSTOMER_FRONTEND.md.
  *       Google enforces App Check itself, once enforcement is switched on in
  *       the Firebase console. Initialising App Check here is all the client
  *       has to do; the SDK attaches the token to its own requests.
@@ -107,7 +111,7 @@ export const RECAPTCHA_ENTERPRISE_SITE_KEY = '6LcZfKotAAAAAG3nYWcAxT6P_nWyTRJp9X
  * floating because an unpinned SDK is a third party who can change the code
  * running on the site without anyone deciding to ship anything.
  */
-const SDK_VERSION = '12.4.0';
+export const SDK_VERSION = '12.4.0';
 const SDK_APP = 'https://www.gstatic.com/firebasejs/' + SDK_VERSION + '/firebase-app.js';
 const SDK_APP_CHECK = 'https://www.gstatic.com/firebasejs/' + SDK_VERSION + '/firebase-app-check.js';
 
@@ -127,6 +131,7 @@ export const APP_CHECK_HEADER = 'X-Firebase-AppCheck';
  * initialisation instead of racing to create two.
  */
 let appCheckPromise = null;
+let appPromise = null;
 
 export function isConfigured() {
   return Boolean(
@@ -152,7 +157,24 @@ export async function initAppCheck() {
   return appCheckPromise;
 }
 
-async function build() {
+/*
+ * THE Firebase app for this page, or null.
+ *
+ * Exported because App Check is not the only thing that needs it: the
+ * customer chat needs Auth and Firestore on the SAME app instance, and
+ * initializeApp() twice with a different config is an error. One memoised
+ * promise here is what stops a second app - and therefore a second
+ * attestation provider and a second reCAPTCHA challenge - ever existing.
+ *
+ * Null is a normal return, for the same reason it is in initAppCheck().
+ */
+export async function getFirebaseApp() {
+  if (appPromise) return appPromise;
+  appPromise = buildApp();
+  return appPromise;
+}
+
+async function buildApp() {
   if (!isConfigured()) {
     /* Deliberately loud in the console and harmless on the page. This state
        is a deployment mistake, and it should be obvious to whoever made it. */
@@ -162,10 +184,9 @@ async function build() {
     return null;
   }
 
-  let appMod, acMod;
+  let appMod;
   try {
-    /* Literal specifiers, loaded in parallel. */
-    [appMod, acMod] = await Promise.all([import(SDK_APP), import(SDK_APP_CHECK)]);
+    appMod = await import(SDK_APP);
   } catch (err) {
     console.error('Esther\'s: the Firebase SDK could not be loaded.');
     return null;
@@ -175,8 +196,26 @@ async function build() {
     /* getApps() first: another module on the page may already have started
        the same Firebase app, and initializeApp() twice is an error. */
     const existing = appMod.getApps();
-    const app = existing.length ? existing[0] : appMod.initializeApp(FIREBASE_CONFIG);
+    return existing.length ? existing[0] : appMod.initializeApp(FIREBASE_CONFIG);
+  } catch (err) {
+    console.error('Esther\'s: the Firebase app could not be initialised.');
+    return null;
+  }
+}
 
+async function build() {
+  const app = await getFirebaseApp();
+  if (!app) return null;
+
+  let acMod;
+  try {
+    acMod = await import(SDK_APP_CHECK);
+  } catch (err) {
+    console.error('Esther\'s: the Firebase SDK could not be loaded.');
+    return null;
+  }
+
+  try {
     return acMod.initializeAppCheck(app, {
       provider: new acMod.ReCaptchaEnterpriseProvider(RECAPTCHA_ENTERPRISE_SITE_KEY),
       /* The SDK refreshes the token before it expires - the TTL on this
@@ -251,4 +290,5 @@ export async function authorizedFetch(input, init) {
 /* Tests and the eventual chat module may need to start from scratch. */
 export function _reset() {
   appCheckPromise = null;
+  appPromise = null;
 }

@@ -670,3 +670,173 @@
     border-radius: 12px;
   }
 }
+
+/* =========================================================================
+   LIVE CHAT
+
+   Everything below is dormant on the public site. The rollout gate in
+   chat.js is false, so none of these elements is ever created and none of
+   these rules ever matches. They exist so the real conversation - the
+   start form, the inline notice, a pending bubble, a closed thread - looks
+   like the rest of the widget on the day it is switched on, rather than
+   being designed under time pressure that day.
+
+   No new colour, no new radius, no new font size that is not already in
+   use above. This is the same visual language, applied to four more states.
+   ========================================================================= */
+
+/* ---- the start form -------------------------------------------------
+   Shown in the log area before a conversation exists. /api/chat/start
+   requires a name, an email and a first message, so those are the three
+   fields - no more, and none of them optional. ---------------------- */
+
+.chat__start {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding: 2px 0 4px;
+}
+
+.chat__start-lede {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 12.5px;
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+
+.chat__field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.chat__label {
+  color: var(--ink-dim);
+  font-size: 11.5px;
+  font-weight: 550;
+  letter-spacing: 0.01em;
+}
+
+/* Deliberately the same box as .chat__input: same height, radius, border
+   and 14px type, so the form and the composer read as one control set and
+   iOS does not zoom on focus in either. */
+.chat__text {
+  width: 100%;
+  min-width: 0;
+  height: 44px;
+  padding: 11px 13px;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.chat__text--area {
+  height: auto;
+  min-height: 78px;
+  max-height: 160px;
+  resize: vertical;
+  overflow-y: auto;
+}
+
+.chat__text:focus-visible {
+  outline: 2px solid var(--chat-accent);
+  outline-offset: 1px;
+  border-color: var(--chat-accent-line);
+}
+
+.chat__start-send {
+  width: 100%;
+  margin-top: 2px;
+}
+
+/* ---- the inline notice ----------------------------------------------
+   One sentence between the transcript and the composer: a validation
+   message, a rate-limit wait, a dropped connection. Sits above the
+   composer rather than inside the log so it does not scroll away from the
+   control it is talking about. ------------------------------------- */
+
+.chat__notice-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+}
+
+/* Collapse the row entirely when there is nothing in it. The wrap always
+   holds both children, so the test is "no visible child" rather than
+   :empty or :only-child - both of which would never match here. Browsers
+   without :has() simply keep an empty 0-height flex row, which is
+   invisible anyway; :has() is already used elsewhere on this site. */
+.chat__notice-wrap:not(:has(> :not([hidden]))) {
+  display: none;
+}
+
+.chat__notice {
+  flex: 1;
+  min-width: 0;
+  margin: 0 0 9px;
+  padding: 8px 11px;
+  border-radius: 9px;
+  border: 1px solid var(--chat-accent-line);
+  background: var(--chat-accent-soft);
+  color: var(--ink);
+  font-size: 12.2px;
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+/* The ONE retry in the interface, and it is a button because the visitor
+   has to press it. Nothing in this widget retries on a timer. */
+.chat__retry {
+  flex: none;
+  margin: 0 0 9px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--chat-raised);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 12.2px;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.chat__retry:hover { background: var(--bg-hover); }
+
+.chat__retry:focus-visible {
+  outline: 2px solid var(--chat-accent);
+  outline-offset: 2px;
+}
+
+/* ---- a message still in flight --------------------------------------
+   The optimistic echo. Dimmed rather than marked with a spinner: it is
+   almost always on screen for a few hundred milliseconds, and a spinner
+   that flashes is noise. It carries the same id the server will give the
+   stored copy, so the listener replaces it in place. ---------------- */
+
+.chat__msg.is-pending {
+  opacity: 0.62;
+}
+
+/* ---- sending, and closed ------------------------------------------- */
+
+.chat__panel[data-busy="true"] .chat__send { opacity: 0.65; }
+
+.chat__panel[data-closed="true"] .chat__form { opacity: 0.6; }
+
+.chat__input:disabled,
+.chat__send:disabled,
+.chat__start-send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat__retry { transition: none; }
+}

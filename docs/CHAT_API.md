@@ -644,12 +644,34 @@ It is **additive** - same-origin, ID-token verification, the anonymous-provider
 rule, staff authorisation, validation and the rate limiter all still run behind
 it, and there are tests asserting each of those is still reached.
 
-It is **staged**: enforcement is gated by `CHAT_APP_CHECK_ENFORCED` and ships
-OFF, because no browser sends App Check tokens until the chat frontend is
-connected. While off the server verifies any token that does arrive and logs
-one allow-listed word, which is the rollout's evidence that clients are
-attesting. Once on, a missing or invalid token is `401 app_check_required` /
-`401 app_check_invalid`.
+It is **staged**: enforcement is gated by `CHAT_APP_CHECK_ENFORCED`. While off
+the server verifies any token that does arrive and logs one allow-listed word,
+which is the rollout's evidence that clients are attesting. Once on, a missing
+or invalid token is `401 app_check_required` / `401 app_check_invalid`.
+
+**Enforcement is now ON in production for these endpoints.** Every customer
+write must carry `X-Firebase-AppCheck` as well as `Authorization`. The client
+half that does so is `assets/js/chat-customer.js`, which is written and behind
+a rollout gate that is off — see `docs/CHAT_CUSTOMER_FRONTEND.md`.
+
+### The customer read path is NOT this API
+
+Worth stating here, because it is the one part of the system these endpoints do
+not cover. The customer's realtime transcript is a **direct Firestore
+listener** on `chatMessages`, not a call to `/api/chat/*`:
+
+```js
+query(collection(db, 'chatMessages'),
+      where('conversationId', '==', id),
+      orderBy('createdAt', 'asc'),
+      limit(200))
+```
+
+`firestore.rules` is the entire authority for it — `ownsConversation()` matches
+`chatConversations/{id}.customerUid` against `request.auth.uid`, and the limit
+clause is mandatory. Customer **writes** remain impossible from the browser:
+the rules deny `create`, `update` and `delete` outright, which is why every
+write in this document goes through the API.
 
 The full rationale, the enforcement rollout sequence, the debug-token strategy
 and the config values still needed from the owner are in

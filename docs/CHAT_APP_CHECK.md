@@ -168,35 +168,80 @@ makes step 3 below something you can check rather than assume.
 deployment setting, and the only way to exercise the unenforced path is to be
 the person who owns the Vercel project.
 
-## Enforcement rollout sequence
+## The customer architecture, now decided
 
-Do these in order. Do not skip to 6.
+This was open when App Check landed, and the doc hedged accordingly. It is
+settled, and the hedge is withdrawn:
 
-1. **Deploy the client App Check integration.** Fill in the config in
-   `assets/js/chat-app-check.js`, load it from the chat module, deploy.
-   Enforcement stays off. Firestore enforcement stays off.
-2. **Observe App Check metrics** in the Firebase console — Firebase shows
-   verified vs unverified request counts per service. Also watch the Vercel
-   logs for `chat: app check observed [route] valid`.
-3. **Confirm production clients receive valid tokens.** Real browsers, real
-   devices, not just a developer machine. Watch for `rejected` in the logs:
-   that means a real visitor attested and was refused, and enforcing on top of
-   it would lock them out.
-4. **Verify the customer Firestore listener works with App Check**, if the
-   design ends up reading Firestore from the browser at all. If everything
-   stays behind the Vercel API, this step is moot — say so and move on.
-5. **Verify the Vercel API accepts verified tokens.** Set
-   `CHAT_APP_CHECK_ENFORCED=1` on a **Preview** deployment first, run the
-   customer and staff flows against it, confirm 200s.
-6. **Only then enable Firestore App Check enforcement** in the Firebase
-   console, and set `CHAT_APP_CHECK_ENFORCED=1` on Production.
-7. **Run the full customer and staff E2E** against production with
-   enforcement live.
-8. **Launch public chat.**
+| | route | governed by |
+|---|---|---|
+| customer **write** | `POST /api/chat/{start,send}` | the Vercel API |
+| customer **read** | `onSnapshot()` **direct on Firestore** | `firestore.rules` |
+| customer write to Firestore | **impossible** | rules deny create/update/delete |
+| staff | `/api/admin/chat/*` | the Vercel API |
 
-Rolling back is one environment variable. Unset `CHAT_APP_CHECK_ENFORCED`,
-redeploy, and the API returns to accepting unattested requests — no data is
-touched and no conversation is lost.
+**The customer WILL read Firestore directly.** The realtime transcript is a
+listener on `chatMessages`, filtered to one conversation, ordered by
+`createdAt`, limited to 200. That is not a possibility to plan around — it is
+implemented, in `assets/js/chat-customer.js`.
+
+So **Firestore App Check enforcement is definitely relevant**, and step 12
+below is a real step with real consequences rather than a formality. Turning it
+on without first proving that production browsers attest successfully will
+break every customer's transcript — silently, because a denied listener looks
+like an empty conversation.
+
+The same goes for **Authentication** enforcement, step 13: customers sign in
+anonymously, and a `signInAnonymously()` that Google refuses is a visitor who
+cannot chat at all. This is why `chat-customer.js` initialises App Check
+**before** auth today, while nothing enforces it — so that step 13 is a console
+setting rather than a code change made under pressure.
+
+## The launch sequence
+
+Do these in order. The order is not a preference — several of these steps lock
+real people out if they are done early.
+
+**Where we are: 1 and 2 are done. 3 is next, and it is a manual walkthrough on
+production.**
+
+| # | step | state |
+|---|---|---|
+| 1 | Build the customer frontend | **done** — `assets/js/chat-customer.js` |
+| 2 | Deploy with the public gate OFF | **done for the API half**; the frontend is written and unmerged |
+| 3 | Manually invoke review mode on esthers.ca | next — see `docs/CHAT_CUSTOMER_FRONTEND.md` §9 |
+| 4 | Verify anonymous auth (same uid across a reload) | |
+| 5 | Verify `POST /api/chat/start` | |
+| 6 | Verify `POST /api/chat/send` | |
+| 7 | Verify the realtime Firestore listener | |
+| 8 | Verify close behaviour | |
+| 9 | Build and test the staff UI | |
+| 10 | Verify the staff App Check / auth flow | |
+| 11 | Inspect Firebase App Check metrics | |
+| 12 | **Enable Firestore App Check enforcement** | Firebase console |
+| 13 | **Enable Authentication App Check enforcement** | Firebase console |
+| 14 | Run the full production E2E | |
+| 15 | **Flip the public chat gate** | both constants, one commit |
+
+Notes on the steps that bite:
+
+- **Step 3 is the first real App Check token this project has ever minted.**
+  Everything before it is proven by test; attestation itself cannot be, because
+  the reCAPTCHA key is restricted to esthers.ca. A 200 from
+  `POST /api/chat/start` — which already enforces App Check — is the proof.
+- **Step 11 before 12 and 13.** Firebase shows verified vs unverified counts
+  per service. Watch for `rejected`: that means a real visitor attested and was
+  refused, and enforcing on top of it would lock them out.
+- **Step 13 is the one most likely to lock customers out.** See the section
+  below.
+- **Step 15 is two constants**, `CHAT_PUBLIC_ENABLED` in `assets/js/chat.js`
+  and in `assets/js/chat-customer.js`. Both `false` today; both flip in the
+  same commit, or chat silently does not work.
+
+Rolling back the API is one environment variable. Unset
+`CHAT_APP_CHECK_ENFORCED`, redeploy, and the API returns to accepting
+unattested requests — no data is touched and no conversation is lost. Rolling
+back the public chat gate is a revert of one commit.
 
 **Launch gate:** public chat must not go live with `CHAT_APP_CHECK_ENFORCED`
 unset. Enforcement off is the right default while chat is dark and exactly the
@@ -323,7 +368,13 @@ removes the protection App Check exists to provide.
 | `api/_chat/handler.js` | calls the gate, in order, for every chat route |
 | `api/_chat/firebase-admin.js` | loads `firebase-admin/app-check`, exposes `appCheck` |
 | `assets/js/chat-app-check.js` | browser init + `authorizedFetch` — **not loaded by any page** |
+| `assets/js/chat-customer.js` | the customer flow: App Check, anonymous auth, API writes, realtime reads — **gate off** |
+| `assets/js/chat.js` | the widget, and the gate that decides whether the transport is ever loaded |
+| `docs/CHAT_CUSTOMER_FRONTEND.md` | the customer architecture and the DevTools review walkthrough |
 | `tests/chat-api/app-check.test.mjs` | 41 tests, the server gate |
-| `tests/chat-api/app-check-client.test.mjs` | 24 tests, the browser module |
+| `tests/chat-api/app-check-client.test.mjs` | 24 tests, the browser App Check module |
+| `tests/chat-api/chat-customer.test.mjs` | 98 tests, the customer frontend |
 | `tests/chat-api/fixtures/firebase-sdk-stub.mjs` | stands in for the Firebase Web SDK so the client tests need no network |
+| `tests/chat-api/fixtures/firebase-sdk-full-stub.mjs` | the same, plus Auth and Firestore, for the customer flow |
+| `tests/chat-api/fixtures/source-view.mjs` | reads a module as code rather than as text, so a mention in a comment is not read as a use |
 | `tests/chat-api/helpers.mjs` | injectable App Check verifier for tests |
