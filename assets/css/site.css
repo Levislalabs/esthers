@@ -44,14 +44,17 @@
   --white:        #ffffff;
 
   /* READABILITY.
-     Body copy used to sit at #b9bcbe, which passes every contrast check and
-     still reads as grey-on-grey next to a white heading. The primary copy
-     colour is now near-white; the two steps below it are for supporting
-     lines and for metadata, and only those. Nothing in the system is dimmer
-     than 7:1 on the page ground. */
-  --body:         #e6e8e9;   /* primary body copy - 14.9:1 on #111 */
-  --body-2:       #c4c7c9;   /* supporting lines           - 11.0:1 */
-  --faint:        #9ea1a3;   /* labels, specs, metadata    -  7.2:1 */
+     Body copy started at #b9bcbe, which passes every contrast check and
+     still reads as grey-on-grey next to a white heading, and has been
+     lifted twice since. It is now within a couple of steps of white:
+     descriptive copy - the thing people actually came to read - is not
+     allowed to be grey on this site.
+
+     Only two steps sit below it, and they are for supporting lines and for
+     metadata. Nothing in the system is dimmer than 8.5:1 on the ground. */
+  --body:         #f0f1f2;   /* primary body copy - 16.6:1 on #111 */
+  --body-2:       #d2d5d6;   /* supporting lines           - 12.6:1 */
+  --faint:        #adb0b2;   /* labels, specs, metadata    -  8.6:1 */
 
   --rule:         #2f2f2f;   /* hairline */
   --rule-strong:  #454545;
@@ -72,14 +75,17 @@
   --bar:          72px;
 
   /* ---- softened corners -------------------------------------------
-     A CUT CORNER, NOT A BUBBLE. The structure of the page - bands,
-     rules, the fact rows, the service list - stays square, because that
-     is what stops this reading as a SaaS landing page. The radius is
-     spent only on the things a hand goes to or an eye lands on: the
-     photography, the buttons, and the panels of the materials tool.
-     12px on a 600px photo is a softened edge; 24px would be a card. */
-  --bev:          12px;      /* photography and large panels */
-  --bev-s:        8px;       /* buttons and small controls   */
+     The radius is spent only on the things a hand goes to or an eye lands
+     on: the photography, the buttons, and the cards and panels of the
+     materials tool. The structure of the page - bands, rules, the fact
+     strip, the service rows - stays square, because that is what keeps
+     this industrial rather than bubbly.
+
+     12px on a 600px photograph turned out to be a corner you had to look
+     for. These are the sizes where the treatment reads at a glance from
+     across the page without any of it becoming a pill. */
+  --bev:          20px;      /* photography, cards and large panels */
+  --bev-s:        14px;      /* buttons and small controls          */
 
   --sans: "Helvetica Neue", Helvetica, Arial, "Segoe UI", system-ui, sans-serif;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
@@ -96,17 +102,17 @@
      logic and material data are untouched; only the surface it is drawn
      on has changed. */
   --bg:            #111111;
-  --bg-raised:     #191919;
-  --bg-panel:      #1e1e1e;
-  --bg-elevated:   #262626;
-  --bg-hover:      #2e2e2e;
-  --line:          rgba(255, 255, 255, 0.16);
-  --line-strong:   rgba(255, 255, 255, 0.30);
-  --line-soft:     rgba(255, 255, 255, 0.09);
-  --ink:           #ffffff;   /* 14.6:1 on the lightest surface */
-  --ink-muted:     #dcdedf;   /* 11.6:1 */
-  --ink-dim:       #b6b9bb;   /*  7.9:1 */
-  --ink-faint:     #9ea1a3;   /*  5.8:1 */
+  --bg-raised:     #1b1b1b;
+  --bg-panel:      #212121;
+  --bg-elevated:   #2a2a2a;
+  --bg-hover:      #333333;
+  --line:          rgba(255, 255, 255, 0.18);
+  --line-strong:   rgba(255, 255, 255, 0.34);
+  --line-soft:     rgba(255, 255, 255, 0.10);
+  --ink:           #ffffff;   /* 13.9:1 on the lightest surface */
+  --ink-muted:     #e8eaea;   /* 12.2:1 - the tool's reading colour */
+  --ink-dim:       #c8cbcc;   /*  9.1:1 - spec detail, meter notes  */
+  --ink-faint:     #adb0b2;   /*  6.8:1 - labels and units only     */
 }
 
 html { color-scheme: dark; scroll-behavior: smooth; }
@@ -245,10 +251,14 @@ h1, h2, h3, h4 { font-family: var(--sans); margin: 0; text-wrap: balance; }
  */
 .metaline {
   font-family: var(--mono);
-  font-size: 11.5px;
-  letter-spacing: 0.14em;
+  /* 12px and a step brighter than --faint. This carries the material list
+     and the shop address under every service, which people read - it is
+     small type, not throwaway type. */
+  font-size: 12px;
+  line-height: 1.65;
+  letter-spacing: 0.13em;
   text-transform: uppercase;
-  color: var(--faint);
+  color: var(--body-2);
 }
 
 /* ------------------------------------------------------------ buttons */
@@ -547,6 +557,22 @@ h1, h2, h3, h4 { font-family: var(--sans); margin: 0; text-wrap: balance; }
 }
 .rowitem__n { font-family: var(--mono); font-size: 12px; letter-spacing: 0.14em; color: var(--orange); padding-top: 4px; }
 .rowitem__b .copy { margin-top: 9px; }
+
+/* The home page's index form: names only, each one a way into /services.
+   Square, ruled and industrial - the bevel is spent elsewhere. */
+.rows--index { list-style: none; margin: 0; padding: 0; }
+.rows--index .rowitem { padding: 18px 0; align-items: center; }
+.rowitem__link {
+  display: inline-block;
+  color: var(--white);
+  font-size: 1.14rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  padding-bottom: 2px;
+}
+.rowitem__link:hover { color: var(--orange); border-bottom-color: var(--orange); }
 @media (max-width: 620px) {
   .rowitem { grid-template-columns: 1fr; gap: 8px; padding: 20px 0; }
 }
@@ -620,8 +646,8 @@ h1, h2, h3, h4 { font-family: var(--sans); margin: 0; text-wrap: balance; }
   border-radius: var(--bev);
 }
 .svc__media figcaption {
-  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.14em;
-  text-transform: uppercase; color: var(--faint); margin-top: 10px;
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--body-2); margin-top: 12px;
 }
 .svc__lists {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -684,7 +710,7 @@ h1, h2, h3, h4 { font-family: var(--sans); margin: 0; text-wrap: balance; }
    thing on the page that is not a photograph, so the full lockup fits here
    at a size where the folded mark is legible instead of a smudge. */
 .sitefoot__logo { display: inline-block; }
-.sitefoot__logo img { height: clamp(42px, 4vw, 52px); width: auto; }
+.sitefoot__logo img { height: clamp(48px, 4.6vw, 62px); width: auto; }
 .sitefoot h2 {
   font-family: var(--mono); font-size: 11px; letter-spacing: 0.2em;
   text-transform: uppercase; color: var(--orange); margin: 0 0 16px;

@@ -126,7 +126,7 @@
         <div class="svc__foot">
           <a class="ebtn ebtn--orange" href="/quote"><span>Request a Quote</span><span class="ebtn__mark">&rarr;</span></a>
           <p class="metaline svc__where">
-            Materials: painted steel, aluminum, copper, zinc<br>
+            Materials: PVDF Kynar, painted steel, aluminum, copper, zinc<br>
             Main Branch &middot; 3890 E. First Ave. &middot; 604-291-6766
           </p>
         </div>
@@ -177,7 +177,7 @@
         <div class="svc__foot">
           <a class="ebtn ebtn--orange" href="/quote"><span>Request a Quote</span><span class="ebtn__mark">&rarr;</span></a>
           <p class="metaline svc__where">
-            Materials: painted steel, aluminum, copper, zinc<br>
+            Materials: PVDF Kynar, painted steel, aluminum, copper, zinc<br>
             Main Branch &middot; 3890 E. First Ave. &middot; 604-291-6766
           </p>
         </div>
@@ -227,7 +227,7 @@
         <div class="svc__foot">
           <a class="ebtn ebtn--orange" href="/quote"><span>Request a Quote</span><span class="ebtn__mark">&rarr;</span></a>
           <p class="metaline svc__where">
-            Materials: painted steel, aluminum, copper, zinc<br>
+            Materials: PVDF Kynar, painted steel, aluminum, copper, zinc<br>
             Main Branch &middot; 3890 E. First Ave. &middot; 604-291-6766
           </p>
         </div>
@@ -242,10 +242,35 @@
     </div>
   </section>
 
-  <!-- No photograph here yet. There is no shot of a panel job in
-       assets/img/work/, and captioning a chimney photo as panels would be a
-       lie. Drop a real one in and give this section back its .svc__media
-       figure - remove svc--solo at the same time. -->
+  <!-- ===================================================================
+       THIS SECTION IS WAITING ON ONE PHOTOGRAPH.
+
+       It should carry the shot of the beige/tan curved formed sheet-metal
+       piece on the wooden worktable. That file is not in this repository -
+       assets/img/work/ holds six photographs and all six are chimney work -
+       so the section runs text-only rather than borrowing a chimney photo
+       and captioning it as panel work.
+
+       TO ADD IT:
+         1. Save the photograph as
+              assets/img/work/formed-panel-trim.webp
+            (long edge about 1200px, quality 80; a .jpg is fine too, just
+            match the extension in the src below.)
+         2. Delete svc--solo from the wrap div, and add svc--flip if you
+            want the photo on the left like section 02.
+         3. Paste this figure in as the last child of that div:
+
+            <figure class="svc__media">
+              <img src="../assets/img/work/formed-panel-trim.webp"
+                   width="1200" height="900" loading="lazy" decoding="async"
+                   alt="A curved formed sheet metal profile in a tan finish
+                        on a wooden bench in the shop.">
+              <figcaption>Custom formed panel trim</figcaption>
+            </figure>
+
+       Do not put it in section 02. That photograph there is a flue collar
+       welded to a flashing base, which is what its caption says it is.
+       =================================================================== -->
   <section class="band band--paper band--rule">
     <div class="wrap wrap--wide svc svc--solo">
       <div>
@@ -324,7 +349,7 @@
         <div class="svc__foot">
           <a class="ebtn ebtn--orange" href="/quote"><span>Request a Quote</span><span class="ebtn__mark">&rarr;</span></a>
           <p class="metaline svc__where">
-            Materials: painted steel, aluminum, copper, zinc<br>
+            Materials: PVDF Kynar, painted steel, aluminum, copper, zinc<br>
             Specialty Shop &middot; 3701 Keith Street &middot; 604-677-2379
           </p>
         </div>
@@ -339,24 +364,19 @@
     </div>
   </section>
 
-  <section class="band band--paper band--rule">
-    <div class="wrap wrap--wide split">
-      <div>
-        <p class="eyb">Materials</p>
-        <h2 class="t-2">What we can<br>make it from</h2>
-      </div>
-      <div class="stack">
-        <p class="copy">
-          Painted steel in 26, 24 and 22 gauge, PVDF-coated steel and aluminum, architectural
-          copper and architectural zinc. Gauge and coating decide the colour range, the warranty
-          and how the metal behaves near the coast.
-        </p>
-        <p class="copy">
-          The materials page carries the configurator, the full colour collections and a
-          side-by-side comparison of all eight.
-        </p>
-        <p><a class="tlink" href="/materials">Compare materials</a></p>
-      </div>
+  <!-- This was a full materials section, and it was the home page's materials
+       teaser almost word for word. Every service above already names the
+       metals it can be made from, so all this needs to be is the door
+       through to the tool. -->
+  <section class="band band--tight band--paper band--rule">
+    <div class="wrap wrap--wide">
+      <p class="eyb">Materials</p>
+      <p class="copy copy--lead">
+        Each service above lists the metals it can be made from. To compare them &mdash; gauge,
+        coating, warranty, coastal performance &mdash; and to see the colour collections, use the
+        materials tool.
+      </p>
+      <p class="mt-l"><a class="tlink" href="/materials">Compare all eight materials</a></p>
     </div>
   </section>
 
@@ -382,7 +402,7 @@
         </a>
         <p class="sitefoot__blurb">
           Custom architectural sheet metal since 1995. Chimney caps, flashing, coping and roof
-          accessories in copper, zinc, aluminum and painted steel. Burnaby, British Columbia,
+          accessories in copper, zinc, aluminum, PVDF Kynar and painted steel. Burnaby, British Columbia,
           serving the Lower Mainland.
         </p>
       </div>

@@ -71,7 +71,9 @@
   scroll-snap-align: start;
   text-align: left;
   padding: 20px 20px 22px;
-  border-radius: var(--radius);
+  /* The site's card corner, not the configurator's old 14px - these sit
+     next to beveled photography and beveled buttons and have to match. */
+  border-radius: var(--bev, 20px);
   border: 1px solid var(--line);
   background: var(--bg-panel);
   overflow: hidden;
