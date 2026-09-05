@@ -46,7 +46,7 @@
 'use strict';
 
 /* -------------------------------------------------------------------------
- * CONFIGURATION - MUST BE FILLED IN BEFORE THIS CAN RUN
+ * CONFIGURATION
  *
  * Every value below is PUBLIC browser configuration. A Firebase web config
  * and a reCAPTCHA site key are designed to be readable in page source; they
@@ -60,16 +60,31 @@
  * Admin credential, and any App Check debug token. Those live only in Vercel
  * environment variables and in a developer's own browser.
  *
- * These are deliberately left empty. An invented site key would fail at the
- * worst possible moment - silently, in production, as a token that never
- * verifies - so the module refuses to start instead. See isConfigured().
+ * isConfigured() below still guards the lot. If any of these is ever emptied
+ * the module refuses to start rather than initialising half-configured, which
+ * would fail at the worst possible moment - silently, in production, as a
+ * token that never verifies.
  * ---------------------------------------------------------------------- */
 
+/*
+ * PUBLIC. Every value here is a client identifier, not a server secret.
+ *
+ * `apiKey` in particular is misnamed by Firebase and trips people up: it is
+ * not an authorisation and it opens no door on its own. It identifies which
+ * Firebase project a browser request belongs to, and Firebase publishes it in
+ * their own documentation examples. What actually protects the project is App
+ * Check, the Firestore rules, the API's own authentication, and the domain
+ * restriction on the reCAPTCHA key.
+ *
+ * Moving these into environment variables would buy nothing - they are served
+ * to every visitor in page source the moment the module loads - and would cost
+ * a build step this site does not have.
+ */
 export const FIREBASE_CONFIG = {
-  apiKey: '',              /* from Firebase console > Project settings > Your apps */
-  authDomain: '',          /* usually esther-s-chat.firebaseapp.com               */
+  apiKey: 'AIzaSyBUt0PMdhgQaztnobzrLE0PIndu0_4AYoU',
+  authDomain: 'esther-s-chat.firebaseapp.com',
   projectId: 'esther-s-chat',
-  appId: ''                /* the "Esther's Website" web app's App ID             */
+  appId: '1:688542251560:web:e32a494df80f71a7bdd31d'   /* "Esther's Website" */
 };
 
 /*
@@ -83,7 +98,7 @@ export const FIREBASE_CONFIG = {
  * makes it safe to publish, and it is also why localhost must never be added
  * to it - see the debug-token note in docs/CHAT_APP_CHECK.md.
  */
-export const RECAPTCHA_ENTERPRISE_SITE_KEY = '';
+export const RECAPTCHA_ENTERPRISE_SITE_KEY = '6LcZfKotAAAAAG3nYWcAxT6P_nWyTRJp9XXMw6C6';
 
 /*
  * Where the Firebase Web SDK comes from.

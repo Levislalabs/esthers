@@ -266,21 +266,54 @@ If a real (non-debug) key is wanted for local work, create a **separate**
 reCAPTCHA Enterprise key restricted to localhost and select it by environment.
 Do not widen the production one.
 
-## Still needed from the owner
+## Client configuration — supplied
 
-`assets/js/chat-app-check.js` will not initialise until these are filled in —
-by design, because an invented value would fail silently in production as a
-token that never verifies:
+`assets/js/chat-app-check.js` now carries the real public browser config for
+the *Esther's Website* web app in project `esther-s-chat`: `apiKey`,
+`authDomain`, `projectId`, `appId` and the reCAPTCHA Enterprise **site** key.
+`isConfigured()` returns true.
 
-- `FIREBASE_CONFIG.apiKey`
-- `FIREBASE_CONFIG.authDomain` (likely `esther-s-chat.firebaseapp.com`)
-- `FIREBASE_CONFIG.appId` (the *Esther's Website* web app's App ID)
-- `RECAPTCHA_ENTERPRISE_SITE_KEY`
+All five are public client identifiers and are meant to be readable in page
+source. Nothing private was added — no service-account key, no client email,
+no debug token.
 
-All four are public browser configuration, from Firebase console →
-Project settings → Your apps, and App Check → Apps.
+`isConfigured()` still guards them: emptying any one makes the module refuse to
+initialise rather than start half-configured.
 
-`FIREBASE_CONFIG.projectId` is already set to `esther-s-chat`.
+### What has NOT been proven yet, and cannot be from here
+
+A real App Check token has never been issued. The production reCAPTCHA
+Enterprise key is restricted to **esthers.ca**, and attestation is performed by
+the browser against the page's own hostname — so no token can be minted from
+this container, from `localhost`, or from any host that is not esthers.ca.
+That is the domain restriction doing its job, and it was deliberately not
+weakened.
+
+Everything testable without a live challenge has been: configuration values,
+`isConfigured()`, single initialisation, the provider receiving the exact site
+key, auto-refresh, concurrent-call memoisation, `getAppCheckToken()` returning
+null rather than throwing, and `authorizedFetch()` header behaviour.
+
+**First real token issuance happens when the module is intentionally loaded on
+a page served from esthers.ca** — i.e. rollout step 1, on production, with
+enforcement still off. A normal Vercel branch preview will not do it: previews
+are served from a `*.vercel.app` hostname, which a key restricted to
+esthers.ca will refuse.
+
+If a preview needs to attest before production, the options are, in order of
+preference:
+
+1. **Do it on production with enforcement off.** The module can be loaded
+   without wiring any chat UI; nothing is enforced, so a failure costs nothing.
+   This is the intended path and needs no key change.
+2. Attach a real custom subdomain to the preview and add only that exact
+   hostname to the key.
+3. A separate reCAPTCHA key for preview, selected by hostname at runtime.
+
+Do **not** add a broad wildcard such as `*.vercel.app` to the production key
+without review: `*.vercel.app` is shared by every Vercel deployment on the
+internet, so allowing it would let anyone's project attest as Esther's — which
+removes the protection App Check exists to provide.
 
 ## Files
 
@@ -290,5 +323,7 @@ Project settings → Your apps, and App Check → Apps.
 | `api/_chat/handler.js` | calls the gate, in order, for every chat route |
 | `api/_chat/firebase-admin.js` | loads `firebase-admin/app-check`, exposes `appCheck` |
 | `assets/js/chat-app-check.js` | browser init + `authorizedFetch` — **not loaded by any page** |
-| `tests/chat-api/app-check.test.mjs` | 41 tests |
+| `tests/chat-api/app-check.test.mjs` | 41 tests, the server gate |
+| `tests/chat-api/app-check-client.test.mjs` | 24 tests, the browser module |
+| `tests/chat-api/fixtures/firebase-sdk-stub.mjs` | stands in for the Firebase Web SDK so the client tests need no network |
 | `tests/chat-api/helpers.mjs` | injectable App Check verifier for tests |
