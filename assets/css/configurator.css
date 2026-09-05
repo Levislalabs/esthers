@@ -82,7 +82,8 @@
 }
 .mat-card:hover { transform: translateY(-4px); border-color: var(--line-strong); background: var(--bg-elevated); }
 
-/* Accent wash that fades up on selection */
+/* Accent wash that fades up on hover. It is the material's own colour, so it
+   is a hint at what the card is about, not a selection state. */
 .mat-card::after {
   content: "";
   position: absolute;
@@ -92,9 +93,49 @@
   transition: opacity var(--dur) var(--ease);
   pointer-events: none;
 }
-.mat-card[aria-pressed="true"] { border-color: var(--accent-line); background: var(--bg-elevated); }
-.mat-card[aria-pressed="true"]::after { opacity: 0.2; }
-.mat-card[aria-pressed="true"] { box-shadow: 0 20px 46px -26px rgba(0, 0, 0, 0.9); }
+.mat-card:hover::after { opacity: 0.18; }
+
+/* =====================================================================
+   THE SELECTED MATERIAL
+
+   This used to be a slightly lighter panel with a border tinted by the
+   material's own accent - and every one of those accents is a grey or a
+   soft metal tone, so at a glance eight cards looked like eight cards.
+   Which one was live was something you worked out, not something you saw.
+
+   It is orange now. Full fill, dark type, and the accent wash turned off
+   underneath so nothing muddies it. One card in the rail can carry it,
+   because aria-pressed is set on exactly one card at a time by
+   selectMaterial() - that logic is untouched, this only draws it.
+
+   Contrast on the fill: #14 0a 03 on #f36c21 is 8.9:1, and the kicker at
+   #3d1d07 is 5.3:1. Both clear AA at their sizes.
+   ===================================================================== */
+.mat-card[aria-pressed="true"] {
+  background: var(--orange, #f36c21);
+  border-color: var(--orange, #f36c21);
+  box-shadow: 0 18px 40px -24px rgba(0, 0, 0, 0.9);
+}
+.mat-card[aria-pressed="true"]::after { opacity: 0; }
+.mat-card[aria-pressed="true"] .mat-card__name { color: #140a03; font-weight: 600; }
+.mat-card[aria-pressed="true"] .mat-card__kicker { color: #3d1d07; }
+/* The swatch has to survive the fill - it is the whole point of the card.
+   A dark ring separates it from the orange without recolouring the metal. */
+.mat-card[aria-pressed="true"] .mat-card__chip {
+  box-shadow: 0 0 0 2px rgba(20, 10, 3, 0.55),
+              inset 0 1px 0 rgba(255, 255, 255, 0.22),
+              0 4px 14px -6px rgba(0, 0, 0, 0.6);
+}
+/* Selected and hovered is still selected: hold the orange, drop the lift. */
+.mat-card[aria-pressed="true"]:hover {
+  background: var(--orange, #f36c21);
+  border-color: var(--orange, #f36c21);
+  transform: translateY(-2px);
+}
+/* The site's focus ring is orange, which is invisible on an orange card.
+   Both selectors outrank it, so keyboard focus is visible either way. */
+.mat-card:focus-visible { outline: 3px solid var(--orange, #f36c21); outline-offset: 2px; }
+.mat-card[aria-pressed="true"]:focus-visible { outline-color: #140a03; outline-offset: 3px; }
 
 .mat-card__chip {
   width: 46px; height: 46px;
@@ -103,24 +144,25 @@
   position: relative;
   overflow: hidden;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 4px 14px -6px rgba(0, 0, 0, 0.85);
-  transition: transform var(--dur) var(--ease-out);
+  transition: transform var(--dur) var(--ease-out), box-shadow var(--dur) var(--ease);
 }
 .mat-card:hover .mat-card__chip { transform: scale(1.06) rotate(-2deg); }
 
 .mat-card__name {
   font-family: var(--font-display);
   font-size: 1.02rem;
-  font-weight: 400;
+  font-weight: 500;
   letter-spacing: -0.01em;
   line-height: 1.25;
   margin-bottom: 5px;
+  color: var(--ink);
 }
 .mat-card__kicker {
   font-family: var(--font-mono);
   font-size: 9.5px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--ink-faint);
+  color: var(--ink-dim);
   line-height: 1.5;
 }
 
@@ -134,7 +176,7 @@
   transform: scale(0.4);
   transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease-out);
 }
-.mat-card[aria-pressed="true"] .mat-card__dot { opacity: 1; transform: scale(1); }
+.mat-card[aria-pressed="true"] .mat-card__dot { opacity: 1; transform: scale(1); background: #140a03; }
 
 /* =====================================================================
    2. MATERIAL DETAIL PANEL
