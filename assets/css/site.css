@@ -707,7 +707,9 @@ h1, h2, h3, h4 { font-family: var(--sans); margin: 0; text-wrap: balance; }
   padding: clamp(22px, 3vw, 40px);
 }
 .feat__media { margin: 0; }
-/* 3/4 is the file's own ratio (1200x1600), so cover crops nothing. */
+/* The frame is 3/4. The architectural shroud in it is 720x1080 (2/3), so
+   cover trims about 11% off the height - ceiling and pallet edge, not the
+   piece. Swap in a 3/4 photograph and it crops nothing. */
 .feat__media img {
   width: 100%; height: auto;
   aspect-ratio: 3 / 4; object-fit: cover;

@@ -133,62 +133,11 @@
 
       </div>
     </section>
-    <section class="section" id="patina">
-      <div class="shell">
-        <div class="section-head reveal">
-          <p class="eyebrow">Copper</p>
-          <h2 class="headline">A finish that keeps working after you leave</h2>
-          <p class="lede">
-            Copper is the only material here that is not finished when it is installed. Scrub the timeline,
-            or press play, to watch a standing seam cap move from mill bright through russet and chocolate
-            brown to full verdigris.
-          </p>
-        </div>
-
-        <div class="patina reveal">
-          <div>
-            <div class="patina__stage" id="patina-stage"></div>
-
-            <div class="patina__scrub">
-              <div class="patina__track"><div class="patina__progress" id="patina-progress"></div></div>
-              <div class="patina__steps" id="patina-steps" role="group" aria-label="Patina stage"></div>
-            </div>
-          </div>
-
-          <div class="patina__copy" id="patina-copy">
-            <p class="patina__stage-name" id="patina-stage-name"></p>
-            <p class="patina__body" id="patina-body"></p>
-
-            <button class="patina__auto" id="patina-auto" type="button" aria-pressed="false">
-              <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M8 5.5 18 12 8 18.5Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
-              <span id="patina-auto-label">Play weathering</span>
-            </button>
-
-            <p class="colours__disclaimer" style="margin-top:26px">
-              Weathering rate depends on rainfall, orientation, air chemistry and how much of the surface is
-              sheltered. Coastal and industrial exposures reach verdigris faster; a protected face under a
-              deep overhang can stay brown for decades. Pre-patinated copper is available where matching an
-              existing installation matters more than watching the change.
-            </p>
-          </div>
-        </div>
-      </div>
-    </section>
-    <section class="section" id="zinc">
-      <div class="shell">
-        <div class="section-head reveal">
-          <p class="eyebrow">Zinc</p>
-          <h2 class="headline">Quiet luxury, measured in generations</h2>
-          <p class="lede">
-            Rolled zinc-copper-titanium in four architectural finishes. Hover any rendering to pull up the
-            close-up texture. The surface structure is what separates zinc from a grey painted panel.
-          </p>
-        </div>
-
-        <div class="zinc-grid reveal" id="zinc-grid"></div>
-        <div class="zinc-traits reveal" id="zinc-traits"></div>
-      </div>
-    </section>
+    <!-- The comparison tool sits directly after the selector, and before the
+         copper and zinc sections. A visitor picks a material first and then
+         checks it against the others; the table read as the opening move when
+         it came later in the page. Order only - the table, the phone A/B view
+         and their bindings in app.js are untouched. -->
     <section class="section" id="compare">
       <div class="shell">
         <div class="section-head reveal">
@@ -259,6 +208,62 @@
           <span>Weights are approximate and exclude fasteners, cleats and underlayment.</span>
           <span>Lifespan assumes correct detailing, free drainage and normal exposure.</span>
         </div>
+      </div>
+    </section>
+    <section class="section" id="patina">
+      <div class="shell">
+        <div class="section-head reveal">
+          <p class="eyebrow">Copper</p>
+          <h2 class="headline">A finish that keeps working after you leave</h2>
+          <p class="lede">
+            Copper is the only material here that is not finished when it is installed. Scrub the timeline,
+            or press play, to watch a standing seam cap move from mill bright through russet and chocolate
+            brown to full verdigris.
+          </p>
+        </div>
+
+        <div class="patina reveal">
+          <div>
+            <div class="patina__stage" id="patina-stage"></div>
+
+            <div class="patina__scrub">
+              <div class="patina__track"><div class="patina__progress" id="patina-progress"></div></div>
+              <div class="patina__steps" id="patina-steps" role="group" aria-label="Patina stage"></div>
+            </div>
+          </div>
+
+          <div class="patina__copy" id="patina-copy">
+            <p class="patina__stage-name" id="patina-stage-name"></p>
+            <p class="patina__body" id="patina-body"></p>
+
+            <button class="patina__auto" id="patina-auto" type="button" aria-pressed="false">
+              <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M8 5.5 18 12 8 18.5Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+              <span id="patina-auto-label">Play weathering</span>
+            </button>
+
+            <p class="colours__disclaimer" style="margin-top:26px">
+              Weathering rate depends on rainfall, orientation, air chemistry and how much of the surface is
+              sheltered. Coastal and industrial exposures reach verdigris faster; a protected face under a
+              deep overhang can stay brown for decades. Pre-patinated copper is available where matching an
+              existing installation matters more than watching the change.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="section" id="zinc">
+      <div class="shell">
+        <div class="section-head reveal">
+          <p class="eyebrow">Zinc</p>
+          <h2 class="headline">Quiet luxury, measured in generations</h2>
+          <p class="lede">
+            Rolled zinc-copper-titanium in four architectural finishes. Hover any rendering to pull up the
+            close-up texture. The surface structure is what separates zinc from a grey painted panel.
+          </p>
+        </div>
+
+        <div class="zinc-grid reveal" id="zinc-grid"></div>
+        <div class="zinc-traits reveal" id="zinc-traits"></div>
       </div>
     </section>
 </div>
