@@ -106,6 +106,15 @@ const MESSAGES_COLLECTION = 'chatMessages';
  */
 const TRANSCRIPT_LIMIT = 200;
 
+/*
+ * DESCENDING, so limit(200) is a rolling window on the NEWEST two hundred
+ * rather than a fixed view of the oldest two hundred. See subscribeTranscript()
+ * for why that distinction is the difference between a working chat and one
+ * that silently stops updating. Requires the (conversationId ASC, createdAt
+ * DESC) composite index.
+ */
+const TRANSCRIPT_ORDER = 'desc';
+
 const API_START = '/api/chat/start';
 const API_SEND = '/api/chat/send';
 
@@ -706,8 +715,24 @@ async function apiPost(deps, path, body, user) {
  * THE QUERY IS EXACTLY WHAT THE RULES ALLOW, AND NO WIDER:
  *
  *   where('conversationId', '==', id)   confines it to one conversation
- *   orderBy('createdAt', 'asc')         oldest first, matching the index
+ *   orderBy('createdAt', 'desc')        NEWEST first - see below
  *   limit(200)                          MANDATORY - see below
+ *
+ * WHY DESCENDING, WHEN THE TRANSCRIPT READS OLDEST-FIRST.
+ *
+ * Because limit() applies to the ORDER, not to the display. Ascending with
+ * limit(200) returns the two hundred OLDEST messages - so the moment a
+ * conversation passes two hundred, the window stops moving: new messages fall
+ * outside it and the customer's own sends simply never appear. A chat that
+ * silently stops updating after a long conversation is worse than one that
+ * never worked, because the visitor has no way to tell.
+ *
+ * Descending with the same limit is a ROLLING WINDOW on the newest two
+ * hundred, which is what a live transcript wants. The documents arrive
+ * newest-first and chronological() below turns them back the right way up.
+ *
+ * This is NOT pagination. There is no history beyond the newest two hundred
+ * and no way to ask for more; that is a separate feature if it is ever wanted.
  *
  * Firestore evaluates a query against the documents it COULD return, not the
  * ones that happen to exist, so a listener that is not confined to one
@@ -720,9 +745,16 @@ async function apiPost(deps, path, body, user) {
  * limit that lives there, which is exactly why the ceiling is in the rules
  * and not merely here.
  *
- * The (conversationId ASC, createdAt ASC) composite index this needs is
- * already deployed - see firestore.indexes.json. Nothing here required an
- * index change.
+ * THIS QUERY NEEDS ITS OWN COMPOSITE INDEX: (conversationId ASC, createdAt
+ * DESC), added to firestore.indexes.json alongside the existing ASC/ASC one.
+ * conversationId is an equality filter so its direction stays ASCENDING;
+ * createdAt has to be DESCENDING to serve a descending orderBy. The ASC/ASC
+ * index is kept - the staff transcript endpoint in service.js still uses it.
+ *
+ * THE INDEX IS NOT DEPLOYED YET. Until it is, this listener will fail in
+ * production with a failed-precondition error naming the missing index.
+ * Deploying it is a step on the launch checklist, not something this change
+ * performs.
  *
  * OWNERSHIP IS NOT CHECKED HERE, AND MUST NOT BE. The rules resolve it
  * server-side: ownsConversation() reads chatConversations/{id}.customerUid
@@ -734,10 +766,34 @@ function subscribeTranscript(fs, db, conversationId, handlers) {
   const q = fs.query(
     fs.collection(db, MESSAGES_COLLECTION),
     fs.where('conversationId', '==', conversationId),
-    fs.orderBy('createdAt', 'asc'),
+    fs.orderBy('createdAt', TRANSCRIPT_ORDER),
     fs.limit(TRANSCRIPT_LIMIT)
   );
   return fs.onSnapshot(q, handlers.next, handlers.error);
+}
+
+/*
+ * The snapshot's documents, oldest-first.
+ *
+ * The listener asks for the newest 200, so Firestore hands them back
+ * newest-first. The transcript reads top-to-bottom oldest-to-newest, so they
+ * are turned around here, at the one point where the query's order meets the
+ * renderer's.
+ *
+ * IMMUTABLE. slice() first: snapshot.docs belongs to the SDK, and reversing it
+ * in place would corrupt a structure Firestore may reuse.
+ *
+ * WORTH BEING HONEST ABOUT WHAT THIS DOES AND DOES NOT GUARANTEE.
+ * TranscriptStore.list() sorts by (createdAt, id) on every render, so the
+ * rendered order is already correct whatever order the documents arrive in -
+ * removing this reversal would not currently change a single pixel. It is here
+ * because the store's sort is the store's business: this function is the
+ * contract at the boundary, it keeps the pipeline correct if that sort is ever
+ * simplified away, and it means a reader of subscribeTranscript() does not have
+ * to go and check what happens two files later.
+ */
+function chronological(docs) {
+  return (Array.isArray(docs) ? docs : []).slice().reverse();
 }
 
 /* ------------------------------------------------------------ THE UI CONTRACT
@@ -900,7 +956,8 @@ class CustomerChatSession {
   onSnapshot(snapshot) {
     if (this.stopped) return;
     const docs = snapshot && Array.isArray(snapshot.docs) ? snapshot.docs : [];
-    const list = this.store.applySnapshot(docs.map(readDoc));
+    /* Newest-first off the wire, oldest-first into the transcript. */
+    const list = this.store.applySnapshot(chronological(docs).map(readDoc));
     callUi(this.ui, 'renderMessages', list);
   }
 
@@ -1338,6 +1395,8 @@ export function _reset() {
 export const _internals = {
   MESSAGES_COLLECTION,
   TRANSCRIPT_LIMIT,
+  TRANSCRIPT_ORDER,
+  chronological,
   API_START,
   API_SEND,
   CONVERSATION_KEY,

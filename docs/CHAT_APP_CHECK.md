@@ -162,7 +162,7 @@ to protect a surface nobody can reach.
 While OFF the server still *observes*: if a token is present it is verified
 and the outcome logged as one allow-listed word. That is the rollout's
 evidence that real clients have started attesting successfully, and it is what
-makes step 3 below something you can check rather than assume.
+makes step 12 below something you can check rather than assume.
 
 **This is not a bypass.** A bypass is something a caller can reach. This is a
 deployment setting, and the only way to exercise the unenforced path is to be
@@ -185,16 +185,16 @@ listener on `chatMessages`, filtered to one conversation, ordered by
 `createdAt`, limited to 200. That is not a possibility to plan around — it is
 implemented, in `assets/js/chat-customer.js`.
 
-So **Firestore App Check enforcement is definitely relevant**, and step 12
+So **Firestore App Check enforcement is definitely relevant**, and step 13
 below is a real step with real consequences rather than a formality. Turning it
 on without first proving that production browsers attest successfully will
 break every customer's transcript — silently, because a denied listener looks
 like an empty conversation.
 
-The same goes for **Authentication** enforcement, step 13: customers sign in
+The same goes for **Authentication** enforcement, step 14: customers sign in
 anonymously, and a `signInAnonymously()` that Google refuses is a visitor who
 cannot chat at all. This is why `chat-customer.js` initialises App Check
-**before** auth today, while nothing enforces it — so that step 13 is a console
+**before** auth today, while nothing enforces it — so that step 14 is a console
 setting rather than a code change made under pressure.
 
 ## The launch sequence
@@ -202,39 +202,40 @@ setting rather than a code change made under pressure.
 Do these in order. The order is not a preference — several of these steps lock
 real people out if they are done early.
 
-**Where we are: 1 and 2 are done. 3 is next, and it is a manual walkthrough on
-production.**
+**Where we are: 1 and 2 are done. 3 is a Firebase index deploy, then 4 is a
+manual walkthrough on production.**
 
 | # | step | state |
 |---|---|---|
 | 1 | Build the customer frontend | **done** — `assets/js/chat-customer.js` |
 | 2 | Deploy with the public gate OFF | **done for the API half**; the frontend is written and unmerged |
-| 3 | Manually invoke review mode on esthers.ca | next — see `docs/CHAT_CUSTOMER_FRONTEND.md` §9 |
-| 4 | Verify anonymous auth (same uid across a reload) | |
-| 5 | Verify `POST /api/chat/start` | |
-| 6 | Verify `POST /api/chat/send` | |
-| 7 | Verify the realtime Firestore listener | |
-| 8 | Verify close behaviour | |
-| 9 | Build and test the staff UI | |
-| 10 | Verify the staff App Check / auth flow | |
-| 11 | Inspect Firebase App Check metrics | |
-| 12 | **Enable Firestore App Check enforcement** | Firebase console |
-| 13 | **Enable Authentication App Check enforcement** | Firebase console |
-| 14 | Run the full production E2E | |
-| 15 | **Flip the public chat gate** | both constants, one commit |
+| 3 | **Deploy the `(conversationId ASC, createdAt DESC)` Firestore index** | required before the listener works at all |
+| 4 | Manually invoke review mode on esthers.ca | see `docs/CHAT_CUSTOMER_FRONTEND.md` §9 |
+| 5 | Verify anonymous auth (same uid across a reload) | |
+| 6 | Verify `POST /api/chat/start` | |
+| 7 | Verify `POST /api/chat/send` | |
+| 8 | Verify the realtime Firestore listener | including past 200 messages |
+| 9 | Verify close behaviour | |
+| 10 | Build and test the staff UI | |
+| 11 | Verify the staff App Check / auth flow | |
+| 12 | Inspect Firebase App Check metrics | |
+| 13 | **Enable Firestore App Check enforcement** | Firebase console |
+| 14 | **Enable Authentication App Check enforcement** | Firebase console |
+| 15 | Run the full production E2E | |
+| 16 | **Flip the public chat gate** | both constants, one commit |
 
 Notes on the steps that bite:
 
-- **Step 3 is the first real App Check token this project has ever minted.**
+- **Step 4 is the first real App Check token this project has ever minted.**
   Everything before it is proven by test; attestation itself cannot be, because
   the reCAPTCHA key is restricted to esthers.ca. A 200 from
   `POST /api/chat/start` — which already enforces App Check — is the proof.
-- **Step 11 before 12 and 13.** Firebase shows verified vs unverified counts
+- **Step 12 before 13 and 14.** Firebase shows verified vs unverified counts
   per service. Watch for `rejected`: that means a real visitor attested and was
   refused, and enforcing on top of it would lock them out.
-- **Step 13 is the one most likely to lock customers out.** See the section
+- **Step 14 is the one most likely to lock customers out.** See the section
   below.
-- **Step 15 is two constants**, `CHAT_PUBLIC_ENABLED` in `assets/js/chat.js`
+- **Step 16 is two constants**, `CHAT_PUBLIC_ENABLED` in `assets/js/chat.js`
   and in `assets/js/chat-customer.js`. Both `false` today; both flip in the
   same commit, or chat silently does not work.
 
@@ -250,7 +251,7 @@ left to memory.
 
 ## Should Firebase Authentication have App Check enforcement enabled?
 
-**Yes — but at step 6, not before, and it is the step most likely to lock
+**Yes — but at step 14, not before, and it is the step most likely to lock
 customers out if it is done early.**
 
 The reasoning, against this project's actual architecture:
@@ -271,7 +272,7 @@ The reason for care: **every** client that signs in must be attesting before
 it is switched on, including staff. Staff use email/password against the same
 project, so enforcement on Authentication affects the staff inbox too, and
 `/admin/chat` must be initialising App Check as well — not just the customer
-page. Enable it in the same window as step 6, verify a staff sign-in
+page. Enable it in the same window as step 13, verify a staff sign-in
 immediately afterwards, and keep the console tab open to switch it back.
 
 One caveat worth stating rather than glossing: exact console wording and
@@ -340,7 +341,7 @@ key, auto-refresh, concurrent-call memoisation, `getAppCheckToken()` returning
 null rather than throwing, and `authorizedFetch()` header behaviour.
 
 **First real token issuance happens when the module is intentionally loaded on
-a page served from esthers.ca** — i.e. rollout step 1, on production, with
+a page served from esthers.ca** — i.e. rollout step 4, on production, with
 enforcement still off. A normal Vercel branch preview will not do it: previews
 are served from a `*.vercel.app` hostname, which a key restricted to
 esthers.ca will refuse.
@@ -373,7 +374,7 @@ removes the protection App Check exists to provide.
 | `docs/CHAT_CUSTOMER_FRONTEND.md` | the customer architecture and the DevTools review walkthrough |
 | `tests/chat-api/app-check.test.mjs` | 41 tests, the server gate |
 | `tests/chat-api/app-check-client.test.mjs` | 24 tests, the browser App Check module |
-| `tests/chat-api/chat-customer.test.mjs` | 104 tests, the customer frontend |
+| `tests/chat-api/chat-customer.test.mjs` | 117 tests, the customer frontend |
 | `tests/chat-api/fixtures/firebase-sdk-stub.mjs` | stands in for the Firebase Web SDK so the client tests need no network |
 | `tests/chat-api/fixtures/firebase-sdk-full-stub.mjs` | the same, plus Auth and Firestore, for the customer flow |
 | `tests/chat-api/fixtures/source-view.mjs` | reads a module as code rather than as text, so a mention in a comment is not read as a use |

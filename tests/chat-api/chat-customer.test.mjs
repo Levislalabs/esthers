@@ -531,7 +531,7 @@ describe('credentials on the wire', () => {
 /* ================================================ 11-13. THE LISTENER */
 
 describe('the realtime listener', () => {
-  test('the query is filtered by conversationId, ordered by createdAt ascending, and limited',
+  test('the query is filtered by conversationId, ordered by createdAt DESCENDING, and limited',
     async () => {
       const { mod, stub } = await load();
       const { ui, fetcher } = await connectedSession(mod);
@@ -543,7 +543,10 @@ describe('the realtime listener', () => {
         assert.deepEqual(stub.calls.collection[0].path, 'chatMessages');
         assert.deepEqual(stub.calls.where[0],
           { field: 'conversationId', op: '==', value: 'conv-1' });
-        assert.deepEqual(stub.calls.orderBy[0], { field: 'createdAt', direction: 'asc' });
+        /* DESCENDING. Ascending with limit(200) pins the window to the two
+           hundred OLDEST messages, so a conversation past two hundred stops
+           updating. See the rolling-window block below. */
+        assert.deepEqual(stub.calls.orderBy[0], { field: 'createdAt', direction: 'desc' });
         assert.equal(stub.calls.limit[0].n, 200);
       } finally {
         fetcher.restore();
@@ -560,15 +563,63 @@ describe('the realtime listener', () => {
     assert.match(rules, /request\.query\.limit != null/);
   });
 
-  test('the composite index this query needs is already deployed', () => {
+  test('the composite index this query needs is configured', () => {
+    /*
+     * PINNED. The listener orders by createdAt DESC, which Firestore cannot
+     * serve from the ASC/ASC index - it needs its own. Deleting this entry
+     * while the frontend still depends on it would produce a
+     * failed-precondition error in production and an empty transcript for
+     * every customer, so it is pinned here rather than left to memory.
+     */
     const indexes = JSON.parse(
       readFileSync('/home/user/esthers/firestore.indexes.json', 'utf8'));
-    const match = indexes.indexes.find((i) =>
+    const desc = indexes.indexes.find((i) =>
+      i.collectionGroup === 'chatMessages'
+      && i.queryScope === 'COLLECTION'
+      && i.fields.length === 2
+      && i.fields[0].fieldPath === 'conversationId' && i.fields[0].order === 'ASCENDING'
+      && i.fields[1].fieldPath === 'createdAt' && i.fields[1].order === 'DESCENDING');
+    assert.ok(desc,
+      'firestore.indexes.json must carry (conversationId ASC, createdAt DESC) '
+      + 'for the customer transcript listener');
+  });
+
+  test('the ASC index is KEPT - the staff transcript still uses it', () => {
+    /* readTranscript() in api/_chat/service.js orders ascending. Removing the
+       ASC index to "tidy up" after the client switched to DESC would break
+       the staff inbox. */
+    const indexes = JSON.parse(
+      readFileSync('/home/user/esthers/firestore.indexes.json', 'utf8'));
+    const asc = indexes.indexes.find((i) =>
       i.collectionGroup === 'chatMessages'
       && i.fields.length === 2
       && i.fields[0].fieldPath === 'conversationId' && i.fields[0].order === 'ASCENDING'
       && i.fields[1].fieldPath === 'createdAt' && i.fields[1].order === 'ASCENDING');
-    assert.ok(match, 'no index change was needed, and none was made');
+    assert.ok(asc, 'the ASC index must stay');
+
+    const service = readFileSync('/home/user/esthers/api/_chat/service.js', 'utf8');
+    assert.match(service, /\.orderBy\('createdAt', 'asc'\)/,
+      'and the server code that needs it is still there');
+  });
+
+  test('firestore.indexes.json is valid JSON in the expected shape', () => {
+    const raw = readFileSync('/home/user/esthers/firestore.indexes.json', 'utf8');
+    const parsed = JSON.parse(raw);
+    assert.ok(Array.isArray(parsed.indexes));
+    assert.ok(Array.isArray(parsed.fieldOverrides));
+    for (const i of parsed.indexes) {
+      assert.equal(typeof i.collectionGroup, 'string');
+      assert.equal(i.queryScope, 'COLLECTION');
+      assert.ok(Array.isArray(i.fields) && i.fields.length >= 2);
+      for (const f of i.fields) {
+        assert.equal(typeof f.fieldPath, 'string');
+        assert.ok(['ASCENDING', 'DESCENDING'].includes(f.order));
+      }
+    }
+    /* No duplicate index definitions - Firebase rejects the deploy. */
+    const keys = parsed.indexes.map((i) =>
+      i.collectionGroup + ':' + i.fields.map((f) => f.fieldPath + ' ' + f.order).join(','));
+    assert.equal(new Set(keys).size, keys.length, 'duplicate index definition');
   });
 
   test('the listener is unsubscribed when the session stops', async () => {
@@ -1082,7 +1133,7 @@ describe('regressions', () => {
         const cs = q.constraints;
         assert.equal(cs.length, 3, 'exactly three constraints reached query()');
         assert.deepEqual(cs[0].__where, ['conversationId', '==', 'conv-1']);
-        assert.deepEqual(cs[1].__orderBy, ['createdAt', 'asc']);
+        assert.deepEqual(cs[1].__orderBy, ['createdAt', 'desc']);
         assert.equal(cs[2].__limit, 200);
 
         /* And the object handed to onSnapshot is that query. */
@@ -1173,6 +1224,259 @@ describe('regressions', () => {
      */
     const css = readFileSync('/home/user/esthers/assets/css/chat.css', 'utf8');
     assert.match(css, /\.chat__form\[hidden\] \{\s*display: none;/);
+  });
+
+  /* ---------------------------------------------------------------------
+   * THE ROLLING NEWEST-200 WINDOW
+   *
+   * THE BUG: orderBy('createdAt','asc') + limit(200) returns the two hundred
+   * OLDEST messages. limit() applies to the ORDER, not to the display, so once
+   * a conversation passed two hundred the window stopped moving - new messages
+   * fell outside it and the customer's own sends never appeared. A chat that
+   * silently stops updating is worse than one that never worked, because the
+   * visitor cannot tell.
+   * ------------------------------------------------------------------- */
+
+  test('the listener orders createdAt DESCENDING', async () => {
+    const { mod, stub } = await load();
+    const { ui, fetcher } = await connectedSession(mod);
+    try {
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await tick();
+      assert.equal(mod._internals.TRANSCRIPT_ORDER, 'desc');
+      assert.deepEqual(stub.calls.orderBy[0], { field: 'createdAt', direction: 'desc' });
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('and still carries the conversationId equality and limit(200)', async () => {
+    const { mod, stub } = await load();
+    const { ui, fetcher } = await connectedSession(mod);
+    try {
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await tick();
+      assert.deepEqual(stub.calls.where[0],
+        { field: 'conversationId', op: '==', value: 'conv-1' });
+      assert.equal(stub.calls.limit[0].n, 200);
+      assert.equal(mod._internals.TRANSCRIPT_LIMIT, 200);
+      /* The rules cap it, independently of this client. */
+      const rules = readFileSync('/home/user/esthers/firestore.rules', 'utf8');
+      assert.match(rules, /function maxMessageQuery\(\) \{ return 200; \}/);
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('all three constraints reach query(), in order, with desc', async () => {
+    const { mod, stub } = await load();
+    const { ui, fetcher } = await connectedSession(mod);
+    try {
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await tick();
+      const cs = stub.calls.query[0].constraints;
+      assert.equal(cs.length, 3);
+      assert.deepEqual(cs[0].__where, ['conversationId', '==', 'conv-1']);
+      assert.deepEqual(cs[1].__orderBy, ['createdAt', 'desc']);
+      assert.equal(cs[2].__limit, 200);
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('chronological() reverses, immutably', async () => {
+    /*
+     * Tested directly, and here is the honest reason why.
+     *
+     * TranscriptStore.list() sorts by (createdAt, id) on every render, so the
+     * RENDERED order is already right whatever order the documents arrive in -
+     * deleting this reversal would not currently change a single pixel, and a
+     * test claiming otherwise would be theatre. What is asserted is the
+     * transformation itself: it is the contract at the boundary between the
+     * descending query and the renderer, and it keeps the pipeline correct if
+     * the store's sort is ever simplified away.
+     */
+    const { mod } = await load();
+    const input = [{ id: 'c' }, { id: 'b' }, { id: 'a' }];
+    const out = mod._internals.chronological(input);
+    assert.deepEqual(out.map((d) => d.id), ['a', 'b', 'c']);
+    assert.deepEqual(input.map((d) => d.id), ['c', 'b', 'a'],
+      'the SDK\'s own array must not be mutated');
+    assert.notEqual(out, input, 'a new array, not the same one reversed');
+    assert.deepEqual(mod._internals.chronological([]), []);
+    assert.deepEqual(mod._internals.chronological(null), []);
+    assert.deepEqual(mod._internals.chronological(undefined), []);
+  });
+
+  test('a newest-first snapshot renders oldest-first, newest at the bottom',
+    async () => {
+      const { mod, stub } = await load();
+      const { ui, fetcher } = await connectedSession(mod);
+      try {
+        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+        await tick();
+        /* Exactly as Firestore delivers a descending query. */
+        stub.emitSnapshot([
+          { id: 'm3', data: { body: 'newest', senderType: 'staff', createdAt: 300 } },
+          { id: 'm2', data: { body: 'middle', senderType: 'customer', createdAt: 200 } },
+          { id: 'm1', data: { body: 'oldest', senderType: 'customer', createdAt: 100 } }
+        ]);
+        assert.deepEqual(ui.messages.map((m) => m.body), ['oldest', 'middle', 'newest']);
+        assert.equal(ui.messages[ui.messages.length - 1].body, 'newest',
+          'the newest message is the last one rendered - the bottom of the panel');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('THE 201-MESSAGE BOUNDARY: #1 falls out, #2..#201 remain, #201 is newest',
+    async () => {
+      /*
+       * The exact case the bug was about. Firestore is asked for the newest
+       * 200 of 201, descending, so it delivers #201 down to #2 and message #1
+       * is outside the window.
+       */
+      const { mod, stub } = await load();
+      const { ui, fetcher } = await connectedSession(mod);
+      try {
+        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+        await tick();
+
+        /* 201 messages exist; the descending limit(200) yields #201..#2. */
+        const all = [];
+        for (let n = 1; n <= 201; n++) {
+          all.push({
+            id: 'm' + String(n).padStart(4, '0'),
+            data: { body: 'msg ' + n, senderType: 'customer', createdAt: n * 1000 }
+          });
+        }
+        const window200 = all.slice(1).reverse();          /* #201 down to #2 */
+        assert.equal(window200.length, 200);
+        assert.equal(window200[0].data.body, 'msg 201');
+        assert.equal(window200[199].data.body, 'msg 2');
+
+        stub.emitSnapshot(window200);
+
+        const bodies = ui.messages.map((m) => m.body);
+        assert.equal(bodies.length, 200, 'exactly the newest 200 are represented');
+        assert.equal(bodies.includes('msg 1'), false,
+          'message #1 is OUTSIDE the rolling window');
+        assert.equal(bodies.includes('msg 2'), true, 'message #2 is inside it');
+        assert.equal(bodies.includes('msg 201'), true, 'message #201 is present');
+        assert.equal(bodies[0], 'msg 2', 'oldest visible is #2');
+        assert.equal(bodies[199], 'msg 201',
+          'and #201 renders as the NEWEST visible message, at the bottom');
+
+        /* Every one of #2..#201 present, none missing, none duplicated. */
+        for (let n = 2; n <= 201; n++) {
+          assert.equal(bodies.filter((b) => b === 'msg ' + n).length, 1,
+            'msg ' + n + ' appears exactly once');
+        }
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('past 200, a NEWLY ARRIVING message stays visible - the window rolls',
+    async () => {
+      /* THE ACTUAL BUG. With ascending order this message would have fallen
+         outside the window and never appeared. */
+      const { mod, stub } = await load();
+      const { ui, fetcher } = await connectedSession(mod);
+      try {
+        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+        await tick();
+
+        const desc = (from, to) => {
+          const out = [];
+          for (let n = from; n >= to; n--) {
+            out.push({
+              id: 'm' + String(n).padStart(4, '0'),
+              data: { body: 'msg ' + n, senderType: 'customer', createdAt: n * 1000 }
+            });
+          }
+          return out;
+        };
+
+        stub.emitSnapshot(desc(201, 2));
+        assert.equal(ui.messages[199].body, 'msg 201');
+
+        /* #202 arrives. The window rolls: #2 drops off, #202 appears. */
+        stub.emitSnapshot(desc(202, 3));
+        const bodies = ui.messages.map((m) => m.body);
+        assert.equal(bodies.length, 200);
+        assert.equal(bodies.includes('msg 202'), true,
+          'a message sent after 200 MUST still appear');
+        assert.equal(bodies[199], 'msg 202', 'and it is the newest');
+        assert.equal(bodies.includes('msg 2'), false, '#2 has rolled off');
+        assert.equal(bodies[0], 'msg 3', 'oldest visible is now #3');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('no duplicates survive repeated snapshots of a full window', async () => {
+    const { mod, stub } = await load();
+    const { ui, fetcher } = await connectedSession(mod);
+    try {
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await tick();
+      const batch = [];
+      for (let n = 200; n >= 1; n--) {
+        batch.push({
+          id: 'm' + String(n).padStart(4, '0'),
+          data: { body: 'msg ' + n, senderType: 'staff', createdAt: n * 1000 }
+        });
+      }
+      stub.emitSnapshot(batch);
+      stub.emitSnapshot(batch);
+      stub.emitSnapshot(batch.slice().reverse());   /* same set, other order */
+      const bodies = ui.messages.map((m) => m.body);
+      assert.equal(bodies.length, 200);
+      assert.equal(new Set(bodies).size, 200, 'no message rendered twice');
+      assert.equal(bodies[0], 'msg 1');
+      assert.equal(bodies[199], 'msg 200');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('the rolling window keeps exactly one listener, and unsubscribes',
+    async () => {
+      const { mod, stub } = await load();
+      const { ui, session, fetcher } = await connectedSession(mod);
+      try {
+        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+        await tick();
+        stub.emitSnapshot([
+          { id: 'm1', data: { body: 'a', senderType: 'staff', createdAt: 1 } }
+        ]);
+        assert.equal(stub.liveListenerCount(), 1, 'one subscription');
+        assert.equal(stub.calls.onSnapshot.length, 1, 'and it was opened once');
+
+        session.stop();
+        assert.equal(stub.liveListenerCount(), 0, 'unsubscribe still works');
+        assert.equal(stub.calls.unsubscribe.length, 1);
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('the window change introduced no Firestore write API', () => {
+    for (const forbidden of [
+      'addDoc', 'setDoc', 'updateDoc', 'deleteDoc', 'writeBatch',
+      'runTransaction', 'serverTimestamp', 'startAfter', 'endBefore'
+    ]) {
+      assert.equal(CUSTOMER_IDENTS.includes(forbidden), false,
+        'must not appear: ' + forbidden);
+    }
+  });
+
+  test('both rollout gates are still false after the window change', async () => {
+    const { mod } = await load();
+    assert.equal(mod.CHAT_PUBLIC_ENABLED, false);
+    assert.equal(mod.isPublicChatEnabled(), false);
+    assert.match(WIDGET_SRC, /var CHAT_PUBLIC_ENABLED = false;/);
   });
 
   test('the source no longer carries a literal NUL byte', () => {

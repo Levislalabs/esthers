@@ -663,9 +663,16 @@ listener** on `chatMessages`, not a call to `/api/chat/*`:
 ```js
 query(collection(db, 'chatMessages'),
       where('conversationId', '==', id),
-      orderBy('createdAt', 'asc'),
+      orderBy('createdAt', 'desc'),
       limit(200))
 ```
+
+A rolling window on the **newest** 200, reversed client-side for chronological
+display. Ascending with the same limit would have pinned the transcript to the
+two hundred oldest messages, so a long conversation would silently stop
+updating. It needs the `(conversationId ASC, createdAt DESC)` composite index,
+which is configured but not yet deployed. The ascending index is kept — the
+staff `readTranscript()` still uses it.
 
 `firestore.rules` is the entire authority for it — `ownsConversation()` matches
 `chatConversations/{id}.customerUid` against `request.auth.uid`, and the limit

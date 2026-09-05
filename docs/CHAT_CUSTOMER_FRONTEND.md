@@ -140,14 +140,36 @@ test asserts every outbound body against that exact list.
 
 ## 4. The realtime listener
 
+It is a **rolling window on the newest 200 messages**.
+
 ```js
 query(
   collection(db, 'chatMessages'),
   where('conversationId', '==', conversationId),
-  orderBy('createdAt', 'asc'),
+  orderBy('createdAt', 'desc'),     // NEWEST first
   limit(200)
 )
 ```
+
+and the client reverses the returned documents for chronological display:
+
+```js
+const docs = snapshot.docs.slice().reverse();   // chronological()
+```
+
+so the transcript reads oldest at the top, newest at the bottom.
+
+**Why descending.** `limit()` applies to the *order*, not to the display.
+Ascending with `limit(200)` returns the two hundred **oldest** messages, so the
+moment a conversation passes two hundred the window stops moving: new messages
+fall outside it and the customer's own sends never appear. A chat that silently
+stops updating after a long conversation is worse than one that never worked,
+because the visitor has no way to tell. Descending with the same limit is a
+rolling window on the newest two hundred, which is what a live transcript wants.
+
+**This is not pagination.** There is no history beyond the newest two hundred
+and no way to ask for more. Pagination is a separate feature if it is ever
+wanted; nothing here fetches the whole conversation.
 
 Every clause is load-bearing:
 
@@ -160,9 +182,37 @@ Every clause is load-bearing:
   `request.query.limit` to be non-null and `<= 200`. A direct listener bypasses
   the API and therefore every rate limit that lives there, which is why the
   ceiling is in the rules and not merely in the client.
-- **`orderBy createdAt asc`** matches the deployed composite index
-  `(conversationId ASC, createdAt ASC)`. **No index change was needed and none
-  was made.**
+- **`orderBy createdAt desc`** needs its own composite index — see below.
+
+### The index this depends on
+
+`firestore.indexes.json` carries **two** `chatMessages` indexes, and both are
+needed:
+
+| fields | used by |
+|---|---|
+| `conversationId ASC, createdAt ASC` | `readTranscript()` in `api/_chat/service.js` — the staff transcript |
+| `conversationId ASC, createdAt DESC` | **this listener** |
+
+`conversationId` is an equality filter, so its direction stays `ASCENDING` in
+both; only `createdAt` differs. Firestore cannot serve a descending `orderBy`
+from the ascending index, so the second entry is not optional — without it the
+listener fails in production with a `failed-precondition` error and every
+customer sees an empty transcript.
+
+**The DESC index is NOT deployed yet.** Adding it to `firestore.indexes.json` is
+a configuration change; deploying it is a separate, deliberate step on the
+launch checklist. Both entries are pinned by test so neither can be tidied away
+while something still depends on it.
+
+**On the client-side reversal, honestly:** `TranscriptStore.list()` already
+sorts by `(createdAt, id)` on every render, so the rendered order would be
+correct even without `chronological()`. The reversal is the contract at the
+boundary between the descending query and the renderer — it keeps the pipeline
+right if that sort is ever simplified away, and it means a reader of
+`subscribeTranscript()` does not have to check what happens two files later. The
+test asserts the transformation itself rather than pretending it changes the
+output today.
 
 **Ownership is enforced server-side and is not checked in the client.**
 `ownsConversation()` in the rules reads `chatConversations/{id}.customerUid`
@@ -452,7 +502,7 @@ exactly as it is for everybody else.
 
 ## 10. What tests can and cannot prove
 
-`tests/chat-api/chat-customer.test.mjs` — 104 tests — runs both real modules
+`tests/chat-api/chat-customer.test.mjs` — 117 tests — runs both real modules
 with only the four gstatic SDK URLs swapped for a local stub, so the ordering
 and the header separation are proven against the real `chat-app-check.js`
 rather than a stand-in.
@@ -468,7 +518,8 @@ what closes the remaining gap, and it closes it on production.
 ## 11. Where this sits in the launch sequence
 
 See `docs/CHAT_APP_CHECK.md` for the full checklist. This phase delivers
-steps 1–2; step 3 is section 9 above.
+steps 1–2 and the configuration for step 3; step 3's Firebase index deploy
+and step 4's walkthrough (section 9 above) are the next actions.
 
 Firestore and Authentication App Check enforcement are **still off**, and must
 stay off until the customer flow and then the staff flow have both been proven
