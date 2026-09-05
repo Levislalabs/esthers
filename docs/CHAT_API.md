@@ -633,13 +633,51 @@ request, so a Preview deployment without secrets still builds and still
 answers `not_configured`. The loads are wrapped in try/catch so a failure
 becomes a precise diagnostic rather than a cold-start crash with no log line.
 
-Three log prefixes, three meanings:
+Five log prefixes, five meanings:
 
 | prefix | status | meaning |
 |---|---|---|
 | `chat: not configured` | 503 | the environment is wrong; fix it in Vercel |
 | `chat: init failed` | 500 | the SDK failed for a reason that is not the environment |
-| `chat: unhandled` | 500 | an unexpected runtime fault, also allow-listed |
+| `chat: auth failed` | 500 | the token **verifier** broke — not a bad token |
+| `chat: service failed` | 500 | a named stage of the request failed |
+| `chat: unhandled` | 500 | an unexpected fault that named no stage |
+
+### Stage diagnostics for authenticated requests
+
+An authenticated `/api/chat/start` passes through token verification, a
+provider check, an idempotency read, two rate-limit transactions and a write
+transaction. `unknown_error` cannot tell those apart, so each stage labels
+anything it throws with an allow-listed constant from
+`api/_chat/stages.js` — never anything derived from the request:
+
+```
+auth_token_verify_failed         auth_token_verify_internal_error
+auth_customer_provider_check_failed   auth_customer_uid_missing
+auth_staff_lookup_failed         request_validation_failed
+idempotency_lookup_failed        rate_limit_check_failed
+chat_start_transaction_failed    chat_send_transaction_failed
+chat_close_transaction_failed    firestore_operation_failed
+response_serialization_failed    unknown_authenticated_error
+```
+
+The first stage wins: an inner label is more specific than the outer one that
+caught it. `runStage()` only labels and rethrows — it never swallows an error
+or changes a status code.
+
+**A bad token and a broken verifier are now different things.** The verifier
+used to catch *everything* and answer `401 invalid_token`, so an SDK fault, a
+network failure reaching Google's keys, or `auth.verifyIdToken` not being a
+function all told the visitor "your session has expired" and logged nothing.
+Only an allow-listed Firebase `auth/*` code is treated as the caller's fault
+and kept at 401; anything else is a 500 the log can name. Both still refuse
+the request — nothing is let through either way.
+
+**Errors are recognised by tag as well as `instanceof`.** Each chat error
+class sets a stable `chatErrorKind` string. `instanceof` compares against one
+module instance, so if a bundler ever loads `auth.js` twice a well-formed 401
+silently becomes a 500 `unknown_error` — indistinguishable from the fault
+being diagnosed. The tag survives that.
 
 **Why this exists.** The first production deploy answered 500 and logged only
 `chat: unhandled [chat/start] Error`, which identified nothing. Two causes:

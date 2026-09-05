@@ -63,10 +63,22 @@ export const RATE_SECRET = 'test-rate-limit-secret-not-real-0123456789';
 export function makeVerifier(tokens) {
   return async (token) => {
     if (!Object.prototype.hasOwnProperty.call(tokens, token)) {
-      throw new Error('invalid token');
+      /* Shaped like the real thing: firebase-admin rejects a bad token with
+         a FirebaseAuthError carrying an auth/* code, and the API now tells
+         those apart from a verifier that has genuinely broken. A bare Error
+         here would exercise the wrong branch. */
+      throw firebaseAuthError('auth/argument-error');
     }
     return tokens[token];
   };
+}
+
+/* A stand-in FirebaseAuthError. Note name === 'Error': firebase-admin does
+   not override it, which is why the code, not the name, is what classifies. */
+export function firebaseAuthError(code) {
+  const err = new Error('Decoding Firebase ID token failed.');
+  err.code = code;
+  return err;
 }
 
 export const anonToken = (uid) => ({ uid, firebase: { sign_in_provider: 'anonymous' } });

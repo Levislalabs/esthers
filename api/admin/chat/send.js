@@ -13,6 +13,7 @@ const RL = require('../../_chat/rate-limit.js');
 const V = require('../../_chat/validation.js');
 const S = require('../../_chat/service.js');
 const { createHandler } = require('../../_chat/handler.js');
+const { runStage } = require('../../_chat/stages.js');
 
 const OPTIONS = {
   route: 'admin/chat/send',
@@ -20,7 +21,8 @@ const OPTIONS = {
   actor: 'staff',
   needsRateSecret: true,
   run: async (ctx) => {
-    const input = V.validateSend(ctx.body);
+    const input = await runStage('request_validation_failed',
+      () => V.validateSend(ctx.body));
     const request = {
       conversationId: input.conversationId,
       message: input.message,
@@ -29,16 +31,20 @@ const OPTIONS = {
 
     /* Same as the customer route: a proven replay spends the replay
        allowance, a new reply spends the staff-write allowance. */
-    const replay = await S.peekMessage(ctx.db, request);
+    const replay = await runStage('idempotency_lookup_failed',
+      () => S.peekMessage(ctx.db, request));
     if (replay) {
-      await RL.consume(ctx.db, 'replay_uid', ctx.actor.uid, ctx.rateSecret);
+      await runStage('rate_limit_check_failed',
+        () => RL.consume(ctx.db, 'replay_uid', ctx.actor.uid, ctx.rateSecret));
       return H.ok(ctx.res,
         { messageId: replay.messageId, conversationId: input.conversationId });
     }
 
-    await RL.consume(ctx.db, 'staff_write', ctx.actor.uid, ctx.rateSecret);
+    await runStage('rate_limit_check_failed',
+      () => RL.consume(ctx.db, 'staff_write', ctx.actor.uid, ctx.rateSecret));
 
-    const result = await S.sendStaffMessage(ctx.db, ctx.deps, request);
+    const result = await runStage('chat_send_transaction_failed',
+      () => S.sendStaffMessage(ctx.db, ctx.deps, request));
 
     return H.ok(ctx.res, { messageId: result.messageId, conversationId: input.conversationId });
   }

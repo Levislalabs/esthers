@@ -12,6 +12,7 @@ const H = require('../../_chat/http.js');
 const V = require('../../_chat/validation.js');
 const S = require('../../_chat/service.js');
 const { createHandler } = require('../../_chat/handler.js');
+const { runStage } = require('../../_chat/stages.js');
 
 const OPTIONS = {
   route: 'admin/chat/messages',
@@ -29,7 +30,8 @@ const OPTIONS = {
       }
     }
 
-    const result = await S.readTranscript(ctx.db, { conversationId, limit });
+    const result = await runStage('firestore_operation_failed',
+      () => S.readTranscript(ctx.db, { conversationId, limit }));
     return H.ok(ctx.res, result);
   }
 };
