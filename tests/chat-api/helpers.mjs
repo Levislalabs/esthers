@@ -93,6 +93,11 @@ export function makeReq(opts = {}) {
     headers: Object.assign(
       { host: 'www.esthers.ca' },
       opts.token ? { authorization: 'Bearer ' + opts.token } : {},
+      /* App Check travels in its own header, never in Authorization. Passing
+         appCheck: false or omitting it sends none, which is what every test
+         written before App Check existed does - and what a browser that has
+         not yet been given the client module does too. */
+      opts.appCheck ? { 'x-firebase-appcheck': opts.appCheck } : {},
       opts.headers || {}),
     body: opts.body,
     query: opts.query || {},
@@ -109,14 +114,56 @@ export function makeRes() {
   return res;
 }
 
-/* Builds a handler with the emulator db and a stand-in verifier wired in. */
+/* A stand-in for getAppCheck(app).verifyToken.
+
+   Accepts the tokens named in `valid` and refuses everything else the way
+   the real one does - a FirebaseAppCheckError carrying an app-check/* code.
+   The resolved shape mirrors VerifyAppCheckTokenResponse so appIdOf() is
+   exercised on the same field the SDK actually populates. */
+export const APP_CHECK_OK = 'valid-app-check-token.aaaa.bbbb';
+export const APP_CHECK_BAD = 'invalid-app-check-token.cccc.dddd';
+export const APP_CHECK_APP_ID = '1:000000000000:web:0000000000000000000000';
+
+export function makeAppCheckVerifier(valid = [APP_CHECK_OK]) {
+  return async (token) => {
+    if (valid.indexOf(token) === -1) throw appCheckError('app-check-token-expired');
+    return {
+      appId: APP_CHECK_APP_ID,
+      token: { app_id: APP_CHECK_APP_ID, aud: [], iss: '', sub: APP_CHECK_APP_ID,
+               exp: 0, iat: 0 }
+    };
+  };
+}
+
+export function appCheckError(code) {
+  const err = new Error('Decoding App Check token failed.');
+  err.code = code;
+  return err;
+}
+
+/*
+ * Builds a handler with the emulator db and stand-in verifiers wired in.
+ *
+ * opts.appCheckEnforced   true sets CHAT_APP_CHECK_ENFORCED for this handler
+ * opts.appCheckValid      array of tokens the stand-in verifier accepts
+ * opts.verifyAppCheckToken   replace the verifier outright, or pass null to
+ *                            simulate the module having failed to load
+ */
 export function handlerFor(routeModulePath, tokens, opts = {}) {
   const mod = require(routeModulePath);
   const firestore = db();
+  const env = Object.assign({ CHAT_RATE_LIMIT_SECRET: RATE_SECRET }, opts.env || {});
+  if (opts.appCheckEnforced) env.CHAT_APP_CHECK_ENFORCED = '1';
+
+  const verifyAppCheckToken = Object.prototype.hasOwnProperty.call(opts, 'verifyAppCheckToken')
+    ? opts.verifyAppCheckToken
+    : makeAppCheckVerifier(opts.appCheckValid);
+
   return mod.forTest({
     initAdmin: () => ({ db: firestore, auth: null, app: null, projectId: PROJECT_ID }),
     verifyIdToken: makeVerifier(tokens),
-    env: Object.assign({ CHAT_RATE_LIMIT_SECRET: RATE_SECRET }, opts.env || {}),
+    verifyAppCheckToken: verifyAppCheckToken,
+    env: env,
     now: opts.now || (() => Timestamp.now())
   });
 }

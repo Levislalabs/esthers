@@ -317,7 +317,7 @@ describe('each stage of an authenticated request names itself', () => {
   test('the runtime segment is still attached for context', async () => {
     const handler = route({ db: brokenDb('get', boom()) });
     const { log } = await call(handler);
-    assert.match(log, /runtime=node:\d+,sdk_app:[01],sdk_firestore:[01],sdk_auth:[01],sdk_code:[a-z_A-Z]+/);
+    assert.match(log, /runtime=node:\d+,sdk_app:[01],sdk_firestore:[01],sdk_auth:[01],sdk_appcheck:[01],sdk_code:[a-z_A-Z]+/);
   });
 });
 

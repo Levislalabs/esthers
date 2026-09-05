@@ -203,7 +203,7 @@ describe('module loading needs no credentials and initialises nothing', () => {
     const out = execFileSync(process.execPath, ['-e', script],
       { cwd: ROOT, encoding: 'utf8', env: env });
     assert.match(out, /^IMPORT_OK /, out);
-    assert.match(out, /sdk_app:1,sdk_firestore:1,sdk_auth:1,sdk_code:none/,
+    assert.match(out, /sdk_app:1,sdk_firestore:1,sdk_auth:1,sdk_appcheck:1,sdk_code:none/,
       'all three modules must load with no configuration at all');
   });
 
@@ -248,9 +248,9 @@ describe('a module failure now names itself precisely', () => {
     await FB.loadSdk();
     const runtime = FB.describeRuntime();
     assert.match(runtime,
-      /^node:\d{1,3},sdk_app:[01],sdk_firestore:[01],sdk_auth:[01],sdk_code:[A-Za-z_]+$/,
+      /^node:\d{1,3},sdk_app:[01],sdk_firestore:[01],sdk_auth:[01],sdk_appcheck:[01],sdk_code:[A-Za-z_]+$/,
       runtime);
-    assert.match(runtime, /sdk_app:1,sdk_firestore:1,sdk_auth:1,sdk_code:none/);
+    assert.match(runtime, /sdk_app:1,sdk_firestore:1,sdk_auth:1,sdk_appcheck:1,sdk_code:none/);
   });
 
   test('the Node major version is visible, which settles the >=22 question', async () => {

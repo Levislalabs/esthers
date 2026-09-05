@@ -74,6 +74,11 @@ const DIAGNOSTIC_TOKENS = [
   'firebase_admin_firestore_load_failed',
   'firebase_admin_auth_not_found',
   'firebase_admin_auth_load_failed',
+  /* App Check. Its absence is NOT fatal to the three above - see importSdk -
+     so these appear only when App Check itself is the thing being reported. */
+  'firebase_admin_app_check_not_found',
+  'firebase_admin_app_check_load_failed',
+  'firebase_app_check_initialize_failed',
   'firebase_admin_invalid_app_options',
   'firebase_admin_initialize_failed',
   'firebase_firestore_initialize_failed',
@@ -172,6 +177,22 @@ const OTHER_LOAD_CODES = ['ERR_REQUIRE_ESM', 'ERR_DLOPEN_FAILED', 'ERR_INVALID_A
 let sdkApp = null;
 let sdkFirestore = null;
 let sdkAuth = null;
+/*
+ * App Check is tracked SEPARATELY from the three above, and its failure is
+ * deliberately not recorded in sdkLoadFailure.
+ *
+ * The three core modules are load-bearing: without them there is no chat at
+ * all. App Check is a gate in front of chat, and while enforcement is off a
+ * deployment that cannot load it should still serve chat normally. Folding it
+ * into sdkLoadFailure would mean a missing App Check module took the whole
+ * backend down - turning an additive protection into a new way to fail.
+ *
+ * With enforcement ON the outcome is the opposite and equally deliberate:
+ * app-check.js finds no verifier and refuses every request. Fail closed there,
+ * fail open here, and the switch decides which applies.
+ */
+let sdkAppCheck = null;
+let sdkAppCheckFailure = null;    /* allow-listed token, or null */
 let sdkLoadFailure = null;        /* allow-listed token, or null */
 let sdkLoadCode = 'not_attempted'; /* allow-listed code class */
 
@@ -207,10 +228,13 @@ async function importSdk() {
   const settled = await Promise.allSettled([
     import('firebase-admin/app'),
     import('firebase-admin/firestore'),
-    import('firebase-admin/auth')
+    import('firebase-admin/auth'),
+    /* Literal specifier, same as the others, so Vercel's tracer keeps the
+       package in the function bundle. */
+    import('firebase-admin/app-check')
   ]);
 
-  const names = ['app', 'firestore', 'auth'];
+  const names = ['app', 'firestore', 'auth', 'app_check'];
   const loaded = {};
   for (let i = 0; i < settled.length; i += 1) {
     if (settled[i].status === 'fulfilled') loaded[names[i]] = settled[i].value;
@@ -220,17 +244,31 @@ async function importSdk() {
   sdkApp = loaded.app || null;
   sdkFirestore = loaded.firestore || null;
   sdkAuth = loaded.auth || null;
+  sdkAppCheck = loaded.app_check || null;
   if (!sdkLoadFailure) sdkLoadCode = 'none';
 
+  /* App Check missing does not make the load a failure - see the note on
+     sdkAppCheck. The core three decide that. */
   return sdkLoadFailure
     ? { ok: false, reason: sdkLoadFailure }
-    : { ok: true, sdk: { app: sdkApp, firestore: sdkFirestore, auth: sdkAuth } };
+    : { ok: true, sdk: { app: sdkApp, firestore: sdkFirestore, auth: sdkAuth,
+                         appCheck: sdkAppCheck } };
 }
 
 function noteModuleFailure(which, err) {
   const code = err && typeof err.code === 'string' ? err.code : '';
   const name = err && typeof err.name === 'string' ? err.name : '';
   const notFound = NOT_FOUND_CODES.indexOf(code) !== -1;
+
+  /* App Check is recorded on its own line and never touches sdkLoadFailure,
+     so it cannot make the core load look failed. */
+  if (which === 'app_check') {
+    if (!sdkAppCheckFailure) {
+      sdkAppCheckFailure = 'firebase_admin_app_check'
+        + (notFound ? '_not_found' : '_load_failed');
+    }
+    return;
+  }
 
   /* First failure wins: a cascade tells us less than the thing that broke. */
   if (!sdkLoadFailure) {
@@ -253,6 +291,7 @@ function describeRuntime() {
     + ',sdk_app:' + (sdkApp ? '1' : '0')
     + ',sdk_firestore:' + (sdkFirestore ? '1' : '0')
     + ',sdk_auth:' + (sdkAuth ? '1' : '0')
+    + ',sdk_appcheck:' + (sdkAppCheck ? '1' : '0')
     + ',sdk_code:' + sdkLoadCode;
 }
 
@@ -516,7 +555,27 @@ async function buildAdmin(deps) {
   const auth = stage('firebase_auth_initialize_failed', false,
     () => sdk.auth.getAuth(app));
 
-  return { app: app, db: db, auth: auth, projectId: config.projectId };
+  /*
+   * App Check, if its module loaded. NOT wrapped in stage(): stage() throws a
+   * ChatInitError, which would fail the whole initialisation and take chat
+   * down over an additive gate. A null appCheck is a legitimate state that
+   * app-check.js handles - permissively while enforcement is off, by refusing
+   * every request once it is on.
+   */
+  let appCheck = null;
+  if (sdk.appCheck && typeof sdk.appCheck.getAppCheck === 'function') {
+    try {
+      appCheck = sdk.appCheck.getAppCheck(app);
+    } catch (err) {
+      appCheck = null;
+      if (!sdkAppCheckFailure) sdkAppCheckFailure = 'firebase_app_check_initialize_failed';
+    }
+  }
+
+  return {
+    app: app, db: db, auth: auth, appCheck: appCheck,
+    projectId: config.projectId
+  };
 }
 
 /*
@@ -568,13 +627,19 @@ function _resetSdk() {
   sdkApp = null;
   sdkFirestore = null;
   sdkAuth = null;
+  sdkAppCheck = null;
+  sdkAppCheckFailure = null;
   sdkLoadFailure = null;
   sdkLoadCode = 'not_attempted';
 }
 
+/* The App Check module's own load state, for diagnostics. Null when it
+   loaded, or an allow-listed token naming how it did not. */
+function appCheckLoadFailure() { return sdkAppCheckFailure; }
+
 module.exports = {
   EXPECTED_PROJECT_ID, ENV, DIAGNOSTIC_TOKENS, SHAPE_FIELDS,
-  loadSdk, describeRuntime,
+  loadSdk, describeRuntime, appCheckLoadFailure,
   ChatConfigError, ChatInitError,
   normalisePrivateKey, inspectPrivateKeyShape, inspectClientEmailShape,
   describeConfigShape, classifyInitError,

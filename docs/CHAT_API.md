@@ -633,6 +633,28 @@ request, so a Preview deployment without secrets still builds and still
 answers `not_configured`. The loads are wrapped in try/catch so a failure
 becomes a precise diagnostic rather than a cold-start crash with no log line.
 
+## Firebase App Check
+
+Every chat route runs an App Check gate between the configuration check and
+Firebase Auth: `createHandler` calls `verifyAppCheck()` from
+`api/_chat/app-check.js`, which reads the `X-Firebase-AppCheck` header and
+verifies it with `getAppCheck(app).verifyToken()`.
+
+It is **additive** - same-origin, ID-token verification, the anonymous-provider
+rule, staff authorisation, validation and the rate limiter all still run behind
+it, and there are tests asserting each of those is still reached.
+
+It is **staged**: enforcement is gated by `CHAT_APP_CHECK_ENFORCED` and ships
+OFF, because no browser sends App Check tokens until the chat frontend is
+connected. While off the server verifies any token that does arrive and logs
+one allow-listed word, which is the rollout's evidence that clients are
+attesting. Once on, a missing or invalid token is `401 app_check_required` /
+`401 app_check_invalid`.
+
+The full rationale, the enforcement rollout sequence, the debug-token strategy
+and the config values still needed from the owner are in
+**docs/CHAT_APP_CHECK.md**.
+
 Five log prefixes, five meanings:
 
 | prefix | status | meaning |
