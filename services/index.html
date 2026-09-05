@@ -242,37 +242,8 @@
     </div>
   </section>
 
-  <!-- ===================================================================
-       THIS SECTION IS WAITING ON ONE PHOTOGRAPH.
-
-       It should carry the shot of the beige/tan curved formed sheet-metal
-       piece on the wooden worktable. That file is not in this repository -
-       assets/img/work/ holds six photographs and all six are chimney work -
-       so the section runs text-only rather than borrowing a chimney photo
-       and captioning it as panel work.
-
-       TO ADD IT:
-         1. Save the photograph as
-              assets/img/work/formed-panel-trim.webp
-            (long edge about 1200px, quality 80; a .jpg is fine too, just
-            match the extension in the src below.)
-         2. Delete svc--solo from the wrap div, and add svc--flip if you
-            want the photo on the left like section 02.
-         3. Paste this figure in as the last child of that div:
-
-            <figure class="svc__media">
-              <img src="../assets/img/work/formed-panel-trim.webp"
-                   width="1200" height="900" loading="lazy" decoding="async"
-                   alt="A curved formed sheet metal profile in a tan finish
-                        on a wooden bench in the shop.">
-              <figcaption>Custom formed panel trim</figcaption>
-            </figure>
-
-       Do not put it in section 02. That photograph there is a flue collar
-       welded to a flashing base, which is what its caption says it is.
-       =================================================================== -->
   <section class="band band--paper band--rule">
-    <div class="wrap wrap--wide svc svc--solo">
+    <div class="wrap wrap--wide svc svc--flip">
       <div>
         <p class="eyb">04 &mdash; Wall &amp; Roof Panels</p>
         <h2 class="t-2">Metal wall and<br>roof panels</h2>
@@ -310,6 +281,13 @@
           </p>
         </div>
       </div>
+
+      <figure class="svc__media">
+        <img src="../assets/img/work/formed-panel-trim.jpg" width="1536" height="1198"
+             loading="lazy" decoding="async"
+             alt="Custom Curve Cap Flashing in a tan finish on a fabrication workbench.">
+        <figcaption>Custom Curve Cap Flashing</figcaption>
+      </figure>
     </div>
   </section>
 
