@@ -19,6 +19,7 @@ const {
   DIAGNOSTIC_TOKENS, describeConfigShape, describeRuntime
 } = require('./firebase-admin.js');
 const { AuthError, authenticateCustomer, authenticateStaff } = require('./auth.js');
+const AC = require('./app-check.js');
 const { ValidationError } = require('./validation.js');
 const { ServiceError } = require('./service.js');
 const RL = require('./rate-limit.js');
@@ -50,6 +51,9 @@ function respondToError(res, err, route) {
     return H.fail(res, 429, err.code || 'rate_limited',
       'You have sent a lot of messages just now. Please wait a moment and try again.',
       { retryAfter: err.retryAfterSeconds });
+  }
+  if (err instanceof AC.AppCheckError || kindOf(err) === 'app_check') {
+    return H.fail(res, err.status, err.code, err.message);
   }
   if (err instanceof AuthError || kindOf(err) === 'auth') {
     return H.fail(res, err.status, err.code, err.message);
@@ -114,7 +118,7 @@ function respondToError(res, err, route) {
 }
 
 /* The error's own stable kind marker, allow-listed. */
-const ERROR_KINDS = ['auth', 'validation', 'service', 'rate_limit'];
+const ERROR_KINDS = ['auth', 'validation', 'service', 'rate_limit', 'app_check'];
 function kindOf(err) {
   const kind = err && typeof err.chatErrorKind === 'string' ? err.chatErrorKind : '';
   return ERROR_KINDS.indexOf(kind) === -1 ? null : kind;
@@ -205,6 +209,41 @@ function createHandler(options) {
       const verifyIdToken = (options.deps && options.deps.verifyIdToken)
         ? options.deps.verifyIdToken
         : (token) => admin.auth.verifyIdToken(token, true);
+
+      /*
+       * APP CHECK, before authentication and after configuration.
+       *
+       * Before authentication because it is the cheaper question - "is this
+       * our app?" - and answering it first means an unattested caller never
+       * reaches the ID-token verification behind it.
+       *
+       * After configuration because verification needs the initialised Admin
+       * app. And still after the same-origin and body checks above, which
+       * cost nothing and catch more.
+       *
+       * NOT before the rate limiter, which stays where it is: rate limiting
+       * writes a Firestore document, and the existing comment at the top of
+       * this file explains why that must never be reachable unauthenticated.
+       */
+      const verifyAppCheckToken = (options.deps && options.deps.verifyAppCheckToken)
+        ? options.deps.verifyAppCheckToken
+        : (admin.appCheck ? (token) => admin.appCheck.verifyToken(token) : null);
+
+      const appCheck = await AC.verifyAppCheck({
+        req: req,
+        env: (options.deps && options.deps.env) || process.env,
+        verifyToken: verifyAppCheckToken
+      });
+
+      /* One line, only while enforcement is off, and only when the result is
+         not the expected "no token yet". This is the rollout's evidence that
+         real clients have started sending valid tokens; it goes quiet the
+         moment enforcement is on, because from then on an invalid token is a
+         refusal rather than an observation. Every field is allow-listed. */
+      if (!appCheck.enforced && appCheck.outcome !== 'absent') {
+        console.log('chat: app check observed [' + options.route + '] '
+          + AC.safeOutcome(appCheck.outcome));
+      }
 
       let rateSecret = null;
       if (options.needsRateSecret) {

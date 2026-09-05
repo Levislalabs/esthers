@@ -350,7 +350,7 @@ describe('end to end through the route', () => {
   test('the runtime line now reports all three modules loaded', async () => {
     await FB.loadSdk();
     const runtime = FB.describeRuntime();
-    assert.match(runtime, /sdk_app:1,sdk_firestore:1,sdk_auth:1,sdk_code:none/,
+    assert.match(runtime, /sdk_app:1,sdk_firestore:1,sdk_auth:1,sdk_appcheck:1,sdk_code:none/,
       'sdk_auth:0 with sdk_code:ERR_REQUIRE_ESM was the production failure');
   });
 });
