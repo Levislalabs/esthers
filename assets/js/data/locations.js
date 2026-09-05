@@ -105,8 +105,8 @@ CM.contactSection = {
         { name: 'Nicki / Jordan', email: 'custom@esthers.ca' }
       ],
       specialties:
-        'Specialty fabrication: chimney caps, vents, curved flashing, arched-window work and ' +
-        'copper scuppers, among other custom sheet metal projects. If you have drawn it, ask ' +
+        'Specialty fabrication: vents, curved flashing, arched-window work and copper ' +
+        'scuppers, among other custom sheet metal projects. If you have drawn it, ask ' +
         'us about it.',
       mapAddress: '3701 Keith Street, Burnaby, BC V5J 3B9'
     }

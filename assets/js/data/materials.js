@@ -331,8 +331,21 @@ CM.comparison = {
 };
 
 /*
- * Services offered. The index is shown in the UI. It reads as a catalogue
- * of nine, not a sequence, so nothing depends on the order beyond display.
+ * Services offered.
+ *
+ * WHERE THIS IS USED. The Services page no longer renders from this list -
+ * it carries hand-written sections in services/index.html, one per service,
+ * each with what the work includes, where it goes, the materials it can be
+ * made from and a photograph. Editing a name or a description here will not
+ * change that page; edit services/index.html instead.
+ *
+ * The list stays because app.js still builds a grid from it wherever a
+ * #services-grid appears, and because it is the short catalogue form of the
+ * same set. Keep the two in step.
+ *
+ * WHAT NOT TO PUT HERE. Nothing about another company's brand, product line
+ * or trade relationship - no "distributor for", no "dealer", no supplier
+ * names. Describe what Esther's makes and supplies, generically.
  */
 CM.services = [
   {
@@ -348,12 +361,6 @@ CM.services = [
           'opportunities for water seepage, so you get superior protection with a cleaner look.'
   },
   {
-    id: 'copper-gutter',
-    name: 'Copper Gutter Systems',
-    body: 'Distributor for Euracraft Tecu copper gutter systems. 18 oz European-style gutters in ' +
-          '5" and 6". Fully soldered seams, classic architectural appeal.'
-  },
-  {
     id: 'aluminum-flashing',
     name: 'Aluminum Flashing',
     body: 'Corrosion-resistant aluminum wall and roof flashing. Ideal for coastal and industrial ' +
@@ -367,10 +374,9 @@ CM.services = [
   {
     id: 'panels',
     name: 'Metal Wall & Roof Panels',
-    body: 'Roll-formed prepainted steel panels cut to length for walls, roofs and soffit: ' +
-          'board-and-batten, lap siding, plank and standing rib profiles in over 80 colours and ' +
-          'woodgrain finishes. Supplied with the closures, trims, clips and fasteners the ' +
-          'installation calls for.'
+    body: 'Prefinished steel panel systems cut to length for walls, roofs and soffit, in a wide ' +
+          'range of colours and woodgrain finishes. Supplied with the matching trims, closures, ' +
+          'clips and fasteners the installation calls for.'
   }
 ];
 

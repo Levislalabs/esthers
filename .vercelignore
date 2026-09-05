@@ -71,6 +71,11 @@ node_modules/
 # ---------------------------------------------------------------------
 assets/img/work/*.jpg
 
+# One exception to the rule above. The Services page displays this
+# photograph in "02 - Flashing", so it has to be served. Unlike the
+# camera originals it is already a web-sized 233 KB frame with no EXIF.
+!assets/img/work/formed-panel-trim.jpg
+
 # ---------------------------------------------------------------------
 # Firebase configuration and the Firestore rules tests.
 #
