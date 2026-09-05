@@ -384,16 +384,21 @@
     root = $('#chat');
     if (!root) return false;
 
-    /* ---- closed state ---- */
+    /* ---- closed state ----
+       Every asset path below is root-relative, not document-relative. The
+       mascot files live at the site root, but this widget is on every page -
+       including /services and /gallery - and a bare "assets/..." there
+       resolves against the directory and 404s. The leading slash is the
+       whole fix. */
     var picture = el('picture');
     picture.appendChild(el('source', {
       type: 'image/webp',
-      srcset: 'assets/img/chat-mascot-240.webp 240w, assets/img/chat-mascot-360.webp 360w',
+      srcset: '/assets/img/chat-mascot-240.webp 240w, /assets/img/chat-mascot-360.webp 360w',
       sizes: '110px'
     }));
     mascot = el('img', {
       class: 'chat__mascot',
-      src: 'assets/img/chat-mascot-240.webp',
+      src: '/assets/img/chat-mascot-240.webp',
       width: '1240', height: '1191',
       loading: 'lazy', decoding: 'async',
       /* An image is natively draggable, and that drag hijacks the gesture:
@@ -421,7 +426,7 @@
     /* ---- panel ---- */
     var avatar = el('img', {
       class: 'chat__avatar',
-      src: 'assets/img/chat-mascot-240.webp',
+      src: '/assets/img/chat-mascot-240.webp',
       alt: '', loading: 'lazy', decoding: 'async'
     });
 

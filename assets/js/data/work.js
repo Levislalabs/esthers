@@ -45,6 +45,10 @@ CM.workSection = {
    *
    *   id       A short nickname, only used to tell cards apart. Never shown.
    *   image    Where the photo file is. Put photos in assets/img/work/
+   *            and write the path with a LEADING SLASH, as below. The
+   *            gallery renders on /gallery as well as the home page, and
+   *            without the slash the browser looks for the file inside
+   *            /gallery/ and shows a broken image.
    *   title    The bold line under the photo.
    *   caption  The small grey line beside the title.
    *   alt      A sentence describing the photo for someone who cannot see
@@ -69,8 +73,8 @@ CM.workSection = {
 
     {
       id: 'louvered-cap-stack',
-      image: 'assets/img/work/louvered-cap-stack-720.webp',
-      imageLarge: 'assets/img/work/louvered-cap-stack-1200.webp',
+      image: '/assets/img/work/louvered-cap-stack-720.webp',
+      imageLarge: '/assets/img/work/louvered-cap-stack-1200.webp',
       title: 'Large Architectural Louvered Chimney Cap',
       caption: '',
       alt:
@@ -82,8 +86,8 @@ CM.workSection = {
 
     {
       id: 'chase-cover',
-      image: 'assets/img/work/chase-cover-720.webp',
-      imageLarge: 'assets/img/work/chase-cover-1200.webp',
+      image: '/assets/img/work/chase-cover-720.webp',
+      imageLarge: '/assets/img/work/chase-cover-1200.webp',
       title: 'Chimney Chase Cover',
       caption: '',
       alt:
@@ -95,8 +99,8 @@ CM.workSection = {
 
     {
       id: 'louvered-cap-sloped',
-      image: 'assets/img/work/louvered-cap-sloped-720.webp',
-      imageLarge: 'assets/img/work/louvered-cap-sloped-1200.webp',
+      image: '/assets/img/work/louvered-cap-sloped-720.webp',
+      imageLarge: '/assets/img/work/louvered-cap-sloped-1200.webp',
       title: 'Louvered Chimney Cap with Sloped Rain Cover',
       caption: '',
       alt:
@@ -108,8 +112,8 @@ CM.workSection = {
 
     {
       id: 'shroud-flared',
-      image: 'assets/img/work/shroud-flared-720.webp',
-      imageLarge: 'assets/img/work/shroud-flared-1200.webp',
+      image: '/assets/img/work/shroud-flared-720.webp',
+      imageLarge: '/assets/img/work/shroud-flared-1200.webp',
       title: 'Custom Fabricated Chimney Shroud',
       caption: '',
       alt:
@@ -121,8 +125,8 @@ CM.workSection = {
 
     {
       id: 'flue-collar-flashing',
-      image: 'assets/img/work/flue-collar-flashing-720.webp',
-      imageLarge: 'assets/img/work/flue-collar-flashing-1200.webp',
+      image: '/assets/img/work/flue-collar-flashing-720.webp',
+      imageLarge: '/assets/img/work/flue-collar-flashing-1200.webp',
       title: 'Custom Metal Chimney Flashing & Flue Collar',
       caption: '',
       alt:
@@ -134,7 +138,7 @@ CM.workSection = {
 
     {
       id: 'shroud-architectural',
-      image: 'assets/img/work/shroud-architectural-720.webp',
+      image: '/assets/img/work/shroud-architectural-720.webp',
       title: 'Custom Architectural Chimney Shroud',
       caption: '',
       alt:

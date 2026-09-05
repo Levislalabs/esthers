@@ -684,6 +684,70 @@ h1, h2, h3, h4 { font-family: var(--sans); margin: 0; text-wrap: balance; }
   .svc__lists { grid-template-columns: 1fr; gap: 22px; }
 }
 
+/* ------------------------------------------------------ specialty callout
+
+   Used once, on the services page, for the louvered and architectural cap
+   work. It is a facet of a service above rather than a service of its own,
+   so it is deliberately NOT built from .svc: a panel lifted off the ground
+   with one orange edge, and a photograph capped well below the size of a
+   service photo so the two never read as siblings.
+
+   The media column is clamped rather than a fraction. At 1440 a plain
+   0.8fr would hand the photograph a 480px column and a 640px height, which
+   is taller than the text beside it and turns a callout back into a
+   service row. */
+.feat {
+  display: grid;
+  grid-template-columns: clamp(220px, 30%, 330px) minmax(0, 1fr);
+  gap: clamp(22px, 3.4vw, 48px);
+  align-items: center;
+  background: var(--panel);
+  border-radius: var(--bev);
+  border-left: 3px solid var(--orange);
+  padding: clamp(22px, 3vw, 40px);
+}
+.feat__media { margin: 0; }
+/* 3/4 is the file's own ratio (1200x1600), so cover crops nothing. */
+.feat__media img {
+  width: 100%; height: auto;
+  aspect-ratio: 3 / 4; object-fit: cover;
+  border-radius: var(--bev-s);
+}
+.feat__media figcaption {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--body-2); margin-top: 12px;
+}
+.feat__body .t-2 { margin-bottom: 14px; }
+.feat__ask {
+  margin-top: 26px; padding-top: 22px;
+  border-top: 1px solid var(--rule-strong);
+}
+.feat__who {
+  font-size: 1.03rem; line-height: 1.5; font-weight: 700;
+  color: var(--white); margin: 0 0 8px;
+}
+/* The address sits in a .metaline, which uppercases - and MANAGER@ESTHERS.CA
+   is not how the rest of the site writes an email. Every other mailto on the
+   site renders in normal case; this one matches them. */
+.feat__mail {
+  color: var(--orange); text-decoration: none;
+  text-transform: none; letter-spacing: 0.04em;
+  border-bottom: 1px solid transparent;
+}
+.feat__mail:hover, .feat__mail:focus-visible { border-bottom-color: currentColor; }
+
+@media (max-width: 900px) {
+  .feat { grid-template-columns: 1fr; }
+  /* Heading first on a phone. The photograph is the evidence, not the
+     introduction, so it follows the copy the way the service rows do.
+
+     The cap is the point of the whole block. Stacked and unconstrained
+     this portrait photo runs to 914px tall at 820 - taller than the 658px
+     square a real service row gets, so the callout would end up shouting
+     louder than the services it is a footnote to. */
+  .feat__media { order: 1; max-width: 340px; }
+}
+
 /* --------------------------------------------------------------- CTA band */
 
 .cta {
