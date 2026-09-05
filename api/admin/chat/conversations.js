@@ -11,6 +11,7 @@ const H = require('../../_chat/http.js');
 const S = require('../../_chat/service.js');
 const { ValidationError } = require('../../_chat/validation.js');
 const { createHandler } = require('../../_chat/handler.js');
+const { runStage } = require('../../_chat/stages.js');
 
 const ALLOWED_STATUS = ['open', 'closed'];
 
@@ -33,7 +34,8 @@ const OPTIONS = {
       }
     }
 
-    const result = await S.listConversations(ctx.db, { status, limit });
+    const result = await runStage('firestore_operation_failed',
+      () => S.listConversations(ctx.db, { status, limit }));
     return H.ok(ctx.res, result);
   }
 };

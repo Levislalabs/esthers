@@ -13,6 +13,7 @@ const RL = require('../_chat/rate-limit.js');
 const V = require('../_chat/validation.js');
 const S = require('../_chat/service.js');
 const { createHandler } = require('../_chat/handler.js');
+const { runStage } = require('../_chat/stages.js');
 
 const OPTIONS = {
   route: 'chat/send',
@@ -20,7 +21,8 @@ const OPTIONS = {
   actor: 'customer',
   needsRateSecret: true,
   run: async (ctx) => {
-    const input = V.validateSend(ctx.body);
+    const input = await runStage('request_validation_failed',
+      () => V.validateSend(ctx.body));
     const request = {
       customerUid: ctx.actor.uid,      /* verified token, never the body */
       conversationId: input.conversationId,
@@ -31,17 +33,24 @@ const OPTIONS = {
     /* A retry of a message already stored spends the replay allowance rather
        than the send allowance. A NEW message never takes this path, so an
        invented idempotency key cannot be used to skip the send limit. */
-    const replay = await S.peekMessage(ctx.db, request);
+    const replay = await runStage('idempotency_lookup_failed',
+      () => S.peekMessage(ctx.db, request));
     if (replay) {
-      await RL.consume(ctx.db, 'replay_uid', ctx.actor.uid, ctx.rateSecret);
+      await runStage('rate_limit_check_failed',
+        () => RL.consume(ctx.db, 'replay_uid', ctx.actor.uid, ctx.rateSecret));
       return H.ok(ctx.res,
         { messageId: replay.messageId, conversationId: input.conversationId });
     }
 
-    await RL.consume(ctx.db, 'send_uid', ctx.actor.uid, ctx.rateSecret);
-    if (ctx.ip) await RL.consume(ctx.db, 'send_ip', ctx.ip, ctx.rateSecret);
+    await runStage('rate_limit_check_failed',
+      () => RL.consume(ctx.db, 'send_uid', ctx.actor.uid, ctx.rateSecret));
+    if (ctx.ip) {
+      await runStage('rate_limit_check_failed',
+        () => RL.consume(ctx.db, 'send_ip', ctx.ip, ctx.rateSecret));
+    }
 
-    const result = await S.sendCustomerMessage(ctx.db, ctx.deps, request);
+    const result = await runStage('chat_send_transaction_failed',
+      () => S.sendCustomerMessage(ctx.db, ctx.deps, request));
 
     return H.ok(ctx.res, { messageId: result.messageId, conversationId: input.conversationId });
   }

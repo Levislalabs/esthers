@@ -13,6 +13,7 @@ const RL = require('../_chat/rate-limit.js');
 const V = require('../_chat/validation.js');
 const S = require('../_chat/service.js');
 const { createHandler } = require('../_chat/handler.js');
+const { runStage } = require('../_chat/stages.js');
 
 const OPTIONS = {
   route: 'chat/start',
@@ -20,7 +21,11 @@ const OPTIONS = {
   actor: 'customer',
   needsRateSecret: true,
   run: async (ctx) => {
-    const input = V.validateStart(ctx.body);
+    /* Each stage is labelled so an unexpected failure names where it
+       happened. The labels are constants; nothing from the request reaches
+       them. Nothing is caught and continued - runStage rethrows. */
+    const input = await runStage('request_validation_failed',
+      () => V.validateStart(ctx.body));
     const request = {
       customerUid: ctx.actor.uid,      /* verified token, never the body */
       name: input.name,
@@ -37,31 +42,38 @@ const OPTIONS = {
      *
      * This also raises 409 on the same key with a different payload.
      */
-    const replay = await S.peekStart(ctx.db, request);
+    const replay = await runStage('idempotency_lookup_failed',
+      () => S.peekStart(ctx.db, request));
     if (replay) {
-      await RL.consume(ctx.db, 'replay_uid', ctx.actor.uid, ctx.rateSecret);
-      return H.ok(ctx.res, {
+      await runStage('rate_limit_check_failed',
+        () => RL.consume(ctx.db, 'replay_uid', ctx.actor.uid, ctx.rateSecret));
+      return runStage('response_serialization_failed', () => H.ok(ctx.res, {
         conversationId: replay.conversationId,
         messageId: replay.messageId,
         status: replay.status
-      });
+      }));
     }
 
     /* Per-uid first: it is the cheaper bucket and the one an honest retry
        loop trips. The per-IP bucket is the one a fresh anonymous uid cannot
        escape. */
-    await RL.consume(ctx.db, 'start_uid', ctx.actor.uid, ctx.rateSecret);
-    if (ctx.ip) await RL.consume(ctx.db, 'start_ip', ctx.ip, ctx.rateSecret);
+    await runStage('rate_limit_check_failed',
+      () => RL.consume(ctx.db, 'start_uid', ctx.actor.uid, ctx.rateSecret));
+    if (ctx.ip) {
+      await runStage('rate_limit_check_failed',
+        () => RL.consume(ctx.db, 'start_ip', ctx.ip, ctx.rateSecret));
+    }
 
-    const result = await S.startConversation(ctx.db, ctx.deps, request);
+    const result = await runStage('chat_start_transaction_failed',
+      () => S.startConversation(ctx.db, ctx.deps, request));
 
     /* An explicit allow-list. No customerUid, no email, no internal
        timestamps, no rate-limit state. */
-    return H.ok(ctx.res, {
+    return runStage('response_serialization_failed', () => H.ok(ctx.res, {
       conversationId: result.conversationId,
       messageId: result.messageId,
       status: result.status
-    });
+    }));
   }
 };
 

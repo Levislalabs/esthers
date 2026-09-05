@@ -412,7 +412,7 @@ describe('what a production request actually gets', () => {
     const { lines, value: res } = await captureLog(() => callNoAuth(handler));
     assert.equal(res.statusCode, 500);
     assert.equal(res.payload.code, 'server_error');
-    assert.match(lines[0], /^chat: unhandled \[chat\/start\] runtime_type_error$/);
+    assert.match(lines[0], /^chat: unhandled \[chat\/start\] runtime_type_error runtime=/);
     assert.equal(lines[0].includes('is not a function'), false, 'no message may leak');
   });
 

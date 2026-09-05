@@ -37,6 +37,8 @@ class ServiceError extends Error {
     this.name = 'ServiceError';
     this.status = status;
     this.code = code;
+    /* See the note on AuthError: recognised by tag as well as instanceof. */
+    this.chatErrorKind = 'service';
   }
 }
 

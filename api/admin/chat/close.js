@@ -13,6 +13,7 @@ const RL = require('../../_chat/rate-limit.js');
 const V = require('../../_chat/validation.js');
 const S = require('../../_chat/service.js');
 const { createHandler } = require('../../_chat/handler.js');
+const { runStage } = require('../../_chat/stages.js');
 
 const OPTIONS = {
   route: 'admin/chat/close',
@@ -23,9 +24,11 @@ const OPTIONS = {
     V.requireNoPrivilegedFields(ctx.body);
     const conversationId = V.validConversationId(ctx.body.conversationId);
 
-    await RL.consume(ctx.db, 'staff_write', ctx.actor.uid, ctx.rateSecret);
+    await runStage('rate_limit_check_failed',
+      () => RL.consume(ctx.db, 'staff_write', ctx.actor.uid, ctx.rateSecret));
 
-    const result = await S.closeConversation(ctx.db, ctx.deps, { conversationId });
+    const result = await runStage('chat_close_transaction_failed',
+      () => S.closeConversation(ctx.db, ctx.deps, { conversationId }));
     return H.ok(ctx.res, {
       conversationId: result.conversationId,
       status: result.status

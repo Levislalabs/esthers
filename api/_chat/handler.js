@@ -22,6 +22,7 @@ const { AuthError, authenticateCustomer, authenticateStaff } = require('./auth.j
 const { ValidationError } = require('./validation.js');
 const { ServiceError } = require('./service.js');
 const RL = require('./rate-limit.js');
+const { stageOf, tagStage, runStage } = require('./stages.js');
 
 const RATE_SECRET_ENV = 'CHAT_RATE_LIMIT_SECRET';
 
@@ -35,15 +36,30 @@ const RATE_SECRET_REASON = 'missing_rate_limit_secret';
  * with a generic sentence, and the detail goes to the log as a short code.
  */
 function respondToError(res, err, route) {
-  if (err instanceof RL.RateLimitError) {
+  /*
+   * Recognition is by TAG OR instanceof, not instanceof alone.
+   *
+   * instanceof compares against one particular module instance. If a bundler
+   * or a duplicated dependency ever loads auth.js twice, a perfectly
+   * well-formed 401 stops matching and falls through to the generic 500 -
+   * which is indistinguishable from the failure being diagnosed here. The
+   * tag is a plain string set in the constructor and survives that.
+   */
+  if (err instanceof RL.RateLimitError || kindOf(err) === 'rate_limit') {
     res.setHeader('Retry-After', String(err.retryAfterSeconds));
-    return H.fail(res, 429, err.code,
+    return H.fail(res, 429, err.code || 'rate_limited',
       'You have sent a lot of messages just now. Please wait a moment and try again.',
       { retryAfter: err.retryAfterSeconds });
   }
-  if (err instanceof AuthError) return H.fail(res, err.status, err.code, err.message);
-  if (err instanceof ValidationError) return H.fail(res, err.status, err.code, err.message);
-  if (err instanceof ServiceError) return H.fail(res, err.status, err.code, err.message);
+  if (err instanceof AuthError || kindOf(err) === 'auth') {
+    return H.fail(res, err.status, err.code, err.message);
+  }
+  if (err instanceof ValidationError || kindOf(err) === 'validation') {
+    return H.fail(res, err.status, err.code, err.message);
+  }
+  if (err instanceof ServiceError || kindOf(err) === 'service') {
+    return H.fail(res, err.status, err.code, err.message);
+  }
 
   /*
    * Missing or malformed deployment configuration. 503, not 500: the request
@@ -77,11 +93,31 @@ function respondToError(res, err, route) {
       'Something went wrong at our end. Please try again.');
   }
 
-  /* Anything else. An allow-listed token only - never err.message, never
-     err.stack, never err.cause, never the error object. */
-  console.error('chat: unhandled [' + route + '] ' + classifyRuntimeError(err));
+  /*
+   * Anything else. An allow-listed token only - never err.message, never
+   * err.stack, never err.cause, never the error object.
+   *
+   * The STAGE is the addition that matters: "unknown_error" alone cannot
+   * distinguish a broken token verifier from a failed Firestore transaction,
+   * and an authenticated request passes through both.
+   */
+  const stage = stageOf(err);
+  const shape = classifyRuntimeError(err);
+  if (stage) {
+    const prefix = stage.indexOf('auth_') === 0 ? 'chat: auth failed' : 'chat: service failed';
+    console.error(prefix + ' [' + route + '] ' + stage + ' ' + shape + ' ' + safeRuntime());
+  } else {
+    console.error('chat: unhandled [' + route + '] ' + shape + ' ' + safeRuntime());
+  }
   return H.fail(res, 500, 'server_error',
     'Something went wrong at our end. Please try again.');
+}
+
+/* The error's own stable kind marker, allow-listed. */
+const ERROR_KINDS = ['auth', 'validation', 'service', 'rate_limit'];
+function kindOf(err) {
+  const kind = err && typeof err.chatErrorKind === 'string' ? err.chatErrorKind : '';
+  return ERROR_KINDS.indexOf(kind) === -1 ? null : kind;
 }
 
 /* Only ever an allow-listed token. An unrecognised reason is replaced, not
@@ -187,16 +223,20 @@ function createHandler(options) {
 
       const now = (options.deps && options.deps.now) ? options.deps.now : serverNow;
 
-      await options.run({
+      await runStage('unknown_authenticated_error', () => options.run({
         req, res, body, db, actor, rateSecret,
         ip: H.clientIp(req),
         deps: { now },
+        runStage: runStage,
         query: req.query || {}
-      });
+      }));
     } catch (err) {
       return respondToError(res, err, options.route);
     }
   };
 }
 
-module.exports = { RATE_SECRET_ENV, createHandler, respondToError };
+module.exports = {
+  RATE_SECRET_ENV, createHandler, respondToError,
+  classifyRuntimeError, kindOf
+};

@@ -34,6 +34,8 @@ class ValidationError extends Error {
     this.name = 'ValidationError';
     this.status = 400;
     this.code = code;
+    /* See the note on AuthError: recognised by tag as well as instanceof. */
+    this.chatErrorKind = 'validation';
   }
 }
 

@@ -83,6 +83,8 @@ class RateLimitError extends Error {
     this.status = 429;
     this.code = 'rate_limited';
     this.retryAfterSeconds = retryAfterSeconds;
+    /* See the note on AuthError: recognised by tag as well as instanceof. */
+    this.chatErrorKind = 'rate_limit';
   }
 }
 
