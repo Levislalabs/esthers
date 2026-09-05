@@ -1,12 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Esther's Sheet Metal is a single-page site. The one entry below is the
-  whole of it. The in-page sections (#work, #services, #materials and the
-  rest) are anchors on this same document, not separate URLs, so they do
-  not belong in a sitemap.
+  The canonical pages of the site.
+
+  URLs are listed WITHOUT a trailing slash because vercel.json sets
+  "trailingSlash": false, which normalises /services/ to /services. Listing
+  the slashed form here would point every entry at a redirect.
 -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url>
-    <loc>https://www.esthers.ca/</loc>
-  </url>
+  <url><loc>https://www.esthers.ca/</loc></url>
+  <url><loc>https://www.esthers.ca/services</loc></url>
+  <url><loc>https://www.esthers.ca/materials</loc></url>
+  <url><loc>https://www.esthers.ca/gallery</loc></url>
+  <url><loc>https://www.esthers.ca/about</loc></url>
+  <url><loc>https://www.esthers.ca/contact</loc></url>
+  <url><loc>https://www.esthers.ca/quote</loc></url>
 </urlset>

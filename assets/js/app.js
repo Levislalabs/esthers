@@ -2239,26 +2239,54 @@
 
   /* ------------------------------------------------------------- init */
 
+  /*
+   * PAGE-AWARE INITIALISATION.
+   *
+   * This file was written for one long page where every element existed.
+   * The site is now several pages, and a builder whose section is not on
+   * the current page would throw on its first $('#...') and take every
+   * later builder down with it - so Gallery would break because Materials
+   * is somewhere else.
+   *
+   * Each builder is therefore gated on the element it starts from. Missing
+   * section, no call, no error. Adding a section to a page is enough to
+   * switch its behaviour on; there is no page registry to keep in step.
+   */
+  function when(selector, fn) {
+    if (document.querySelector(selector)) fn();
+  }
+
   function init() {
-    buildRail();
-    buildWork();
-    buildContact();
-    buildServices();
-    buildQuote();
-    buildPatina();
-    buildZinc();
-    buildCompare();
-    wireSearch();
-    wireFavourites();
-    updateFavCount();
-    renderDrawer();
+    /* The configurator: rail, detail panel, colours, favourites, toast. */
+    when('#material-rail', buildRail);
+    when('#colour-search', wireSearch);
+    when('#fav-count', wireFavourites);
+    when('#fav-count-value', updateFavCount);
+    when('#drawer-list', renderDrawer);
+
+    /* The other tools, each on whichever page carries it. */
+    when('#work-grid', buildWork);
+    when('#contact-grid', buildContact);
+    when('#services-grid', buildServices);
+    when('#quote-form', buildQuote);
+    when('#patina-steps', buildPatina);
+    when('#zinc-grid', buildZinc);
+    when('#compare-head', buildCompare);
+
+    /* Both of these query lists rather than single elements and are
+       harmless - and useful - on every page. */
     buildImageSlots();
     buildReveal();
 
-    /* force:true so the first paint runs the full render path */
-    selectMaterial(state.materialId, { force: true });
+    /* The full render path only means anything where the configurator is.
+       force:true so the first paint runs all of it. */
+    when('#detail-body', function () {
+      selectMaterial(state.materialId, { force: true });
+    });
 
-    $('#hero-cta').addEventListener('click', function () { scrollToId('materials'); });
+    when('#hero-cta', function () {
+      $('#hero-cta').addEventListener('click', function () { scrollToId('materials'); });
+    });
   }
 
   if (document.readyState === 'loading') {

@@ -1,0 +1,512 @@
+/* =========================================================================
+   Esther's Sheet Metal - site.css
+   The multi-page shell: black ground, orange accents, white type.
+
+   HOW THIS FITS WITH THE OLDER STYLESHEETS
+
+   base.css, home.css and configurator.css were written for a single dark
+   page and they still style everything app.js renders - the material
+   configurator, the comparison tool, the quote form, the location cards,
+   the work grid. None of that has been touched, because the comparison
+   behaviour in particular is approved and hard-won.
+
+   So this file does two things:
+
+     1. It takes over the PAGE - header, footer, headings, copy, buttons,
+        photography. It loads LAST, so its body and html rules win.
+
+     2. It keeps the whole site on ONE dark ground, so the tools and the
+        page around them are the same surface with no seam between them.
+
+   WHY DARK, AND HOW IT AVOIDS THE LOOK THAT WAS REJECTED
+
+   The complaint about the old site was not that it was dark - it was that
+   it read as a tech-startup landing page: rounded cards everywhere, soft
+   panels, gradients, one long scroll. Dark is not the problem; soft is.
+
+   So the ground stays near-black and the corrections are structural:
+   square corners, heavy rules instead of card edges, uppercase industrial
+   headings, orange used only where something is actionable or worth
+   marking, real fabrication photography, and seven short pages instead of
+   one endless one.
+
+   The legacy tokens are retuned here from a blue-cast charcoal (#0a0b0c,
+   #15181b) to a NEUTRAL near-black. Same roles, same contrast or better -
+   every ink still clears 4.5:1 on the lightest surface - but the whole
+   site now sits in one black/orange/white family rather than two.
+   ========================================================================= */
+
+:root {
+  /* ---- brand ------------------------------------------------------- */
+  --black:        #111111;   /* the page ground */
+  --raised:       #171717;   /* a band lifted off the ground */
+  --panel:        #1c1c1c;   /* a panel on a raised band */
+  --white:        #ffffff;
+  --body:         #b9bcbe;   /* body copy on black - 9.9:1 */
+  --faint:        #909395;   /* labels and specs - 6.1:1 */
+  --rule:         #2a2a2a;   /* hairline */
+  --rule-strong:  #3a3a3a;
+
+  /* Industrial orange. On this ground one value does the whole job:
+     #f36c21 reads 6.27:1 on #111111 and still 5.03:1 on the lightest
+     surface in the system, so it is safe as text, as a rule and as a fill.
+     --orange-ink survives only for the orange CTA band, where the type is
+     black on orange rather than the other way round. */
+  --orange:       #f36c21;
+  --orange-ink:   #a2410c;
+  --orange-dark:  #d4560f;
+
+  /* ---- page metrics ------------------------------------------------ */
+  --wrap:         1280px;
+  --wrap-wide:    1440px;
+  --pad:          clamp(20px, 5vw, 56px);
+  --bar:          64px;
+
+  --sans: "Helvetica Neue", Helvetica, Arial, "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  /* ---- legacy tokens, unchanged ------------------------------------
+     chat.css reads these globally. The configurator reads them too, but
+     only inside .band--dark, where they are restated. */
+  --bg:            #111111;
+  --bg-raised:     #161616;
+  --bg-panel:      #1a1a1a;
+  --bg-elevated:   #202020;
+  --bg-hover:      #262626;
+  --line:          rgba(255, 255, 255, 0.10);
+  --line-strong:   rgba(255, 255, 255, 0.18);
+  --line-soft:     rgba(255, 255, 255, 0.06);
+  --ink:           #ffffff;   /* 15.1:1 on the lightest surface */
+  --ink-muted:     #b9bcbe;   /*  7.9:1 */
+  --ink-dim:       #a2a5a7;   /*  6.1:1 */
+  --ink-faint:     #909395;   /*  4.9:1 */
+}
+
+html { color-scheme: dark; scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+body {
+  margin: 0;
+  background: var(--black);
+  color: var(--white);
+  font-family: var(--sans);
+  font-size: 17px;
+  line-height: 1.6;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+/* base.css sets max-width but not height, so an <img> carrying width/height
+   attributes keeps its literal pixel height while the width shrinks - which
+   turns a 720x900 photo into a very tall sliver in a narrow column. Scoped
+   to this file's own components so the configurator, which sizes its own
+   imagery deliberately, is left alone. */
+img, svg { display: block; max-width: 100%; }
+.shot img, .figset img, .hero2__figure img,
+.sitebar__brand img, .sitefoot img { height: auto; }
+
+/* One visible focus ring for the whole site. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+summary:focus-visible {
+  outline: 3px solid var(--orange);
+  outline-offset: 2px;
+}
+
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; margin: -1px;
+  padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+.skip {
+  position: absolute; left: -9999px; top: 0; z-index: 200;
+  background: var(--orange); color: var(--black);
+  padding: 12px 18px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.08em; font-size: 13px;
+}
+.skip:focus { left: 0; }
+
+/* ------------------------------------------------------------- layout */
+
+.wrap { width: 100%; max-width: var(--wrap); margin-inline: auto; padding-inline: var(--pad); }
+.wrap--wide { max-width: var(--wrap-wide); }
+
+.band { padding-block: clamp(56px, 7vw, 104px); }
+.band--tight { padding-block: clamp(40px, 5vw, 68px); }
+.band--paper { background: var(--raised); }
+.band--rule { border-top: 1px solid var(--rule); }
+
+/*
+ * Where app.js renders. The page is already this ground, so this exists to
+ * keep the older stylesheets' expectations explicit rather than implied -
+ * and so a tool section can be lifted onto a different surface later
+ * without hunting for what it assumed.
+ */
+.band--dark {
+  background: var(--bg);
+  color: var(--ink);
+}
+.band--dark a { color: var(--ink); }
+.band--dark .section { padding-block: clamp(48px, 6vw, 88px); }
+.band--dark .section + .section { border-top: 1px solid var(--line-soft); }
+
+/* --------------------------------------------------------- typography */
+
+.eyb {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--orange);
+  margin: 0 0 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.eyb::after { content: ""; height: 3px; flex: 0 0 34px; background: var(--orange); }
+.band--dark .eyb, .on-black .eyb { color: var(--orange); }
+
+h1, h2, h3, h4 { font-family: var(--sans); margin: 0; text-wrap: balance; }
+
+.t-hero {
+  font-size: clamp(2.6rem, 7.2vw, 5.4rem);
+  line-height: 0.94;
+  letter-spacing: -0.035em;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.t-1 {
+  font-size: clamp(2rem, 4.6vw, 3.4rem);
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.t-2 {
+  font-size: clamp(1.5rem, 2.8vw, 2.1rem);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  font-weight: 800;
+}
+.t-3 { font-size: 1.14rem; line-height: 1.25; letter-spacing: -0.01em; font-weight: 700; }
+
+.copy { font-size: 1.03rem; line-height: 1.65; color: var(--body); max-width: 62ch; margin: 0; }
+.copy--lead { font-size: clamp(1.08rem, 1.7vw, 1.28rem); color: var(--body); }
+.copy + .copy { margin-top: 1em; }
+.band--dark .copy, .on-black .copy { color: var(--ink-muted); }
+
+.spec {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* ------------------------------------------------------------ buttons */
+/* Square. base.css's .btn is rounded and dark, so these are named apart
+   and never mixed with it outside a dark band. */
+
+.ebtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 0 26px;
+  border: 2px solid var(--orange);
+  background: var(--orange);
+  color: var(--black);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
+}
+.ebtn:hover { background: var(--white); border-color: var(--white); color: var(--black); }
+
+.ebtn--orange { background: var(--orange); border-color: var(--orange); color: var(--black); }
+.ebtn--orange:hover { background: var(--white); border-color: var(--white); color: var(--black); }
+
+/* The quiet second action: outline only, so the orange one stays the
+   obvious thing to press. */
+.ebtn--ghost { background: transparent; color: var(--white); border-color: var(--white); }
+.ebtn--ghost:hover { background: var(--white); color: var(--black); border-color: var(--white); }
+
+.ebtn__mark { font-size: 17px; line-height: 1; }
+
+.tlink {
+  display: inline-flex; align-items: center; gap: 9px;
+  font-size: 14px; font-weight: 700; letter-spacing: 0.09em;
+  text-transform: uppercase; text-decoration: none;
+  color: var(--white); border-bottom: 3px solid var(--orange);
+  padding-bottom: 4px;
+}
+.tlink:hover { color: var(--orange); }
+
+/* =============================================================== header */
+
+.sitebar {
+  position: sticky; top: 0; z-index: 90;
+  background: var(--black);
+  border-bottom: 3px solid var(--orange);
+}
+.sitebar__in {
+  display: flex; align-items: center; gap: 20px;
+  min-height: var(--bar);
+}
+.sitebar__brand { display: flex; align-items: center; margin-right: auto; text-decoration: none; }
+.sitebar__brand img { height: 30px; width: auto; }
+
+.sitenav { display: flex; align-items: center; gap: 2px; }
+.sitenav a {
+  display: inline-flex; align-items: center;
+  height: var(--bar); padding: 0 14px;
+  color: var(--white); text-decoration: none;
+  font-size: 12.5px; font-weight: 700;
+  letter-spacing: 0.11em; text-transform: uppercase;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -3px;
+}
+.sitenav a:hover { color: var(--orange); }
+.sitenav a[aria-current="page"] { color: var(--orange); border-bottom-color: var(--orange); }
+
+.sitebar__cta {
+  display: inline-flex; align-items: center;
+  height: 40px; padding: 0 18px; margin-left: 10px;
+  background: var(--orange); color: var(--black);
+  font-size: 12.5px; font-weight: 800; letter-spacing: 0.09em;
+  text-transform: uppercase; text-decoration: none;
+}
+.sitebar__cta:hover { background: var(--white); }
+
+.navtoggle {
+  display: none;
+  width: 46px; height: 46px;
+  border: 2px solid rgba(255,255,255,0.35);
+  background: transparent; color: var(--white);
+  align-items: center; justify-content: center;
+}
+.navtoggle:hover { border-color: var(--orange); color: var(--orange); }
+.navtoggle span { display: block; width: 20px; height: 2px; background: currentColor; position: relative; }
+.navtoggle span::before,
+.navtoggle span::after {
+  content: ""; position: absolute; left: 0; width: 20px; height: 2px; background: currentColor;
+}
+.navtoggle span::before { top: -6px; }
+.navtoggle span::after { top: 6px; }
+
+@media (max-width: 940px) {
+  .navtoggle { display: inline-flex; }
+  .sitebar__cta { display: none; }
+  .sitenav {
+    display: none;
+    position: absolute; left: 0; right: 0; top: 100%;
+    flex-direction: column; align-items: stretch; gap: 0;
+    background: var(--black);
+    border-bottom: 3px solid var(--orange);
+    padding: 6px 0 14px;
+  }
+  .sitebar { position: sticky; }
+  .sitebar__in { position: relative; }
+  .sitenav.is-open { display: flex; }
+  .sitenav a {
+    height: auto; padding: 15px var(--pad);
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    margin-bottom: 0; font-size: 14px;
+  }
+  .sitenav a[aria-current="page"] {
+    border-bottom-color: rgba(255,255,255,0.1);
+    box-shadow: inset 4px 0 0 var(--orange);
+  }
+  .sitenav .sitenav__cta {
+    margin: 12px var(--pad) 0; padding: 15px 18px;
+    background: var(--orange); color: var(--black);
+    justify-content: center; border-bottom: 0;
+  }
+}
+/* Two selectors deep so it outranks `.sitenav a` above. */
+@media (min-width: 941px) { .sitenav a.sitenav__cta { display: none; } }
+
+/* ================================================================= hero */
+
+.hero2 { background: var(--black); color: var(--white); }
+.hero2__in { border-bottom: 0; }
+.hero2__in {
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  gap: clamp(28px, 4vw, 64px);
+  align-items: center;
+  padding-block: clamp(48px, 6vw, 92px);
+}
+.hero2__since {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.24em;
+  text-transform: uppercase; color: var(--orange); margin: 0 0 20px;
+}
+.hero2 h1 { color: var(--white); }
+.hero2 h1 em { font-style: normal; color: var(--orange); }
+.hero2__copy { margin-top: 22px; color: var(--body); max-width: 46ch; font-size: 1.05rem; }
+.hero2__actions { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 32px; }
+.hero2__figure { position: relative; }
+.hero2__figure img { width: 100%; object-fit: cover; aspect-ratio: 4 / 5; }
+.hero2__tag {
+  position: absolute; left: 0; bottom: 0;
+  background: var(--orange); color: var(--black);
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em;
+  text-transform: uppercase; padding: 9px 14px;
+}
+
+@media (max-width: 860px) {
+  .hero2__in { grid-template-columns: 1fr; padding-block: 40px 0; }
+  .hero2__figure { margin: 36px calc(var(--pad) * -1) 0; }
+  .hero2__figure img { aspect-ratio: 3 / 2; }
+}
+
+/* ------------------------------------------------------- strip of facts */
+
+.strip { background: var(--raised); color: var(--white); border-block: 1px solid var(--rule); }
+.strip__in {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+}
+.strip__cell { padding: 22px 0 24px; border-left: 1px solid var(--rule); padding-left: 22px; }
+.strip__cell:first-child { border-left: 0; padding-left: 0; }
+.strip__k { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--orange); }
+.strip__v { font-size: 15px; font-weight: 600; margin-top: 6px; color: var(--white); }
+@media (max-width: 780px) {
+  .strip__in { grid-template-columns: repeat(2, 1fr); gap: 0; }
+  .strip__cell:nth-child(odd) { border-left: 0; padding-left: 0; }
+  .strip__cell:nth-child(n+3) { border-top: 1px solid var(--rule); }
+}
+
+/* ------------------------------------------------------------ page head */
+
+.phead {
+  background: var(--raised);
+  color: var(--white);
+  padding-block: clamp(40px, 5.5vw, 76px);
+  border-bottom: 1px solid var(--rule);
+}
+.phead h1 { color: var(--white); }
+.phead .copy { color: var(--body); margin-top: 20px; }
+.crumb { font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-dim); margin: 0 0 18px; }
+.crumb a { color: var(--ink-dim); text-decoration: none; }
+.crumb a:hover { color: var(--orange); }
+
+/* ----------------------------------------------------------- structures */
+
+/* A plain list of things with a rule between them. Not a card. */
+.rows { border-top: 2px solid var(--orange); }
+.rowitem {
+  display: grid;
+  grid-template-columns: 78px 1fr;
+  gap: clamp(18px, 3vw, 40px);
+  padding: 26px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.rowitem__n { font-family: var(--mono); font-size: 12px; letter-spacing: 0.14em; color: var(--orange); padding-top: 4px; }
+.rowitem__b .copy { margin-top: 9px; }
+@media (max-width: 620px) {
+  .rowitem { grid-template-columns: 1fr; gap: 8px; padding: 20px 0; }
+}
+
+/* Two-column editorial split. */
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: clamp(28px, 5vw, 72px);
+  align-items: start;
+}
+@media (max-width: 880px) { .split { grid-template-columns: 1fr; gap: 28px; } }
+
+.figset { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.figset img { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; }
+@media (max-width: 520px) { .figset { grid-template-columns: 1fr; } }
+
+/* Photo with a caption bar, used on Home and Gallery. */
+.shot { margin: 0; background: var(--raised); }
+.shot img { width: 100%; aspect-ratio: 4 / 5; object-fit: cover; }
+.shot figcaption {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 14px;
+  padding: 13px 0 0;
+  border-top: 2px solid var(--orange);
+  margin-top: 12px;
+}
+.shot__t { font-size: 14.5px; font-weight: 700; }
+.shot__m { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); }
+
+.shots { display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(16px, 2.4vw, 30px); }
+@media (max-width: 900px) { .shots { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 560px) { .shots { grid-template-columns: 1fr; } }
+
+/* --------------------------------------------------------------- CTA band */
+
+.cta {
+  background: var(--orange);
+  color: var(--black);
+  padding-block: clamp(40px, 5.5vw, 72px);
+}
+.cta__in { display: flex; align-items: center; justify-content: space-between; gap: 28px; flex-wrap: wrap; }
+.cta h2 { font-size: clamp(1.7rem, 3.4vw, 2.6rem); line-height: 1.03; letter-spacing: -0.025em; font-weight: 800; text-transform: uppercase; max-width: 18ch; }
+.cta p { margin: 12px 0 0; max-width: 46ch; color: #331a08; font-size: 1.02rem; }
+.cta .ebtn { border-color: var(--black); background: var(--black); color: var(--white); }
+.cta .ebtn:hover { background: var(--white); color: var(--black); border-color: var(--white); }
+
+/* =============================================================== footer */
+
+.sitefoot { background: var(--raised); color: var(--body); border-top: 3px solid var(--orange); }
+.sitefoot__grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr 1fr;
+  gap: clamp(26px, 3.4vw, 52px);
+  padding-block: clamp(40px, 5vw, 64px);
+}
+.sitefoot img { height: 34px; width: auto; }
+.sitefoot h2 {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.2em;
+  text-transform: uppercase; color: var(--orange); margin: 0 0 16px;
+  padding-bottom: 9px; border-bottom: 1px solid var(--rule);
+}
+.sitefoot ul { list-style: none; margin: 0; padding: 0; }
+.sitefoot li { margin-bottom: 9px; font-size: 14.5px; }
+.sitefoot a { color: var(--body); text-decoration: none; }
+.sitefoot a:hover { color: var(--orange); }
+.sitefoot address { font-style: normal; font-size: 14.5px; line-height: 1.55; }
+.sitefoot__tel { display: inline-block; margin-top: 7px; color: var(--white); font-weight: 700; }
+.sitefoot__blurb { font-size: 14.5px; max-width: 40ch; margin: 16px 0 0; }
+.sitefoot__legal {
+  border-top: 1px solid var(--rule);
+  padding-block: 20px 26px;
+  display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap;
+  font-size: 12.5px; color: var(--faint);
+}
+@media (max-width: 900px) { .sitefoot__grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 560px) { .sitefoot__grid { grid-template-columns: 1fr; } }
+
+/* ==================================================== dark-band retrofit */
+/*
+ * Everything below only restates what the older stylesheets expect, inside
+ * the black panel. Nothing here changes how the tools behave; it puts back
+ * the surface they were designed against after site.css turned the page
+ * white.
+ */
+.band--dark .shell { max-width: var(--wrap-wide); }
+.band--dark h1, .band--dark h2, .band--dark h3, .band--dark h4 { color: var(--ink); }
+
+/* The tool bands carry their own heading treatment from base.css, but the
+   eyebrow there is the old accent colour. Orange is the brand now. */
+.band--dark .eyebrow { color: var(--orange); }
+
+/* home.css draws the location cards and the work grid on the dark ground,
+   which is exactly what .band--dark provides. Nothing to override. */
+
+/* ------------------------------------------------------------ utilities */
+.stack > * + * { margin-top: 18px; }
+.mt-l { margin-top: clamp(28px, 4vw, 48px); }
+.center { text-align: center; }
+.nowrap { white-space: nowrap; }
