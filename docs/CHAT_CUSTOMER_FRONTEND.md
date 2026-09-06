@@ -193,15 +193,62 @@ On a page load with a remembered `{uid, conversationId}`:
 1. App Check
 2. Firebase app
 3. anonymous auth, uid reconciled against the stored record
-4. GET /api/chat/status          ← the fix
-5. open  → subscribe, "Connected", composer enabled
-   closed → subscribe, "Conversation closed", composer disabled
-   gone   → forget the id, offer the start form
+4. GET /api/chat/status
+5. subscribe to the transcript
+6. paint from the answer:
+   open    → "Connected",           composer enabled,  watch running
+   closed  → "Conversation closed", composer disabled, watch stopped
+   gone    → forget the id, offer the start form
+   unknown → "Not connected",       composer disabled, why + Try again
 ```
 
-Step 4 runs **before** step 5, not alongside it, so there is no window in which
+Step 4 runs **before** step 6, not alongside it, so there is no window in which
 the composer is live on a conversation nobody has confirmed. A test asserts
 that ordering directly.
+
+### An unanswered question is not a yes
+
+`unknown` is the fourth outcome and the one that shipped broken.
+
+The first version of this only trusted the status check **when the check came
+back**. `openTranscript()` said *Connected* and enabled the composer
+unconditionally, and the closed correction ran afterwards from
+`if (this.closed)`. So a check that did **not** come back — a 500, a 401 while
+attestation was being refused, a dropped connection, a cold start that timed
+out — fell into the "not closed" branch and was painted as a live conversation.
+That is exactly the lie `/api/chat/status` exists to stop telling; it was
+simply being told one layer further up, on the path where the endpoint had not
+answered. It was reproduced in a real browser against the real page before this
+was changed, and again afterwards to show it fixed.
+
+`paintConversationState()` is now the only thing that draws the conversation,
+and it draws from the last **definitive** answer the server gave — tracked as
+`statusKnown`, which is separate from `closed` because "nobody has said" and
+"they said open" are different facts. Three states, and exactly one of them
+opens the composer:
+
+| state | composer | status line | extra |
+|---|---|---|---|
+| `closed` | disabled | *Conversation closed* | one explanation in the transcript |
+| confirmed open | enabled | *Connected* | the 60-second watch runs |
+| unconfirmed | **disabled** | *Not connected* | the reason, plus **Try again** |
+
+The trade is deliberate and it is not symmetrical. Failing safe costs a visitor
+on a healthy conversation one press of a button during an outage — and the
+sixty-second watch heals it on its own anyway. Failing the other way costs a
+visitor on a closed conversation a message they believe they sent.
+
+`recheckStatus()` is what **Try again** calls: one request per press, no timer
+behind it. `applyOpen()` repaints only on the unconfirmed → open transition, so
+a routine poll on a conversation already known open cannot stamp over a notice
+`onListenerError()` put up for a different problem.
+
+Reopening the panel goes through the same paint. `resume()` used to call
+`openTranscript()`, which asserted *Connected* — so closing and reopening the
+panel on a closed conversation left it reading *Connected* over a dead
+composer, with the explanation gone. It now paints the held state first and
+re-asks through `recheckStatus()`, so a still-unanswered check keeps its
+explanation and its button instead of leaving a dead composer with neither.
 
 ### Learning about a close while the panel is open
 
@@ -300,10 +347,11 @@ from the ascending index, so the second entry is not optional — without it the
 listener fails in production with a `failed-precondition` error and every
 customer sees an empty transcript.
 
-**The DESC index is NOT deployed yet.** Adding it to `firestore.indexes.json` is
-a configuration change; deploying it is a separate, deliberate step on the
-launch checklist. Both entries are pinned by test so neither can be tidied away
-while something still depends on it.
+**Both indexes are DEPLOYED and ENABLED.** Adding the DESC entry to
+`firestore.indexes.json` was a configuration change; deploying it was a
+separate, deliberate step, done by hand and confirmed Enabled in the Firebase
+console. Both entries are pinned by test so neither can be tidied away while
+something still depends on it.
 
 **On the client-side reversal, honestly:** `TranscriptStore.list()` already
 sorts by `(createdAt, id)` on every render, so the rendered order would be
