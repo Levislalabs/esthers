@@ -404,6 +404,49 @@ function toMillis(value) {
 }
 
 /*
+ * The customer's own view of one conversation: is it still open?
+ *
+ * WHY THIS EXISTS. A customer's realtime listener watches chatMessages, and
+ * closing a conversation touches only the conversation document - see
+ * closeConversation() above, which writes status/closedAt/updatedAt and no
+ * message at all. So a closed thread is completely invisible to the customer's
+ * listener. Before this, they found out by sending a message and being refused,
+ * and a page reload put the UI back to "Connected" because nothing on the
+ * client knew any better.
+ *
+ * The conversation document itself stays client-private: firestore.rules denies
+ * every browser read of chatConversations, because a rule cannot hide a field
+ * inside a document it has allowed and that record carries customerEmail,
+ * staffLastReadAt, staffNotifiedAt, startRequestHash and whatever a later phase
+ * adds. This function is how a customer learns the one bit of it that is
+ * theirs, without being handed the rest.
+ *
+ * TWO FIELDS OUT, AND NOTHING ELSE. Not publicConversation() - that is the
+ * staff serialisation and carries name, email, counts and timestamps.
+ *
+ * NOT AN EXISTENCE ORACLE. A conversation that does not exist and one owned by
+ * somebody else produce the SAME error, from the same helper the rest of this
+ * file uses. Otherwise a caller could try ids until the message changed and
+ * learn which ones are real.
+ *
+ * The status value is normalised to exactly 'open' or 'closed' rather than
+ * echoed: whatever ends up in that field, the customer sees one of two words.
+ */
+async function readConversationStatus(db, input) {
+  const conv = await db.collection(CONVERSATIONS).doc(input.conversationId).get();
+  if (!conv.exists) throw notFoundForCustomer();
+
+  const data = conv.data() || {};
+  /* Ownership, against the VERIFIED uid from the token - never the body. */
+  if (data.customerUid !== input.customerUid) throw notFoundForCustomer();
+
+  return {
+    conversationId: conv.id,
+    status: data.status === 'closed' ? 'closed' : 'open'
+  };
+}
+
+/*
  * The staff inbox. Uses the deployed composite index
  * (status ASC, lastMessageAt DESC).
  */
@@ -454,5 +497,6 @@ module.exports = {
   startConversation, sendCustomerMessage, sendStaffMessage, closeConversation,
   peekStart, peekMessage, resolveExistingStart,
   listConversations, readTranscript,
+  readConversationStatus,
   publicConversation, publicMessage, toMillis
 };

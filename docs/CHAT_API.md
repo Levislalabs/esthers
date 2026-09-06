@@ -212,6 +212,39 @@ Opens a conversation and writes its first message, in one transaction.
 
 Nothing else is returned. No `customerUid`, no email echo, no timestamps.
 
+### GET /api/chat/status — customer
+
+```
+GET /api/chat/status?conversationId=...
+Authorization: Bearer <Firebase ID token>
+X-Firebase-AppCheck: <App Check token>
+```
+→ `{ "ok": true, "conversationId": "...", "status": "open" | "closed" }`
+
+Three keys, and that is the entire response. No `customerUid`, no name, no
+email, no timestamps, no counts, no staff fields.
+
+**Why it exists.** Closing a conversation writes only to the conversation
+document, and no browser may read that collection — so a close is invisible to
+the customer's `chatMessages` listener. Without this endpoint a customer learnt
+of a close by sending a message and being refused, and a page reload put their
+UI back to "Connected" with a live composer.
+
+`actor: 'customer'`, so it inherits the whole gate: same-origin → App Check →
+`verifyIdToken` → anonymous-provider check. Ownership is then checked against
+the **verified uid**, and a conversation owned by somebody else returns exactly
+the same `404 conversation_not_found` as one that does not exist — otherwise
+the endpoint is an oracle for which ids are real.
+
+`status` is normalised to exactly `open` or `closed`, never echoed from the
+document.
+
+**No rate-limit bucket**, deliberately: the limiter works by writing a counter,
+so metering a single-document read would cost a write per read. The same
+reasoning already applies to `/api/admin/chat/messages`. What bounds it is App
+Check, an anonymous session, ownership of one conversation, and a client that
+asks about once a minute.
+
 ### POST /api/chat/send — customer
 
 ```json

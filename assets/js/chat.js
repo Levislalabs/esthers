@@ -599,6 +599,19 @@
    * exactly the property worth having here, and it costs nothing at 200
    * rows.
    */
+  /* The one place the closed state is explained, and the only one. Rendered
+     as part of the transcript rather than appended once, because a snapshot
+     arriving afterwards clears the log - which used to make this note vanish
+     while the composer stayed disabled, leaving no explanation on screen at
+     all. */
+  var CLOSED_NOTE = 'This conversation has been closed. Call us or use the '
+    + 'Quote Request form if you need anything else.';
+
+  function appendClosedNote() {
+    if (!isClosed) return;
+    log.appendChild(el('p', { class: 'chat__note chat__note--closed', text: CLOSED_NOTE }));
+  }
+
   function renderMessages(list) {
     var pinned = nearBottom();
     clearLog();
@@ -607,7 +620,9 @@
     if (!items.length) {
       log.appendChild(el('p', {
         class: 'chat__note',
-        text: 'No messages yet. Send one and we will reply here.'
+        text: isClosed
+          ? CLOSED_NOTE
+          : 'No messages yet. Send one and we will reply here.'
       }));
       return;
     }
@@ -635,6 +650,7 @@
       log.appendChild(bubble);
     }
 
+    appendClosedNote();
     if (pinned) scrollLog();
   }
 
@@ -713,14 +729,14 @@
       },
 
       setClosed: function (flag) {
+        var was = isClosed;
         isClosed = flag === true;
         panel.setAttribute('data-closed', isClosed ? 'true' : 'false');
-        if (isClosed) {
-          log.appendChild(el('p', {
-            class: 'chat__note',
-            text: 'This conversation has been closed. Call us or use the '
-              + 'Quote Request form if you need anything else.'
-          }));
+        /* Show it by re-rendering rather than by appending. The next snapshot
+           clears the log, so an appended note was temporary - and it could
+           also be added twice if setClosed(true) ran more than once. */
+        if (isClosed && !was) {
+          appendClosedNote();
           scrollLog();
         }
         syncSend();

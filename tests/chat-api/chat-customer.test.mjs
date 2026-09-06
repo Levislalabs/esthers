@@ -113,10 +113,12 @@ function recordingUi() {
     ui.messages = list;
   };
   ui.setStatus = (t) => { ui.calls.push('setStatus'); ui.status = t; };
-  ui.setNotice = (t) => { ui.calls.push('setNotice'); ui.notice = t; };
+  ui.noticeHistory = [];
+  ui.setNotice = (t) => { ui.calls.push('setNotice'); ui.notice = t; ui.noticeHistory.push(t); };
   ui.setBusy = (f) => { ui.calls.push('setBusy'); ui.busy = f; };
   ui.setComposerEnabled = (f) => { ui.calls.push('setComposerEnabled'); ui.composerEnabled = f; };
-  ui.setClosed = (f) => { ui.calls.push('setClosed'); ui.closed = f; };
+  ui.closedHistory = [];
+  ui.setClosed = (f) => { ui.calls.push('setClosed'); ui.closed = f; ui.closedHistory.push(f); };
   ui.setRetry = (h) => { ui.calls.push('setRetry'); ui.retry = h; };
   ui.onStart = (h) => { ui.startHandler = h; };
   ui.onSend = (h) => { ui.sendHandler = h; };
@@ -161,6 +163,49 @@ function jsonResponse(status, payload) {
   };
 }
 
+/*
+ * A hand-driven interval and a fake document, so the close watch can be tested
+ * without waiting a minute and without a browser.
+ *
+ * fireInterval() runs every registered callback once. The point is that a test
+ * can advance the world deliberately: nothing here fires on its own, so a
+ * timer the code forgot to clear shows up as a callback that is still
+ * registered rather than as a flake ten seconds later.
+ */
+function fakeClock() {
+  const timers = new Map();
+  let next = 1;
+  const doc = {
+    visibilityState: 'visible',
+    listeners: {},
+    addEventListener(type, fn) {
+      (doc.listeners[type] = doc.listeners[type] || []).push(fn);
+    },
+    removeEventListener(type, fn) {
+      const l = doc.listeners[type] || [];
+      const i = l.indexOf(fn);
+      if (i !== -1) l.splice(i, 1);
+    }
+  };
+  return {
+    deps: {
+      setInterval: (fn, ms) => { const id = next++; timers.set(id, { fn, ms }); return id; },
+      clearInterval: (id) => { timers.delete(id); },
+      document: () => doc
+    },
+    doc,
+    liveTimers: () => timers.size,
+    intervalMs: () => (timers.size ? Array.from(timers.values())[0].ms : null),
+    fireInterval: () => { for (const t of Array.from(timers.values())) t.fn(); },
+    visibilityListeners: () => (doc.listeners.visibilitychange || []).length,
+    becomeVisible: () => {
+      doc.visibilityState = 'visible';
+      for (const fn of (doc.listeners.visibilitychange || []).slice()) fn();
+    },
+    becomeHidden: () => { doc.visibilityState = 'hidden'; }
+  };
+}
+
 /* Let queued microtasks and zero-delay timers run - the stub reports auth
    state and rules refusals on a timer, as the SDK does. */
 function tick(times = 3) {
@@ -179,12 +224,23 @@ async function connectedSession(mod, opts = {}) {
   const ui = recordingUi();
   const storage = opts.storage || memoryStorage();
   const fetcher = captureFetch(opts.responder || jsonResponse(200, OK_START));
+  /*
+   * EVERY session gets a hand-driven clock, not just the tests that care.
+   *
+   * The close watch calls setInterval, and a real 60-second interval keeps
+   * Node's event loop open - so a suite that leaves one running never exits.
+   * That is worth catching rather than papering over: an interval nobody
+   * clears is exactly the leak these tests are meant to detect, and with a
+   * fake clock it shows up as a timer still registered instead of as a
+   * hanging test run.
+   */
+  const clock = opts.clock || fakeClock();
   const session = await mod.openChatForReview({
     ui,
     openPanel: () => {},
-    deps: Object.assign({ storage: () => storage }, opts.deps || {})
+    deps: Object.assign({ storage: () => storage }, clock.deps, opts.deps || {})
   });
-  return { ui, storage, fetcher, session };
+  return { ui, storage, fetcher, session, clock };
 }
 
 /* ==================================================== 9-10. THE GATE */
@@ -285,7 +341,8 @@ describe('initialisation order', () => {
     try {
       const ui = recordingUi();
       await mod.openChatForReview({
-        ui, openPanel: () => {}, deps: { storage: () => storage }
+        ui, openPanel: () => {},
+        deps: Object.assign({ storage: () => storage }, fakeClock().deps)
       });
       await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hello' });
       await tick();
@@ -677,7 +734,8 @@ describe('the realtime listener', () => {
       await tick();
       const ui2 = recordingUi();
       await mod.openChatForReview({
-        ui: ui2, openPanel: () => {}, deps: { storage: () => memoryStorage() }
+        ui: ui2, openPanel: () => {},
+        deps: Object.assign({ storage: () => memoryStorage() }, fakeClock().deps)
       });
       await tick();
       assert.equal(stub.liveListenerCount(), 0,
@@ -947,7 +1005,8 @@ describe('regressions', () => {
       const fetcher = captureFetch(jsonResponse(200, OK_START));
       try {
         const session = await mod.openChatForReview({
-          ui, openPanel: () => {}, deps: { storage: () => memoryStorage() }
+          ui, openPanel: () => {},
+          deps: Object.assign({ storage: () => memoryStorage() }, fakeClock().deps)
         });
         await tick();
 
@@ -1489,6 +1548,697 @@ describe('regressions', () => {
   });
 });
 
+/* ==================================== CLOSED-STATE RECOVERY (the real bug)
+ *
+ * REPRODUCED IN A PRODUCTION REVIEW: staff close a conversation, the customer
+ * reloads, and the restored panel says "Connected" with a live composer. The
+ * transcript listener watches chatMessages and closeConversation() writes only
+ * to the conversation document, so a close is invisible to it. The backend
+ * refused every post-close send correctly - the client was the thing lying.
+ * ------------------------------------------------------------------- */
+
+describe('closed-state recovery', () => {
+  /* A responder that answers /api/chat/status with a chosen status and
+     everything else normally. */
+  function withStatus(statusValue, extra) {
+    let starts = 0;
+    return (n, input) => {
+      if (String(input).indexOf('/api/chat/status') === 0) {
+        if (extra && extra.statusResponse) return extra.statusResponse();
+        return jsonResponse(200, {
+          ok: true, conversationId: 'conv-earlier', status: statusValue
+        });
+      }
+      starts += 1;
+      return jsonResponse(200, starts === 1 ? OK_START : OK_SEND);
+    };
+  }
+
+  const recalled = (mod, id = 'conv-earlier') => memoryStorage({
+    [mod._internals.CONVERSATION_KEY]:
+      JSON.stringify({ uid: 'anon-uid-1', conversationId: id })
+  });
+
+  test('a restored OPEN conversation asks the server, then connects', async () => {
+    const { mod, stub } = await load();
+    const clock = fakeClock();
+    const { ui, fetcher } = await connectedSession(mod, {
+      clock,
+      storage: recalled(mod),
+      responder: withStatus('open')
+    });
+    try {
+      await tick();
+      const statusCalls = fetcher.seen.filter(
+        (r) => String(r.input).indexOf('/api/chat/status') === 0);
+      assert.equal(statusCalls.length, 1, 'the status endpoint was queried');
+      assert.match(String(statusCalls[0].input), /conversationId=conv-earlier/);
+      assert.equal(statusCalls[0].init.method, 'GET');
+
+      assert.equal(ui.startFormShown, 0, 'no start form for a returning visitor');
+      assert.equal(ui.transcriptShown, 1, 'the transcript restored');
+      assert.equal(ui.status, 'Connected');
+      assert.equal(ui.composerEnabled, true, 'and the composer is live');
+      assert.equal(stub.calls.where[0].value, 'conv-earlier');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('a restored CLOSED conversation comes back CLOSED - THE BUG', async () => {
+    const { mod } = await load();
+    const clock = fakeClock();
+    const { ui, session, fetcher } = await connectedSession(mod, {
+      clock,
+      storage: recalled(mod),
+      responder: withStatus('closed')
+    });
+    try {
+      await tick();
+      const statusCalls = fetcher.seen.filter(
+        (r) => String(r.input).indexOf('/api/chat/status') === 0);
+      assert.equal(statusCalls.length, 1, 'the status endpoint was queried');
+
+      assert.equal(session.closed, true);
+      assert.equal(ui.closed, true, 'the panel shows the closed state');
+      assert.equal(ui.composerEnabled, false, 'and the composer is dead');
+      assert.equal(ui.status, 'Conversation closed');
+      assert.equal(ui.transcriptShown, 1, 'the transcript is still restored');
+
+      /* THE POINT: not one write was attempted to discover this. */
+      const writes = fetcher.seen.filter((r) => r.init.method === 'POST');
+      assert.equal(writes.length, 0,
+        'the customer must not have to send a message to learn it is closed');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('the composer is never enabled before the status is known', async () => {
+    /* Order matters: openTranscript() enables the composer, so the status
+       call has to resolve first or there is a window of live composer on a
+       conversation nobody has confirmed. */
+    const { mod } = await load();
+    const order = [];
+    const clock = fakeClock();
+    const ui = recordingUi();
+    const realSetComposer = ui.setComposerEnabled;
+    ui.setComposerEnabled = (f) => { order.push('composer:' + f); realSetComposer(f); };
+    const storage = recalled(mod);
+    const fetcher = captureFetch((n, input) => {
+      if (String(input).indexOf('/api/chat/status') === 0) {
+        order.push('status');
+        return jsonResponse(200, { ok: true, conversationId: 'conv-earlier', status: 'closed' });
+      }
+      return jsonResponse(200, OK_START);
+    });
+    try {
+      await mod.openChatForReview({
+        ui, openPanel: () => {},
+        deps: Object.assign({ storage: () => storage }, clock.deps)
+      });
+      await tick();
+      const statusAt = order.indexOf('status');
+      const enabledAt = order.indexOf('composer:true');
+      assert.ok(statusAt !== -1, 'status was asked');
+      assert.ok(enabledAt === -1 || statusAt < enabledAt,
+        'the composer was never enabled before the answer arrived: ' + order.join(' -> '));
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('a status 404 discards the dead conversation and offers a fresh start',
+    async () => {
+      const { mod } = await load();
+      const clock = fakeClock();
+      const storage = recalled(mod);
+      const { ui, session, fetcher } = await connectedSession(mod, {
+        clock, storage,
+        responder: (n, input) => {
+          if (String(input).indexOf('/api/chat/status') === 0) {
+            return jsonResponse(404, { ok: false, code: 'conversation_not_found' });
+          }
+          return jsonResponse(200, OK_START);
+        }
+      });
+      try {
+        await tick();
+        assert.equal(storage.getItem(mod._internals.CONVERSATION_KEY), null,
+          'the dead id is forgotten');
+        assert.equal(session.conversationId, null);
+        assert.equal(ui.startFormShown, 1);
+        assert.equal(ui.transcriptShown, 0, 'no transcript on a conversation that is gone');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('a failed status check does NOT silently pretend the thread is fine',
+    async () => {
+      const { mod } = await load();
+      const clock = fakeClock();
+      const { ui, fetcher } = await connectedSession(mod, {
+        clock,
+        storage: recalled(mod),
+        responder: (n, input) => {
+          if (String(input).indexOf('/api/chat/status') === 0) {
+            return new TypeError('Failed to fetch');
+          }
+          return jsonResponse(200, OK_START);
+        }
+      });
+      try {
+        await tick();
+        assert.ok(typeof ui.notice === 'string' && ui.notice.length > 0,
+          'the visitor is told the check did not land');
+        assert.match(ui.notice, /could not reach us/);
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('a failed status check NEVER reopens a conversation known to be closed',
+    async () => {
+      /* The dangerous direction. A dropped request is not evidence that staff
+         reopened a thread - there is no reopen path in the API at all. */
+      const { mod } = await load();
+      const clock = fakeClock();
+      let phase = 'closed';
+      const { ui, session, fetcher } = await connectedSession(mod, {
+        clock,
+        storage: recalled(mod),
+        responder: (n, input) => {
+          if (String(input).indexOf('/api/chat/status') === 0) {
+            if (phase === 'closed') {
+              return jsonResponse(200, { ok: true, conversationId: 'conv-earlier', status: 'closed' });
+            }
+            return new TypeError('Failed to fetch');
+          }
+          return jsonResponse(200, OK_START);
+        }
+      });
+      try {
+        await tick();
+        assert.equal(session.closed, true);
+
+        phase = 'broken';
+        await session.refreshStatus({});
+        await tick();
+
+        assert.equal(session.closed, true, 'still closed');
+        assert.equal(ui.composerEnabled, false, 'and the composer stays dead');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('a status response that says open does not reopen a closed session',
+    async () => {
+      /* Belt and braces against a stale or replayed response. */
+      const { mod } = await load();
+      const clock = fakeClock();
+      let value = 'closed';
+      const { ui, session, fetcher } = await connectedSession(mod, {
+        clock,
+        storage: recalled(mod),
+        responder: (n, input) => {
+          if (String(input).indexOf('/api/chat/status') === 0) {
+            return jsonResponse(200, { ok: true, conversationId: 'conv-earlier', status: value });
+          }
+          return jsonResponse(200, OK_START);
+        }
+      });
+      try {
+        await tick();
+        assert.equal(session.closed, true);
+        value = 'open';
+        await session.refreshStatus({});
+        await tick();
+        assert.equal(session.closed, true, 'closed is terminal on the client too');
+        assert.equal(ui.composerEnabled, false);
+      } finally {
+        fetcher.restore();
+      }
+    });
+});
+
+/* ------------------------------------------------- the live close watch */
+
+describe('noticing a staff-side close without sending', () => {
+  const openThenClosed = () => {
+    let closedNow = false;
+    let starts = 0;
+    const r = (n, input) => {
+      if (String(input).indexOf('/api/chat/status') === 0) {
+        return jsonResponse(200, {
+          ok: true, conversationId: 'conv-1', status: closedNow ? 'closed' : 'open'
+        });
+      }
+      starts += 1;
+      return jsonResponse(200, starts === 1 ? OK_START : OK_SEND);
+    };
+    r.close = () => { closedNow = true; };
+    return r;
+  };
+
+  test('the interval notices a close, with no send attempted', async () => {
+    const { mod } = await load();
+    const clock = fakeClock();
+    const responder = openThenClosed();
+    const { ui, session, fetcher } = await connectedSession(mod, { clock, responder });
+    try {
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await tick();
+      assert.equal(session.closed, false);
+      assert.equal(clock.liveTimers(), 1, 'the watch is running');
+
+      responder.close();
+      clock.fireInterval();
+      await tick();
+
+      assert.equal(session.closed, true, 'learned from the watch');
+      assert.equal(ui.composerEnabled, false);
+      assert.equal(ui.status, 'Conversation closed');
+      const writes = fetcher.seen.filter(
+        (r) => r.init.method === 'POST' && String(r.input).indexOf('/api/chat/send') === 0);
+      assert.equal(writes.length, 0, 'no message was sent to discover it');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('the tab becoming visible checks immediately', async () => {
+    const { mod } = await load();
+    const clock = fakeClock();
+    const responder = openThenClosed();
+    const { ui, session, fetcher } = await connectedSession(mod, { clock, responder });
+    try {
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await tick();
+      assert.equal(clock.visibilityListeners(), 1);
+
+      responder.close();
+      clock.becomeHidden();
+      clock.becomeVisible();
+      await tick();
+
+      assert.equal(session.closed, true, 'noticed on return, without the timer');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('a hidden tab does not check', async () => {
+    const { mod } = await load();
+    const clock = fakeClock();
+    const { ui, fetcher } = await connectedSession(mod, { clock, responder: openThenClosed() });
+    try {
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await tick();
+      const before = fetcher.seen.length;
+      clock.doc.visibilityState = 'hidden';
+      for (const fn of clock.doc.listeners.visibilitychange) fn();
+      await tick();
+      assert.equal(fetcher.seen.length, before, 'going hidden asks nothing');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('the watch STOPS once closed - nothing left to learn', async () => {
+    const { mod } = await load();
+    const clock = fakeClock();
+    const responder = openThenClosed();
+    const { ui, fetcher } = await connectedSession(mod, { clock, responder });
+    try {
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await tick();
+      responder.close();
+      clock.fireInterval();
+      await tick();
+
+      assert.equal(clock.liveTimers(), 0, 'the timer is gone');
+      assert.equal(clock.visibilityListeners(), 0, 'and so is the listener');
+
+      const after = fetcher.seen.length;
+      clock.becomeVisible();
+      await tick();
+      assert.equal(fetcher.seen.length, after, 'and nothing asks again');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('a 409 close stops the watch IMMEDIATELY, not on the next tick', async () => {
+    /*
+     * The other way a conversation becomes closed: the customer sends, the
+     * server refuses 409, and reportFailure() -> applyClosed() runs. That path
+     * never goes through refreshStatus(), so applyClosed() has to stop the
+     * watch itself.
+     *
+     * Without this test the suite could not see it. refreshStatus() also calls
+     * stopStatusWatch() right after applyClosed(), so a mutation removing the
+     * call from applyClosed() was masked on the polling path, and on this path
+     * the timer merely self-healed on its next tick - a minute of a timer
+     * running against a conversation that can never change again, and a
+     * teardown that depends on a second mechanism to be correct.
+     */
+    const { mod } = await load();
+    const clock = fakeClock();
+    let call = 0;
+    const { ui, session, fetcher } = await connectedSession(mod, {
+      clock,
+      responder: (n, input) => {
+        if (String(input).indexOf('/api/chat/status') === 0) {
+          return jsonResponse(200, { ok: true, conversationId: 'conv-1', status: 'open' });
+        }
+        call += 1;
+        if (call === 1) return jsonResponse(200, OK_START);
+        return jsonResponse(409, { ok: false, code: 'conversation_closed' });
+      }
+    });
+    try {
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await tick();
+      assert.equal(clock.liveTimers(), 1, 'the watch is running on an open thread');
+      assert.equal(clock.visibilityListeners(), 1);
+
+      await ui.sendHandler({ message: 'refused' });
+      await tick();
+
+      assert.equal(session.closed, true);
+      /* No interval fired, no visibility event - the teardown is applyClosed's
+         own doing. */
+      assert.equal(clock.liveTimers(), 0, 'the timer is gone at once');
+      assert.equal(clock.visibilityListeners(), 0, 'and so is the listener');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('the watch stops on suspend, disconnect and stop', async () => {
+    for (const teardown of ['suspend', 'disconnect', 'stop']) {
+      const { mod } = await load();
+      const clock = fakeClock();
+      const { ui, session, fetcher } = await connectedSession(mod, {
+        clock, responder: openThenClosed()
+      });
+      try {
+        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+        await tick();
+        assert.equal(clock.liveTimers(), 1, teardown + ': running first');
+
+        if (teardown === 'stop') session.stop();
+        else mod[teardown]();
+
+        assert.equal(clock.liveTimers(), 0, teardown + ' must clear the timer');
+        assert.equal(clock.visibilityListeners(), 0,
+          teardown + ' must remove the visibility listener');
+      } finally {
+        fetcher.restore();
+      }
+    }
+  });
+
+  test('resume checks immediately and restarts exactly one watch', async () => {
+    const { mod } = await load();
+    const clock = fakeClock();
+    const responder = openThenClosed();
+    const { ui, session, fetcher } = await connectedSession(mod, { clock, responder });
+    try {
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await tick();
+
+      mod.suspend();
+      assert.equal(clock.liveTimers(), 0);
+      responder.close();          /* staff close while the panel is shut */
+
+      mod.resume();
+      await tick();
+
+      assert.equal(session.closed, true, 'reopening the panel notices at once');
+      assert.equal(clock.liveTimers(), 0, 'and the watch stops, being closed');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('NO OVERLAPPING WATCHES, however many times it is started', async () => {
+    const { mod } = await load();
+    const clock = fakeClock();
+    const { ui, session, fetcher } = await connectedSession(mod, {
+      clock, responder: openThenClosed()
+    });
+    try {
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await tick();
+      for (let i = 0; i < 5; i++) session.watchStatus();
+      assert.equal(clock.liveTimers(), 1, 'one timer, always');
+      assert.equal(clock.visibilityListeners(), 1, 'one listener, always');
+      for (let i = 0; i < 3; i++) { mod.suspend(); mod.resume(); await tick(); }
+      assert.equal(clock.liveTimers(), 1);
+      assert.equal(clock.visibilityListeners(), 1);
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('no overlapping REQUESTS - a check in flight blocks another', async () => {
+    const { mod } = await load();
+    const clock = fakeClock();
+    let release = null;
+    const gate = new Promise((r) => { release = r; });
+    let starts = 0;
+    const { ui, session, fetcher } = await connectedSession(mod, {
+      clock,
+      responder: (n, input) => {
+        if (String(input).indexOf('/api/chat/status') === 0) {
+          return gate.then(() => jsonResponse(200,
+            { ok: true, conversationId: 'conv-1', status: 'open' }));
+        }
+        starts += 1;
+        return jsonResponse(200, starts === 1 ? OK_START : OK_SEND);
+      }
+    });
+    try {
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await tick();
+      const before = fetcher.seen.length;
+
+      const a = session.refreshStatus({});
+      const b = session.refreshStatus({});
+      const c = session.refreshStatus({});
+      release();
+      await Promise.all([a, b, c]);
+
+      const statusCalls = fetcher.seen.slice(before).filter(
+        (r) => String(r.input).indexOf('/api/chat/status') === 0);
+      assert.equal(statusCalls.length, 1, 'three calls, one request');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('the interval is a minute, not a hammer', async () => {
+    const { mod } = await load();
+    const clock = fakeClock();
+    const { ui, fetcher } = await connectedSession(mod, { clock, responder: openThenClosed() });
+    try {
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await tick();
+      assert.equal(mod._internals.STATUS_POLL_MS, 60000);
+      assert.equal(clock.intervalMs(), 60000);
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('a status check carries BOTH credentials, as a GET with no body', async () => {
+    const { mod, stub } = await load();
+    stub.setAppCheckToken('app-check-abc');
+    stub.setSignedInUser({ uid: 'anon-uid-1', getIdToken: async () => 'id-token-xyz' });
+    const clock = fakeClock();
+    const { ui, session, fetcher } = await connectedSession(mod, {
+      clock, responder: openThenClosed()
+    });
+    try {
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await tick();
+      await session.refreshStatus({});
+
+      const req = fetcher.seen.filter(
+        (r) => String(r.input).indexOf('/api/chat/status') === 0).pop();
+      assert.ok(req, 'a status request was made');
+      assert.equal(req.init.method, 'GET');
+      assert.equal(req.init.body, undefined, 'no body on a GET');
+      assert.equal(req.init.headers.get('Authorization'), 'Bearer id-token-xyz');
+      assert.equal(req.init.headers.get('X-Firebase-AppCheck'), 'app-check-abc');
+      assert.equal(req.init.headers.get('Authorization').includes('app-check-abc'), false);
+      assert.equal(req.init.headers.get('X-Firebase-AppCheck').includes('id-token-xyz'), false);
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('the status URL carries only the conversation id', async () => {
+    const { mod } = await load();
+    const clock = fakeClock();
+    const { ui, session, fetcher } = await connectedSession(mod, {
+      clock, responder: openThenClosed()
+    });
+    try {
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await tick();
+      await session.refreshStatus({});
+      const req = fetcher.seen.filter(
+        (r) => String(r.input).indexOf('/api/chat/status') === 0).pop();
+      const url = String(req.input);
+      assert.equal(url, '/api/chat/status?conversationId=conv-1');
+      for (const forbidden of ['customerUid', 'uid=', 'email', 'name=']) {
+        assert.equal(url.includes(forbidden), false, 'leaked ' + forbidden);
+      }
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('the gate-off path opens no watch at all', async () => {
+    const { mod } = await load();
+    const clock = fakeClock();
+    const ui = recordingUi();
+    const fetcher = captureFetch(jsonResponse(200, OK_START));
+    try {
+      await mod.connect(ui, {
+        deps: Object.assign({ storage: () => memoryStorage() }, clock.deps)
+      });
+      await tick();
+      assert.equal(clock.liveTimers(), 0);
+      assert.equal(clock.visibilityListeners(), 0);
+      assert.equal(fetcher.seen.length, 0);
+    } finally {
+      fetcher.restore();
+    }
+  });
+});
+
+/* ------------------------------------------------------- closed-state UI */
+
+describe('the closed state is explained exactly once', () => {
+  test('a 409 close shows the state, not the state PLUS a banner', async () => {
+    /*
+     * THE BUG: reportFailure() set the notice to "This conversation has been
+     * closed." and then applyClosed() added the fuller note - so the customer
+     * was told the same thing twice, once tersely in an error banner and once
+     * properly in the transcript.
+     */
+    const { mod } = await load();
+    const clock = fakeClock();
+    let call = 0;
+    const { ui, fetcher } = await connectedSession(mod, {
+      clock,
+      responder: (n, input) => {
+        if (String(input).indexOf('/api/chat/status') === 0) {
+          return jsonResponse(200, { ok: true, conversationId: 'conv-1', status: 'open' });
+        }
+        call += 1;
+        if (call === 1) return jsonResponse(200, OK_START);
+        return jsonResponse(409, { ok: false, code: 'conversation_closed' });
+      }
+    });
+    try {
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.sendHandler({ message: 'anyone there?' });
+      await tick();
+
+      assert.equal(ui.closed, true, 'the closed state is set');
+      assert.equal(ui.notice, null, 'and the banner is cleared, not left beside it');
+      assert.equal(ui.retry, null, 'no retry on a conversation that is over');
+      assert.equal(ui.composerEnabled, false);
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('setClosed is applied once, not once per snapshot', async () => {
+    const { mod, stub } = await load();
+    const clock = fakeClock();
+    const { ui, session, fetcher } = await connectedSession(mod, {
+      clock, responder: (n, input) =>
+        String(input).indexOf('/api/chat/status') === 0
+          ? jsonResponse(200, { ok: true, conversationId: 'conv-1', status: 'closed' })
+          : jsonResponse(200, OK_START)
+    });
+    try {
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await tick();
+      await session.refreshStatus({});
+      await session.refreshStatus({});
+      stub.emitSnapshot([
+        { id: 'm1', data: { body: 'earlier', senderType: 'customer', createdAt: 1 } }
+      ]);
+      await tick();
+      const closedTrue = ui.closedHistory.filter((f) => f === true).length;
+      assert.equal(closedTrue, 1, 'applied once: ' + JSON.stringify(ui.closedHistory));
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('the rejected optimistic message does not survive the close', async () => {
+    const { mod } = await load();
+    const clock = fakeClock();
+    let call = 0;
+    const { ui, fetcher } = await connectedSession(mod, {
+      clock,
+      responder: (n, input) => {
+        if (String(input).indexOf('/api/chat/status') === 0) {
+          return jsonResponse(200, { ok: true, conversationId: 'conv-1', status: 'open' });
+        }
+        call += 1;
+        if (call === 1) return jsonResponse(200, OK_START);
+        return jsonResponse(409, { ok: false, code: 'conversation_closed' });
+      }
+    });
+    try {
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.sendHandler({ message: 'this one is refused' });
+      await tick();
+      const bodies = (ui.messages || []).map((m) => m.body);
+      assert.equal(bodies.includes('this one is refused'), false,
+        'a message the server refused must not sit in the transcript looking sent');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('the widget renders the closed note once, and it survives a snapshot', () => {
+    /*
+     * It used to be appended imperatively by setClosed(), and the next
+     * renderMessages() cleared the log - so the explanation vanished while the
+     * composer stayed disabled, leaving nothing on screen to explain why.
+     */
+    assert.match(WIDGET_CODE, /function appendClosedNote\(\)/);
+    assert.match(WIDGET_CODE, /appendClosedNote\(\);\s+if \(pinned\) scrollLog\(\);/);
+    /* And the empty transcript shows it too, rather than "send one". */
+    assert.match(WIDGET_CODE, /isClosed\s*\?\s*CLOSED_NOTE/);
+    /* Exactly one definition of the sentence. */
+    const occurrences = (WIDGET_CODE.match(/This conversation has been closed\./g) || []).length;
+    assert.equal(occurrences, 1, 'the closed sentence is written in one place');
+  });
+
+  test('the transport no longer emits a second closed sentence', () => {
+    /* messageForCode('conversation_closed') still exists for describeFailure,
+       but the send guard must not push it into the notice on top of the
+       closed state. */
+    const guard = CUSTOMER_CODE.slice(
+      CUSTOMER_CODE.indexOf('async send(fields) {'),
+      CUSTOMER_CODE.indexOf('const body = String('));
+    assert.equal(guard.includes("messageForCode('conversation_closed')"), false,
+      'the closed guard must not add a banner beside the closed state');
+  });
+});
+
 /* ============================================= 14-15, 21. THE TRANSCRIPT */
 
 describe('the transcript', () => {
@@ -1681,8 +2431,10 @@ describe('failures', () => {
       await ui.sendHandler({ message: 'anyone there?' });
       assert.equal(ui.closed, true);
       assert.equal(ui.composerEnabled, false);
-      assert.equal(ui.notice, 'This conversation has been closed.');
       assert.equal(session.closed, true);
+      /* ONE explanation. The banner is cleared and the closed state carries
+         the message - see 'the closed state is explained exactly once'. */
+      assert.equal(ui.notice, null);
     } finally {
       fetcher.restore();
     }
@@ -1839,7 +2591,8 @@ describe('failures', () => {
       console.error = () => {};
       try {
         const session = await mod.openChatForReview({
-          ui, openPanel: () => {}, deps: { storage: () => memoryStorage() }
+          ui, openPanel: () => {},
+          deps: Object.assign({ storage: () => memoryStorage() }, fakeClock().deps)
         });
         await tick();
         assert.equal(session, null, 'it refuses rather than half-connecting');
@@ -1862,7 +2615,8 @@ describe('failures', () => {
     const fetcher = captureFetch(jsonResponse(200, OK_START));
     try {
       const session = await mod.openChatForReview({
-        ui, openPanel: () => {}, deps: { storage: () => memoryStorage() }
+        ui, openPanel: () => {},
+        deps: Object.assign({ storage: () => memoryStorage() }, fakeClock().deps)
       });
       await tick();
       assert.equal(session, null);
@@ -2090,7 +2844,8 @@ describe('failures', () => {
     const fetcher = captureFetch(jsonResponse(200, OK_START));
     try {
       const session = await mod.openChatForReview({
-        ui, openPanel: () => {}, deps: { storage: () => memoryStorage() }
+        ui, openPanel: () => {},
+        deps: Object.assign({ storage: () => memoryStorage() }, fakeClock().deps)
       });
       assert.ok(session, 'still connected');
       const payload = await ui.startHandler({ name: 'Jo', email: 'j@e.co', message: 'hi' });
@@ -2212,7 +2967,8 @@ describe('remembering a conversation', () => {
       try {
         const ui = recordingUi();
         await mod.openChatForReview({
-          ui, openPanel: () => {}, deps: { storage: () => storage }
+          ui, openPanel: () => {},
+        deps: Object.assign({ storage: () => storage }, fakeClock().deps)
         });
         await tick();
         assert.equal(ui.startFormShown, 0, 'no start form for a returning visitor');
@@ -2238,7 +2994,8 @@ describe('remembering a conversation', () => {
     try {
       const ui = recordingUi();
       const session = await mod.openChatForReview({
-        ui, openPanel: () => {}, deps: { storage: () => hostile }
+        ui, openPanel: () => {},
+        deps: Object.assign({ storage: () => hostile }, fakeClock().deps)
       });
       assert.ok(session, 'a private-mode browser still gets a working chat');
       await ui.startHandler({ name: 'Jo', email: 'j@e.co', message: 'hi' });

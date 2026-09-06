@@ -136,9 +136,109 @@ email ≤254, message ≤2000, `clientMessageId` a UUID.
 server-decided field with **400 `forbidden_field`** — rejected, not ignored. A
 test asserts every outbound body against that exact list.
 
+### GET /api/chat/status
+
+```
+GET /api/chat/status?conversationId=...
+```
+→ `{ "ok": true, "conversationId": "...", "status": "open" | "closed" }`
+
+Same two headers, same gate. Three keys out and nothing else. See
+§4 for why it exists.
+
 ---
 
-## 4. The realtime listener
+## 4. Knowing when a conversation has been closed
+
+**The bug this fixes, reproduced in a production review.** Staff close a
+conversation. The customer's panel keeps saying *Connected*, because their
+listener watches `chatMessages` and `closeConversation()` writes only to the
+conversation document — status, closedAt, updatedAt, and no message at all. The
+customer finds out by sending something and being refused `409`. Then they
+reload, and the panel comes back saying **Connected with a live composer**,
+because nothing on the client knew any better.
+
+The backend refused every one of those sends correctly. This was never an
+authorisation hole — the client was simply being told nothing and guessing.
+
+### Why not just let the browser read the conversation
+
+Because a Firestore rule cannot hide a field inside a document it has allowed,
+and `chatConversations` carries `customerEmail`, `staffLastReadAt`,
+`staffNotifiedAt`, `messageCount`, `startRequestHash` and whatever a later
+phase adds. Granting that read hands over all of it, and keeps handing over
+each new field for free. The rules therefore deny every browser read of that
+collection, and **that has not changed — `firestore.rules` is byte-identical.**
+The server reads the document with the Admin SDK and returns the one bit that
+is the customer's business.
+
+### Why not a `system` message in the transcript
+
+It was the tempting option: the customer already has a realtime listener, the
+client already renders `senderType: 'system'`, and the rules already permit
+reading it — so a close would arrive instantly with no polling at all.
+
+It was rejected because a message document is fixed at four fields —
+`conversationId`, `createdAt`, `senderType`, `body` — so the only place a
+"this means closed" signal could live is the **body text**. Treating a
+human-readable sentence as a status protocol is brittle the first time somebody
+edits the wording, and it makes a display string load-bearing for a state
+decision. Not worth it.
+
+### The restore sequence
+
+On a page load with a remembered `{uid, conversationId}`:
+
+```
+1. App Check
+2. Firebase app
+3. anonymous auth, uid reconciled against the stored record
+4. GET /api/chat/status          ← the fix
+5. open  → subscribe, "Connected", composer enabled
+   closed → subscribe, "Conversation closed", composer disabled
+   gone   → forget the id, offer the start form
+```
+
+Step 4 runs **before** step 5, not alongside it, so there is no window in which
+the composer is live on a conversation nobody has confirmed. A test asserts
+that ordering directly.
+
+### Learning about a close while the panel is open
+
+Two signals, cheapest first:
+
+| signal | cost | covers |
+|---|---|---|
+| **visibility** — the tab becoming visible | free, event-driven | the common shape: customer switches away, staff close, customer returns |
+| **a 60-second interval** | one authenticated read per minute | a customer who simply sits on the page |
+
+**Why sixty seconds.** The cost of being late is small — the panel says
+*Connected* for up to a minute after a close, and if they send in that window
+the API refuses and the UI corrects itself immediately, which is exactly what
+happened before this fix and was never *wrong*, only rude. The cost of being
+eager is a request per customer per interval, forever, to notice something that
+happens once. A minute is slow enough to be nearly free and quick enough that
+nobody types a paragraph into a dead thread.
+
+The watch stops — timer **and** visibility listener — when:
+
+- the conversation closes (there is no reopen path in the API, so closed is
+  terminal and there is nothing further to learn)
+- the panel closes (`suspend()`)
+- the session is disconnected or stopped
+- the conversation is discarded
+
+It is idempotent: starting it five times leaves one timer and one listener. And
+only one request is ever in flight — a visibility change during an interval
+tick does not produce two.
+
+**A failed check never reopens a closed conversation.** A dropped request is
+not evidence that staff reopened a thread; the failure mode of a flaky network
+must not be a composer coming back to life on a dead conversation.
+
+---
+
+## 5. The realtime listener
 
 It is a **rolling window on the newest 200 messages**.
 
@@ -242,7 +342,7 @@ round. On anything else it offers the visitor a **button** — never a timer.
 
 ---
 
-## 5. Rendering, and why a transcript is the input you do not trust
+## 6. Rendering, and why a transcript is the input you do not trust
 
 Message bodies are set with `textContent`. Never `innerHTML`, never a
 node built from message text. The transport hands the widget **strings and
@@ -279,7 +379,7 @@ tell.
 
 ---
 
-## 6. What is stored, and what is never stored
+## 7. What is stored, and what is never stored
 
 `sessionStorage`, one key, `esthers.chat.conversation`:
 
@@ -311,7 +411,7 @@ still gets a working chat; it just starts a fresh conversation each tab.
 
 ---
 
-## 7. Failures the visitor can see
+## 8. Failures the visitor can see
 
 Every customer-facing sentence comes from one allow-list keyed by the API's
 error code. **The server's own `error` string is never displayed**, even though
@@ -325,6 +425,7 @@ not have. An unknown code falls back to a generic sentence.
 | `401` / `403` auth | "session has expired… reload" | no, composer stops |
 | `400` validation | the specific field message | no |
 | `409 conversation_closed` | closed state, transcript stays readable | no |
+| a close discovered by the status check | the same closed state, no error banner | no |
 | `429 rate_limited` | "wait a moment before sending another" | **no — deliberately** |
 | network failure | "could not reach us… check your connection" | **yes, a button** |
 | `5xx` / non-JSON | generic sentence | no |
@@ -365,7 +466,7 @@ same message. Per-tab dead end, permanently.
 
 ---
 
-## 8. The rollout gate
+## 9. The rollout gate
 
 Two constants, both `false`, both plain source:
 
@@ -392,7 +493,7 @@ fails the suite.
 
 ---
 
-## 9. Reviewing it on esthers.ca — the manual walkthrough
+## 10. Reviewing it on esthers.ca — the manual walkthrough
 
 The gate stays shut. The only way in is to type an import into DevTools, which
 is deliberately awkward: no page leads to it, and calling it changes nothing
@@ -500,9 +601,9 @@ exactly as it is for everybody else.
 
 ---
 
-## 10. What tests can and cannot prove
+## 11. What tests can and cannot prove
 
-`tests/chat-api/chat-customer.test.mjs` — 117 tests — runs both real modules
+`tests/chat-api/chat-customer.test.mjs` — 142 tests — runs both real modules
 with only the four gstatic SDK URLs swapped for a local stub, so the ordering
 and the header separation are proven against the real `chat-app-check.js`
 rather than a stand-in.
@@ -510,16 +611,16 @@ rather than a stand-in.
 It **cannot** mint a real App Check token or reach a real Firestore. The
 production key is restricted to `esthers.ca` and attestation happens in a
 browser against the page's own hostname. That restriction is the protection;
-weakening it to make a test pass would be exactly the wrong trade. Section 9 is
+weakening it to make a test pass would be exactly the wrong trade. Section 10 is
 what closes the remaining gap, and it closes it on production.
 
 ---
 
-## 11. Where this sits in the launch sequence
+## 12. Where this sits in the launch sequence
 
 See `docs/CHAT_APP_CHECK.md` for the full checklist. This phase delivers
 steps 1–2 and the configuration for step 3; step 3's Firebase index deploy
-and step 4's walkthrough (section 9 above) are the next actions.
+and step 4's walkthrough (section 10 above) are the next actions.
 
 Firestore and Authentication App Check enforcement are **still off**, and must
 stay off until the customer flow and then the staff flow have both been proven
