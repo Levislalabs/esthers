@@ -47,7 +47,9 @@ const close = (o) => handlerFor(CLOSE, TOKENS, o);
 
 const goodStart = (over = {}) => Object.assign({
   name: 'Jordan Ellis', email: 'jordan@example.test',
-  message: 'Do you make louvered chimney caps?', clientMessageId: uuid()
+  message: 'Do you make louvered chimney caps?', clientMessageId: uuid(),
+  /* Routing is required on start now - see api/_chat/locations.js. */
+  locationId: 'main'
 }, over);
 
 before(async () => { await wipe(); });
@@ -307,11 +309,16 @@ describe('App Check', () => {
 /* ============================================================== PAYLOAD */
 
 describe('the response body', () => {
-  test('exactly three keys, and nothing else', async () => {
+  test('exactly four keys, and nothing else', async () => {
     const id = await openConversation();
     const res = await ask(id);
+    /* locationId joined this list when routing shipped: the panel has to keep
+       telling the customer which shop they are writing to across a reload and
+       across a transfer. It is a deliberate, reviewed addition to the
+       allow-list, not a widening of it - the list is still exact, and the
+       next accidental field still fails here. */
     assert.deepEqual(Object.keys(res.payload).sort(),
-      ['conversationId', 'ok', 'status']);
+      ['conversationId', 'locationId', 'ok', 'status']);
   });
 
   test('no staff or internal field ever appears', async () => {
@@ -325,6 +332,10 @@ describe('the response body', () => {
       'staffLastReadAt', 'staffNotifiedAt', 'customerLastReadAt',
       'startRequestHash', 'messageCount', 'lastMessageAt', 'closedAt',
       'createdAt', 'updatedAt',
+      /* routing audit: which shop it is at is the customer's business, who
+         moved it and when is not */
+      'previousLocationId', 'lastTransferredAt', 'lastTransferredByStaffUid',
+      'transferCount', 'locationLabel',
       /* and the actual values, in case a field were renamed */
       CUST_A, 'Jordan Ellis', 'jordan@example.test'
     ]) {
@@ -337,9 +348,9 @@ describe('the response body', () => {
     const id = await openConversation();
     const stored = await getConversation(id);
     const res = await ask(id);
-    /* The stored document has many more fields than the three we return. */
+    /* The stored document has many more fields than the four we return. */
     assert.ok(Object.keys(stored).length > 8, 'the document really is fat');
-    assert.equal(Object.keys(res.payload).length, 3);
+    assert.equal(Object.keys(res.payload).length, 4);
   });
 
   test('status is normalised to exactly open or closed, never echoed', async () => {

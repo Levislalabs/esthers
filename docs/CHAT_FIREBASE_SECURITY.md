@@ -298,16 +298,33 @@ testing the cache.
 
 ## 11. Indexes
 
-Two composite indexes, both required, neither speculative:
+Four composite indexes, all required, none speculative — this table is
+the whole of `firestore.indexes.json`:
 
-| Collection | Fields | Serves |
-|---|---|---|
-| `chatMessages` | `conversationId` ASC, `createdAt` ASC | the customer's realtime transcript |
-| `chatConversations` | `status` ASC, `lastMessageAt` DESC | the staff inbox |
+| Collection | Fields | Serves | Deployed |
+|---|---|---|---|
+| `chatMessages` | `conversationId` ASC, `createdAt` ASC | the staff transcript, oldest first | yes |
+| `chatMessages` | `conversationId` ASC, `createdAt` DESC | the customer's realtime listener, newest first — see §5 of `docs/CHAT_CUSTOMER_FRONTEND.md` | yes |
+| `chatConversations` | `status` ASC, `lastMessageAt` DESC | the staff inbox | yes |
+| `chatConversations` | `status` ASC, `locationId` ASC, `lastMessageAt` DESC | the staff inbox, restricted to one shop | **no** |
 
 Firestore creates single-field indexes automatically, but an equality
 filter on one field combined with an `orderBy` on a *different* field
-needs a composite index. Both queries have exactly that shape.
+needs a composite index. All four queries have exactly that shape.
+
+**The third one is in `firestore.indexes.json` and has not been
+deployed.** It is needed only by a staff account whose authorised shops
+exclude `unassigned` — nobody today, because both production staff
+documents have no `locations` field and are read as covering every shop,
+which takes the unfiltered path and the second index above. Deploy it
+with `firebase deploy --only firestore:indexes` **before** restricting
+any account to a single shop.
+
+Note what the third index cannot do. Firestore indexes fields that
+**exist**, so a conversation written before routing — no `locationId`
+field at all — can never match a positive filter on it. That is why the
+unassigned-inclusive path deliberately does not add one, and drops
+unauthorised rows in the server instead. See §5a of `docs/CHAT_API.md`.
 
 ## 12. What the rules cost
 

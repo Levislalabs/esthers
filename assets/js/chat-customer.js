@@ -61,7 +61,21 @@ import {
   getFirebaseApp,
   initAppCheck,
   authorizedFetch
-} from './chat-app-check.js?v=2026-09-05.2';
+} from './chat-app-check.js?v=2026-09-06.1';
+
+/*
+ * The three shops, for display and for a client-side sanity check only.
+ *
+ * The SERVER decides what a valid destination is - api/_chat/locations.js has
+ * its own copy and validates every start against it, and does not import this
+ * file or anything else a browser can reach. What this import buys is that the
+ * selector, the "Sending to:" line and the ids that go on the wire all come
+ * from one place instead of being retyped here.
+ *
+ * Same ?v= as the import above, and for the same measured reason: a query on
+ * this module's own URL does not reach its specifiers.
+ */
+import * as LOC from './chat-locations.js?v=2026-09-06.1';
 
 /*
  * The chat client version. THE SAME STRING as CHAT_CLIENT_VERSION in
@@ -82,7 +96,7 @@ import {
  * out rather than interpolated. That is the cost of the guarantee, and the
  * test is what keeps the copies honest.
  */
-export const CHAT_CLIENT_VERSION = '2026-09-05.2';
+export const CHAT_CLIENT_VERSION = '2026-09-06.1';
 
 /* -------------------------------------------------------------------------
  * THE ROLLOUT GATE
@@ -231,6 +245,8 @@ const MESSAGES_BY_CODE = {
   forbidden_field: GENERIC,
   invalid_client_message_id: GENERIC,
   invalid_conversation_id: 'We could not find that conversation. Please start a new one.',
+  /* Routing. Actionable: the selector is right there, so say what to do. */
+  invalid_location: 'Please choose which shop you would like to message.',
 
   /* Conversation state. */
   conversation_not_found: 'We could not find that conversation. Please start a new one.',
@@ -905,7 +921,10 @@ function chronological(docs) {
  *   setComposerEnabled(flag)      may the visitor type and send?
  *   setClosed(flag)               the conversation is finished
  *   setRetry(handler | null)      offer ONE user-triggered retry
- *   onStart(handler)              handler({name, email, message})
+ *   setLocations(choices)         [{id, label, choice, address, description}]
+ *                                 the shops to offer, in order; drawn once
+ *   setDestination(text | null)   the "Sending to:" line; null clears it
+ *   onStart(handler)              handler({name, email, message, locationId})
  *   onSend(handler)               handler({message})
  *
  * Text only. Nothing in this file hands the UI markup, a node, or anything
@@ -939,6 +958,15 @@ class CustomerChatSession {
     this.db = null;
     this.fs = null;
     this.conversationId = null;
+    /*
+     * Which shop this conversation is at, ALWAYS as told by the server -
+     * never as remembered from what the visitor picked. Staff can move a
+     * conversation to the other shop without anybody sending a message, so
+     * the only honest source is the last /api/chat/start or /api/chat/status
+     * answer. null means nobody has said yet, and the panel shows no
+     * destination at all rather than guessing one.
+     */
+    this.locationId = null;
     this.unsubscribe = null;
     this.closed = false;
     this.stopped = false;
@@ -979,6 +1007,11 @@ class CustomerChatSession {
     callUi(this.ui, 'onStart', (fields) => this.start(fields));
     callUi(this.ui, 'onSend', (fields) => this.send(fields));
 
+    /* The shops to choose from, in the order chat-locations.js lists them.
+       Handed over once, before either view is shown, so the start form has
+       them the first time it is drawn. */
+    callUi(this.ui, 'setLocations', LOC.customerChoices());
+
     const recalled = this.deps.recallConversation(this.deps.storage(), this.identity.user.uid);
     if (recalled) {
       this.conversationId = recalled;
@@ -1002,6 +1035,10 @@ class CustomerChatSession {
       if (this.stopped) return this;
       if (known === 'gone') return this;      /* discarded; start form shown */
       this.openTranscript();
+      /* AFTER openTranscript(), which switches views. refreshStatus() has
+         already learned where this conversation is; this is what puts it on
+         the screen, including when staff moved it while the tab was shut. */
+      this.paintDestination();
       if (this.closed) {
         this.applyClosed();
       } else {
@@ -1052,6 +1089,14 @@ class CustomerChatSession {
         API_STATUS + '?conversationId=' + encodeURIComponent(this.conversationId),
         this.identity.user);
       if (this.stopped) return 'unknown';
+
+      /*
+       * WHERE IT IS NOW. This is the only channel a transfer has to the
+       * customer: moving a conversation writes no message, so the transcript
+       * listener sees nothing at all. Recorded before the open/closed branch
+       * so a conversation that was moved AND closed still says both.
+       */
+      this.applyLocation(payload.locationId);
 
       if (payload.status === 'closed') {
         this.statusKnown = true;
@@ -1340,6 +1385,27 @@ class CustomerChatSession {
   async start(fields) {
     if (this.stopped || this.sending) return null;
     const input = fields || {};
+
+    /*
+     * NOTHING CHOSEN, NOTHING SENT.
+     *
+     * Only that one case is refused here. Whether a given id is a real shop
+     * is the server's question - api/_chat/locations.js has the allow-list
+     * and this file does not get a vote - and a client that is one deploy
+     * behind must not refuse a destination the server has just added. What
+     * this catches is the case no server round trip improves: the visitor
+     * has not picked, so ask them to, immediately and without spending their
+     * rate-limit allowance on a request that cannot succeed.
+     *
+     * NOT DEFAULTED. Choosing a shop on their behalf is exactly how a
+     * curved-scupper job ends up at 1st Avenue.
+     */
+    if (typeof input.locationId !== 'string' || !input.locationId) {
+      callUi(this.ui, 'setNotice', messageForCode('invalid_location'));
+      callUi(this.ui, 'setRetry', null);
+      return null;
+    }
+
     this.sending = true;
     callUi(this.ui, 'setNotice', null);
     callUi(this.ui, 'setBusy', true);
@@ -1353,18 +1419,32 @@ class CustomerChatSession {
         name: String(input.name == null ? '' : input.name),
         email: String(input.email == null ? '' : input.email),
         message: String(input.message == null ? '' : input.message),
-        clientMessageId: clientMessageId
+        clientMessageId: clientMessageId,
+        /*
+         * Whatever the selector produced, unaltered. NOT normalised, NOT
+         * defaulted to a shop here: the server's allow-list is the only
+         * definition of a valid destination, and quietly substituting one
+         * would send a curved-scupper job to the wrong shop rather than
+         * showing the visitor the sentence that tells them to pick.
+         */
+        locationId: input.locationId
       }, this.identity.user);
 
       if (this.stopped) return null;
       this.conversationId = payload.conversationId;
       this.closed = payload.status === 'closed';
+      /* From the response, not from input.locationId. A retried start lands
+         on an existing conversation, and the server answers with where that
+         conversation actually is - which may no longer be what was asked
+         for. */
+      this.applyLocation(payload.locationId);
       /* Straight from the response that created it: as confirmed as a status
          gets, and set BEFORE openTranscript() paints from it. */
       this.statusKnown = true;
       this.deps.rememberConversation(
         this.deps.storage(), this.identity.user.uid, this.conversationId);
       this.openTranscript();
+      this.paintDestination();   /* after the view switch - see begin() */
       if (this.closed) this.applyClosed();
       else this.watchStatus();
       return payload;
@@ -1376,6 +1456,10 @@ class CustomerChatSession {
           name: input.name,
           email: input.email,
           message: input.message,
+          /* The destination travels with the retry too. Dropping it here
+             would turn Try again into a request the server refuses for a
+             different reason than the one that failed. */
+          locationId: input.locationId,
           clientMessageId: clientMessageId
         }
       });
@@ -1544,11 +1628,50 @@ class CustomerChatSession {
     this.closed = false;
     /* Nothing is confirmed about a conversation this session no longer has. */
     this.statusKnown = false;
+    /* Including where it was. Leaving "Sending to: Keith Street" above a
+       blank start form would attach a destination to a conversation that no
+       longer exists, and the visitor has not chosen one yet. */
+    this.locationId = null;
+    this.paintDestination();
     this.store.clear();
     this.deps.forgetConversation(this.deps.storage());
     callUi(this.ui, 'setRetry', null);
     callUi(this.ui, 'setStatus', 'Send us a message');
     callUi(this.ui, 'showStartForm');
+  }
+
+  /* ------------------------------------------------------------- routing */
+
+  /*
+   * Record what the server said about this conversation's shop, and repaint
+   * only if it actually moved.
+   *
+   * NOT VALIDATED INTO A DEFAULT. An id the client does not recognise is
+   * still recorded, because the server is the authority on what the shops
+   * are and a client one deploy behind must not silently relabel a real
+   * destination as "Not Sure". labelFor() decides what such an id READS as,
+   * which is where an unknown value stops - it is never echoed to the screen.
+   */
+  applyLocation(locationId) {
+    const next = typeof locationId === 'string' && locationId ? locationId : null;
+    if (next === this.locationId) return false;
+    this.locationId = next;
+    this.paintDestination();
+    return true;
+  }
+
+  /*
+   * Put the destination on the screen, or take it off.
+   *
+   * A LABEL, NEVER AN ID. labelFor() maps the three known ids to their exact
+   * names and everything else - including anything a hostile response might
+   * carry - to 'Not Sure / Unassigned'. Nothing from the wire reaches the
+   * panel as text, which is what keeps this line safe without the UI having
+   * to sanitise it.
+   */
+  paintDestination() {
+    callUi(this.ui, 'setDestination',
+      this.locationId ? LOC.labelFor(this.locationId) : null);
   }
 
   applyClosed() {

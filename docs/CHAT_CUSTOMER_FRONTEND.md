@@ -28,10 +28,24 @@ runs.
  └─────────┬──────────┘
            │  imports
            ▼
- ┌────────────────────┐
- │  chat-app-check.js │   App Check, and THE one Firebase app instance.
- └────────────────────┘
+ ┌────────────────────┐        ┌─────────────────────┐
+ │  chat-app-check.js │        │  chat-locations.js  │
+ │  App Check, and    │        │  the three shops:   │
+ │  THE one Firebase  │        │  ids, labels,       │
+ │  app instance.     │        │  addresses, copy.   │
+ └────────────────────┘        └─────────────────────┘
 ```
+
+Both imports carry `?v=<CHAT_CLIENT_VERSION>` written out as a literal — a
+query on a module's own URL does not reach the specifiers inside it, so
+versioning only the top of the graph produces a NEW transport running against
+a STALE dependency. Measured in Chromium, not assumed. §9 has the detail.
+
+`chat-locations.js` **decides nothing**. `api/_chat/locations.js` has its own
+copy of the three ids and validates every request against it; it does not
+import this file, reference it, or trust a byte of it, and a test asserts that
+absence. What lives here that the server does not have is display copy: the
+addresses and the descriptions a customer reads while choosing.
 
 Writes and reads go different ways, and the asymmetry is the design:
 
@@ -45,6 +59,35 @@ Writes and reads go different ways, and the asymmetry is the design:
 Writes go through the API because a browser must never be able to write a
 transcript. Reads go direct because a realtime transcript is what a chat *is*,
 and polling would be slower and chattier for a worse result.
+
+### Which shop, and how the customer is told
+
+The start form asks **first**, before name and email: three large cards, each
+with the shop's street and what it actually does, plus "I'm Not Sure". Nothing
+is preselected and nothing is defaulted — a start with no choice is refused by
+the panel with *"Please choose which shop you would like to message."*, before
+a request is made and before the visitor's rate-limit allowance is spent.
+Choosing on their behalf is how a curved-scupper job arrives at 1st Avenue.
+
+Once a conversation exists the panel carries a **"Sending to: …"** line pinned
+between the header and the transcript, where it cannot scroll away. It is
+painted from the SERVER's answer — `locationId` on `/api/chat/start` and on
+every `/api/chat/status` poll — never from what was clicked. Two things fall
+out of that:
+
+- A reload gets it right, because the status call answers before the
+  transcript is drawn.
+- **A transfer reaches the customer.** Moving a conversation writes no
+  message, so the `chatMessages` listener sees nothing at all; the status poll
+  is the entire channel. The line changes to the new shop on its own, within a
+  minute, with no action from them.
+
+The **label** is derived from the id by `labelFor()`, which knows exactly three
+shops and renders anything else as "Not Sure / Unassigned". No location string
+from the wire is ever put on screen, and renaming a shop stays a one-file copy
+edit. The customer is never shown `previousLocationId`, `lastTransferredAt`,
+`lastTransferredByStaffUid` or `transferCount` — who moved it, and when, is
+staff business.
 
 ---
 
@@ -194,16 +237,20 @@ one keeps running it after a deployment. That is how a closed conversation
 came back looking live on the real site after the restore fix had shipped and
 `/api/chat/status` was answering `closed` correctly.
 
-**One version string, bumped by hand, in three files:**
+**One version string, bumped by hand, in four files:**
 
 | file | where it appears |
 |---|---|
 | `assets/js/chat.js` | `var CHAT_CLIENT_VERSION = '…';` — the source of truth, and it is what the loader puts in `?v=` |
-| `assets/js/chat-customer.js` | `export const CHAT_CLIENT_VERSION = '…';` **and** the `?v=` in its `import … from './chat-app-check.js?v=…'` |
+| `assets/js/chat-customer.js` | `export const CHAT_CLIENT_VERSION = '…';` **and** the `?v=` on **both** static imports: `./chat-app-check.js?v=…` and `./chat-locations.js?v=…` |
 | `assets/js/chat-app-check.js` | `export const CHAT_CLIENT_VERSION = '…';` |
+| `assets/js/chat-locations.js` | `export const CHAT_CLIENT_VERSION = '…';` |
+
+`assets/js/chat-staff.js` and `staff/chat/index.html` carry it too — the staff
+page versions its own `<script type="module">` and stylesheet directly.
 
 Bump all of them in the same commit as any change to the chat client. A test
-pins the four copies to each other, so a half-finished bump fails the suite.
+pins every copy to the others, so a half-finished bump fails the suite.
 
 **Why the transitive import needs it too.** A query on a module's own URL does
 **not** reach the specifiers inside it — `'./chat-app-check.js'` resolves
@@ -219,7 +266,7 @@ version travels *inside* `chat.js`, which is a plain
 `<script src="/assets/js/chat.js">` in seven pages — no query can version the
 thing that carries the version. Held at the old build, the loader believes the
 old version and imports the old URL; measured, the page then runs stale code
-end to end. So the three chat scripts, and only those three, are now served:
+end to end. So the four local chat modules, and only those, are now served:
 
 ```
 Cache-Control: public, max-age=0, must-revalidate
@@ -227,15 +274,22 @@ Cache-Control: public, max-age=0, must-revalidate
 
 They may be cached, but the browser must check before reusing them — a
 conditional request answered by a 304 in the ordinary case, and a fresh file
-the first time after a deploy. Scoped to three files on purpose: a site-wide
-no-cache would be a real cost for a problem only these have, and
-`/assets/img/` keeps its week-long cache untouched. This is also the safety
-net for a forgotten bump — revalidation still fetches the new file.
+the first time after a deploy. Deliberately scoped: a site-wide no-cache would
+be a real cost for a problem only these have, and `/assets/img/` keeps its
+week-long cache untouched. This is also the safety net for a forgotten bump —
+revalidation still fetches the new file.
+
+`chat-locations.js` is on the list even though it is only ever loaded with a
+`?v=`, for the same reason `chat-app-check.js` is: the review walkthrough in
+§10 tells a person to import these by hand from DevTools, and a stale copy
+handed out there is a stale copy in the one place anybody actually looks.
+A test pins the whole list, so the next module added to the graph either gets
+a header or fails the suite.
 
 **Not a gate.** `?v=` decides *which* build loads, never *whether* one does.
 It is a literal in source: not a date, not a clock, not a random number, and
 nothing a visitor can influence. `CHAT_PUBLIC_ENABLED` remains the only gate,
-and nothing in the three chat modules reads the page URL at all.
+and nothing in the chat modules reads the page URL at all.
 
 The pinned gstatic SDK URLs are deliberately **not** cache-busted — they
 already carry an exact version (`12.4.0`) in the path, and a query would only

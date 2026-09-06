@@ -49,7 +49,7 @@ const CUST = 'anon-stage-1';
 
 const goodBody = () => ({
   name: FAKE_NAME, email: FAKE_EMAIL,
-  message: FAKE_MESSAGE, clientMessageId: uuid()
+  message: FAKE_MESSAGE, clientMessageId: uuid(), locationId: 'main'
 });
 
 /* Builds the real handler with injected dependencies, so the whole pipeline

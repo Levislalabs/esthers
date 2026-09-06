@@ -34,8 +34,19 @@ const OPTIONS = {
       }
     }
 
+    /*
+     * THE SHOPS COME FROM THE STAFF DOCUMENT, NEVER THE REQUEST.
+     *
+     * There is deliberately no ?locationId parameter to widen. A caller may
+     * narrow what they look at in their own browser, but the set of shops the
+     * server will read from is ctx.actor.locations, resolved from
+     * staff/{uid} during authentication. Adding a query parameter here is how
+     * a single-shop account would talk its way into the other shop.
+     */
     const result = await runStage('firestore_operation_failed',
-      () => S.listConversations(ctx.db, { status, limit }));
+      () => S.listConversations(ctx.db, {
+        status, limit, locations: ctx.actor.locations
+      }));
     return H.ok(ctx.res, result);
   }
 };

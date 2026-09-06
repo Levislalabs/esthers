@@ -111,7 +111,7 @@
 
      It does NOT gate anything. The gate is CHAT_PUBLIC_ENABLED above; this
      string only decides WHICH build loads, never WHETHER one does. -------- */
-  var CHAT_CLIENT_VERSION = '2026-09-05.2';
+  var CHAT_CLIENT_VERSION = '2026-09-06.1';
 
   /* Root-relative, like every other asset path in this file: the widget is
      on /services and /gallery too, and a bare path resolves against the
@@ -160,6 +160,10 @@
   var startPanel = null;         /* the name/email/message form           */
   var startFields = null;        /* { name, email, message } elements     */
   var startSubmit = null;
+  var locationGroup = null;      /* the fieldset the shop choices live in */
+  var locationInputs = [];       /* the radios, so a selection can be read */
+  var locationChoices = null;    /* what to draw in it, from the transport */
+  var destBar = null;            /* the "Sending to:" line, above the log */
   var noticeBox = null;          /* one inline sentence, textContent only */
   var retryBtn = null;
   var statusLine = null;
@@ -559,16 +563,42 @@
 
     startFields = { name: nameInput, email: emailInput, message: messageInput };
 
+    /*
+     * The shop chooser, and it is the FIRST question.
+     *
+     * Esther's runs two shops that do different work, and a message sent to
+     * the wrong one waits behind the wrong queue. Asking last, under the
+     * message box, is asking somebody who has already finished writing -
+     * they pick whatever is nearest. Asking first frames everything after
+     * it.
+     *
+     * Empty until setLocations() fills it. This file has NO list of shops of
+     * its own: chat-locations.js is the one place their names and addresses
+     * are written, chat-customer.js hands them over, and a second copy here
+     * is exactly how "Keith Street" ends up spelled two ways.
+     */
+    locationGroup = el('fieldset', { class: 'chat__shops' }, [
+      el('legend', {
+        class: 'chat__shops-legend',
+        text: 'Which shop should we send this to?'
+      })
+    ]);
+
     startPanel = el('form', { class: 'chat__start', novalidate: 'novalidate' }, [
       el('p', {
         class: 'chat__start-lede',
         text: 'Tell us who you are and what you need, and we will reply here.'
       }),
+      locationGroup,
       field('chat-start-name', 'Name', nameInput),
       field('chat-start-email', 'Email', emailInput),
       field('chat-start-message', 'Message', messageInput),
       startSubmit
     ]);
+
+    /* The transport hands the choices over before either view is shown, so
+       by the time this form is built they are usually already waiting. */
+    renderLocations();
 
     startPanel.addEventListener('submit', function (e) {
       e.preventDefault();
@@ -580,11 +610,117 @@
       onStartHandler({
         name: nameInput.value.trim(),
         email: emailInput.value.trim(),
-        message: messageInput.value.trim()
+        message: messageInput.value.trim(),
+        /*
+         * null when nothing is chosen, and null is what goes to the
+         * transport. NOT a default: substituting a shop here would send the
+         * message somewhere the visitor never picked, and quietly. The
+         * transport answers a missing choice with the sentence that asks for
+         * one.
+         */
+        locationId: selectedLocation()
       });
     });
 
     return startPanel;
+  }
+
+  /* Which radio is checked, or null. The VALUE is the id chat-customer.js
+     supplied; this file never invents one. */
+  function selectedLocation() {
+    for (var i = 0; i < locationInputs.length; i += 1) {
+      if (locationInputs[i].checked) return locationInputs[i].value;
+    }
+    return null;
+  }
+
+  /*
+   * The shops to offer, from chat-customer.js.
+   *
+   * REMEMBERED, NOT DRAWN IMMEDIATELY. The transport hands these over during
+   * its own start-up, which is before the visitor has done anything - so the
+   * start form usually does not exist yet. Storing them and letting
+   * buildStartPanel() draw makes the order of those two calls stop
+   * mattering, which is the kind of ordering bug that only shows up on a
+   * slow connection.
+   */
+  function setLocations(choices) {
+    locationChoices = (choices && typeof choices.length === 'number') ? choices : null;
+    renderLocations();
+  }
+
+  /*
+   * Draw the shop choices.
+   *
+   * Safe to call again - the group is emptied first, so a second call
+   * replaces the list rather than doubling it.
+   *
+   * EVERY STRING HERE IS textContent. The names, addresses and descriptions
+   * arrive from a module, not from a person or a server, but the rule in
+   * this section has no exceptions and this is not the place to start making
+   * them.
+   */
+  function renderLocations() {
+    if (!locationGroup) return;
+    var choices = locationChoices;
+    locationInputs = [];
+    while (locationGroup.childNodes.length > 1) {
+      locationGroup.removeChild(locationGroup.lastChild);
+    }
+    if (!choices) return;
+
+    for (var i = 0; i < choices.length; i += 1) {
+      var c = choices[i] || {};
+      if (typeof c.id !== 'string' || !c.id) continue;
+      var id = 'chat-shop-' + i;
+
+      var radio = el('input', {
+        class: 'chat__shop-radio',
+        type: 'radio',
+        id: id,
+        name: 'chat-start-location'
+      });
+      radio.value = c.id;
+      locationInputs.push(radio);
+
+      var lines = [
+        el('span', { class: 'chat__shop-name', text: String(c.choice || c.label || c.id) })
+      ];
+      if (c.address) {
+        lines.push(el('span', { class: 'chat__shop-address', text: String(c.address) }));
+      }
+      if (c.description) {
+        lines.push(el('span', { class: 'chat__shop-desc', text: String(c.description) }));
+      }
+
+      locationGroup.appendChild(el('label', { class: 'chat__shop', for: id }, [
+        radio,
+        el('span', { class: 'chat__shop-body' }, lines)
+      ]));
+    }
+  }
+
+  /*
+   * "Sending to: <shop>", or nothing at all.
+   *
+   * A LABEL ARRIVES HERE, NEVER AN ID and never a raw server field:
+   * chat-customer.js maps what the server said through labelFor(), which
+   * knows exactly three shops and renders anything else as
+   * "Not Sure / Unassigned". textContent regardless, like every other string
+   * that crosses this boundary.
+   *
+   * null hides the line rather than leaving an empty bar, so the transcript
+   * gets the space back.
+   */
+  function setDestination(text) {
+    if (!destBar) return;
+    if (text == null || text === '') {
+      destBar.textContent = '';
+      destBar.setAttribute('hidden', 'hidden');
+      return;
+    }
+    destBar.textContent = 'Sending to: ' + String(text);
+    destBar.removeAttribute('hidden');
   }
 
   /* One inline sentence, above the composer. Never markup, never a server
@@ -706,10 +842,37 @@
     clearLog();
     log.appendChild(startPanel);
     form.setAttribute('hidden', 'hidden');
-    /* The panel is already open by the time this runs, so moving focus is
-       taking the visitor where they were going, not stealing it. */
+    /* No conversation, so no destination. The visitor is being ASKED which
+       shop; telling them at the same time is nonsense. */
+    setDestination(null);
+    /*
+     * FOCUS THE FIRST QUESTION, WHICH IS NO LONGER THE NAME FIELD.
+     *
+     * Caught in browser QA at 390px, not by reading this: the form is taller
+     * than the panel on a phone, and focusing Name scrolled the shop chooser
+     * clean off the top of the log. The visitor opened the panel and was
+     * looking at "Email" with no idea a routing question had gone past.
+     *
+     * Focusing an UNCHECKED radio does not check it - only arrow keys and
+     * space do that - so this moves the view and the caret to the first
+     * question without answering it for anybody. Name is the fallback for
+     * the review-harness path, where setLocations() may never have run.
+     *
+     * The panel is already open by the time this runs, so moving focus is
+     * taking the visitor where they were going, not stealing it.
+     */
     setTimeout(function () {
-      if (startFields && startFields.name) startFields.name.focus();
+      var first = locationInputs.length ? locationInputs[0] : null;
+      if (!first && startFields && startFields.name) first = startFields.name;
+      if (first && typeof first.focus === 'function') {
+        /* preventScroll, then scroll the log ourselves. Letting the browser
+           scroll the focused control into view is what put the chooser off
+           the top in the first place, and the options bag is ignored by an
+           engine that does not know it - which the line below then corrects
+           anyway. */
+        try { first.focus({ preventScroll: true }); } catch (err) { first.focus(); }
+      }
+      log.scrollTop = 0;
     }, 60);
   }
 
@@ -743,6 +906,9 @@
         noticeBox.textContent = String(text);
         noticeBox.removeAttribute('hidden');
       },
+
+      setLocations: setLocations,
+      setDestination: setDestination,
 
       setBusy: function (flag) {
         isBusy = flag === true;
@@ -894,12 +1060,32 @@
 
     form = el('form', { class: 'chat__form', novalidate: 'novalidate' }, [input, send]);
 
+    /*
+     * "Sending to: Specialty Shop - Keith Street".
+     *
+     * Above the transcript rather than inside it, so it does not scroll away
+     * after four messages - a visitor who has to scroll up to check which
+     * shop they are talking to will not check. Hidden until a conversation
+     * exists and the SERVER has said where it is; see setDestination().
+     *
+     * role="status" with aria-live="polite": when staff move a conversation
+     * to the other shop this line changes with no visitor action behind it,
+     * and a screen-reader user would otherwise never learn it moved.
+     */
+    destBar = el('p', {
+      class: 'chat__dest',
+      id: 'chat-destination',
+      role: 'status',
+      'aria-live': 'polite',
+      hidden: 'hidden'
+    });
+
     panel = el('div', {
       class: 'chat__panel',
       id: 'chat-panel',
       role: 'dialog',
       'aria-labelledby': 'chat-title'
-    }, [head, log, form]);
+    }, [head, destBar, log, form]);
 
     /* ---- dismiss, and the small button it leaves behind ---- */
 
@@ -1176,6 +1362,8 @@
     composerEnabled = true;
     if (startPanel && startPanel.parentNode) startPanel.parentNode.removeChild(startPanel);
     form.removeAttribute('hidden');
+    /* Back to a demo: there is no conversation and no shop it is going to. */
+    setDestination(null);
     if (noticeBox) {
       noticeBox.textContent = '';
       noticeBox.setAttribute('hidden', 'hidden');

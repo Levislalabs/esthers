@@ -25,7 +25,25 @@ const LIMITS = {
 const FORBIDDEN_FIELDS = [
   'customerUid', 'senderType', 'staffUserId', 'createdAt', 'updatedAt',
   'status', 'closedAt', 'messageCount', 'lastMessageAt',
-  'staffLastReadAt', 'customerLastReadAt', 'staffNotifiedAt', 'uid', 'role'
+  'staffLastReadAt', 'customerLastReadAt', 'staffNotifiedAt', 'uid', 'role',
+  /*
+   * ROUTING IS THE SERVER'S.
+   *
+   * locationId itself IS accepted on start - a customer chooses their shop,
+   * and locations.js validates it against the canonical allow-list. These are
+   * the fields around it that decide who may READ that shop, or that record
+   * what the server did. A request carrying any of them is refused outright
+   * rather than having them quietly dropped: a caller who tries to set
+   * transferredBy has told us something about their intentions, and the
+   * honest reply is no.
+   *
+   * locationLabel is here because the label must always be DERIVED from the
+   * id. Accepting one would let a caller put chosen words on a staff screen.
+   */
+  'locationLabel', 'branch', 'branchName', 'assignedLocation', 'assignedStaff',
+  'staffLocations', 'locations', 'previousLocationId', 'lastTransferredAt',
+  'lastTransferredByStaffUid', 'transferCount', 'transferredBy',
+  'transferHistory', 'permissions'
 ];
 
 class ValidationError extends Error {

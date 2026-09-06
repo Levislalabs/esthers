@@ -51,11 +51,22 @@ someone guessing cannot learn which email addresses are real.
 ## Reading and replying
 
 **The left column** is the list of conversations, newest activity first. Each
-row shows the customer's name, their email address, when they last wrote,
-whether the conversation is Open or Closed, and how many messages it has.
+row shows the customer's name, their email address, **which shop the message
+was sent to**, when they last wrote, whether the conversation is Open or
+Closed, and how many messages it has.
 
 **Open / Closed** at the top of the list switches between the two. Open is
 what you want almost always.
+
+**The shop buttons** — *All shops*, *Main Shop - 1st Avenue*, *Specialty Shop -
+Keith Street*, *Not Sure / Unassigned* — appear only if your account covers
+more than one shop. They narrow what is on your screen; they do not change what
+you are allowed to see. If your account covers one shop, the buttons are not
+there because there is nothing to choose between: the list is already only
+your shop's, decided on the server before it ever reached your browser.
+
+*Not Sure / Unassigned* is where two kinds of conversation end up: the customer
+picked "I'm Not Sure", and anything from before we started asking.
 
 Click a conversation to read it. Customer messages sit on the left; your
 replies sit on the right, tinted orange and labelled *Esther's*.
@@ -91,6 +102,40 @@ Once closed:
 
 There is no reopen. If a customer needs to talk again they start a new
 conversation, which is what the customer-side panel offers them.
+
+---
+
+## Moving a conversation to the other shop
+
+Somebody asks the 1st Avenue shop about a curved copper scupper. That is Keith
+Street's work. Press **Move to other shop**.
+
+You get a box asking which shop, with nothing pre-selected. Pick one and press
+**Move conversation**; **Leave it here** or Escape cancels, and nothing happens
+until you answer.
+
+What happens when you do:
+
+- **The customer keeps the same conversation.** Same thread, same transcript,
+  nothing copied and nothing lost. They do not have to explain it twice.
+- **They are told where it went.** The line at the top of their panel changes
+  from "Sending to: Main Shop - 1st Avenue" to the new shop, without them
+  having to do anything. They are **not** told who moved it.
+- **The other shop sees it** in their list within about fifteen seconds.
+- **If the shop you chose is not one of yours, it leaves your inbox** — you get
+  a note saying where it went, and the conversation closes on your screen. That
+  is normal and it is not an error: you handed it over, which is not the same
+  as being let into the other shop.
+
+You can move a conversation to a shop you cannot read. That is deliberate:
+otherwise only a manager could ever fix a misroute.
+
+**A closed conversation cannot be moved.** There is nobody to hand it to and
+nothing left to do with it, so the button is not offered.
+
+Moving a conversation does **not** count as a message. It does not change
+"last wrote" or the message count, and the customer gets no notification other
+than the line at the top of their panel.
 
 ---
 
@@ -231,6 +276,24 @@ preview URL and not from a laptop. So the first sign-in is the test.
 
 If step 4 shows a 403 on `/api/admin/chat/conversations`, the account signed in
 but is not authorised — check `isActive` and `role` on its `staff` document.
+
+**Which shops an account sees.** Today both staff documents are
+`{ isActive: true, role: 'admin' }` with no `locations` field, and that is read
+as *every shop* — so nothing changes for either account, and both get the shop
+buttons. To restrict an account to one shop, add a `locations` array to its
+`staff/{uid}` document:
+
+```
+locations: ["main"]           only 1st Avenue
+locations: ["specialty"]      only Keith Street
+locations: ["main", "unassigned"]   1st Avenue, plus anything unrouted
+locations: []                 nothing at all (a deliberate switch-off)
+```
+
+Those three ids — `main`, `specialty`, `unassigned` — are the only ones the
+server accepts; anything else in the array is ignored. **Deploy the composite
+index first** (`firebase deploy --only firestore:indexes`): a single-shop
+account uses a query that needs it.
 
 If the page ever looks wrong after a deployment, it is worth confirming you
 have the current build: the version the page is running is

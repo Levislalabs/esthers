@@ -24,11 +24,16 @@ const OPTIONS = {
     V.requireNoPrivilegedFields(ctx.body);
     const conversationId = V.validConversationId(ctx.body.conversationId);
 
+    /* Load, resolve, authorise - before the allowance is spent and before the
+       close transaction. No cross-shop close from a console. */
+    await runStage('firestore_operation_failed',
+      () => S.loadConversationForStaff(ctx.db, ctx.actor, conversationId));
+
     await runStage('rate_limit_check_failed',
       () => RL.consume(ctx.db, 'staff_write', ctx.actor.uid, ctx.rateSecret));
 
     const result = await runStage('chat_close_transaction_failed',
-      () => S.closeConversation(ctx.db, ctx.deps, { conversationId }));
+      () => S.closeConversation(ctx.db, ctx.deps, { conversationId, actor: ctx.actor }));
     return H.ok(ctx.res, {
       conversationId: result.conversationId,
       status: result.status

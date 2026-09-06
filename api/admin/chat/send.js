@@ -23,10 +23,21 @@ const OPTIONS = {
   run: async (ctx) => {
     const input = await runStage('request_validation_failed',
       () => V.validateSend(ctx.body));
+    /*
+     * Load, resolve the shop, authorise - BEFORE spending a rate-limit
+     * allowance or looking up an idempotency key. A staff member who has just
+     * transferred a conversation away is refused here, whatever their browser
+     * still has open. sendStaffMessage() re-checks inside its transaction to
+     * close the race between this and the write.
+     */
+    await runStage('firestore_operation_failed',
+      () => S.loadConversationForStaff(ctx.db, ctx.actor, input.conversationId));
+
     const request = {
       conversationId: input.conversationId,
       message: input.message,
-      clientMessageId: input.clientMessageId
+      clientMessageId: input.clientMessageId,
+      actor: ctx.actor
     };
 
     /* Same as the customer route: a proven replay spends the replay

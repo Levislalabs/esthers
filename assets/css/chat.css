@@ -872,6 +872,130 @@
   display: none;
 }
 
+/* ---- which shop? -----------------------------------------------------
+   The first question on the start form, and the one a visitor is most
+   likely to answer wrongly if it is small. Three large targets, each with
+   the shop's street and what it actually does, because "Main" and
+   "Specialty" mean nothing to somebody who has never been to either.
+
+   A real <fieldset>/<legend> with real radios: the grouping, the arrow-key
+   navigation and the announced group name all come free and correct, which
+   no arrangement of divs and ARIA reliably reproduces. ---------------- */
+
+.chat__shops {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;   /* a fieldset will not shrink below its content without this */
+}
+
+.chat__shops-legend {
+  padding: 0 0 6px;
+  color: var(--ink-dim);
+  font-size: 11.5px;
+  font-weight: 550;
+  letter-spacing: 0.01em;
+}
+
+/* The whole card is the label, so the tap target is the card - not a 16px
+   circle beside it. This is the difference between choosing the right shop
+   on a phone and choosing whichever one your thumb landed nearest. */
+.chat__shop {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease),
+              background var(--dur-fast) var(--ease);
+}
+
+.chat__shop:hover { background: var(--bg-hover); }
+
+.chat__shop-radio {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  margin: 1px 0 0;
+  accent-color: var(--chat-accent);
+  cursor: pointer;
+}
+
+/* The focus ring belongs on the card, not on the 17px dot inside it: the
+   card is what the visitor is choosing, and a ring around the dot is easy
+   to miss against a dark panel. */
+.chat__shop:has(.chat__shop-radio:focus-visible) {
+  outline: 2px solid var(--chat-accent);
+  outline-offset: 1px;
+}
+
+.chat__shop:has(.chat__shop-radio:checked) {
+  border-color: var(--chat-accent-line);
+  background: var(--chat-accent-soft);
+}
+
+.chat__shop-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.chat__shop-name {
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-wrap: pretty;
+}
+
+.chat__shop-address {
+  color: var(--ink-dim);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.chat__shop-desc {
+  color: var(--ink-muted);
+  font-size: 11.8px;
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+
+/* ---- where this conversation is going --------------------------------
+   Pinned between the header and the transcript so it cannot scroll away.
+   A visitor who has to scroll up to check which shop they are talking to
+   will not check - and when staff hand a conversation to the other shop,
+   this line is the only place the customer ever sees it move. ------- */
+
+.chat__dest {
+  margin: 0;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--chat-accent-soft);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 1.4;
+  letter-spacing: 0.01em;
+  text-wrap: pretty;
+}
+
+/* Belt and braces. Nothing above sets `display` on .chat__dest, so the user
+   agent's [hidden]{display:none} already wins - but .chat__form learned the
+   hard way further up this file what happens when a class rule quietly
+   outranks it, and the cost of being explicit is one line. */
+.chat__dest[hidden] {
+  display: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .chat__retry { transition: none; }
+  .chat__shop { transition: none; }
 }

@@ -50,13 +50,26 @@ import {
   getFirebaseApp,
   initAppCheck,
   authorizedFetch
-} from './chat-app-check.js?v=2026-09-05.2';
+} from './chat-app-check.js?v=2026-09-06.1';
+
+/*
+ * The three shops, for DISPLAY only.
+ *
+ * Which shops this account may see is decided by the server and arrives in
+ * every inbox answer as `locations`. This module supplies the names to put
+ * beside those ids, and nothing else: no filter drawn from it grants access,
+ * and hiding a row here would be theatre - the row was never in the response.
+ *
+ * Same ?v= as the import above, for the same measured reason: a query on this
+ * module's own URL does not reach its specifiers.
+ */
+import * as LOC from './chat-locations.js?v=2026-09-06.1';
 
 /* The chat client version. THE SAME STRING as CHAT_CLIENT_VERSION in
    chat.js, chat-customer.js and chat-app-check.js, and the same string as the
    ?v= in the import above and in staff/chat/index.html. One version for the
    whole local chat graph; a test pins every copy to the others. */
-export const CHAT_CLIENT_VERSION = '2026-09-05.2';
+export const CHAT_CLIENT_VERSION = '2026-09-06.1';
 
 /* Pinned by path, exactly as the customer transport loads it. No cache-busting
    query: gstatic already serves an exact version per URL. */
@@ -68,6 +81,7 @@ const API_CONVERSATIONS = '/api/admin/chat/conversations';
 const API_MESSAGES = '/api/admin/chat/messages';
 const API_SEND = '/api/admin/chat/send';
 const API_CLOSE = '/api/admin/chat/close';
+const API_TRANSFER = '/api/admin/chat/transfer';
 
 /* Server-side caps, repeated here only so the client never asks for more than
    the server will give and get a 400 for its trouble. */
@@ -139,6 +153,9 @@ const MESSAGES_BY_CODE = {
   invalid_token: SIGNED_OUT,
   conversation_not_found: 'That conversation no longer exists.',
   conversation_closed: 'That conversation has been closed.',
+  /* Routing. invalid_location is a bug in this page, not something a staff
+     member can act on, so it says what they can do rather than what broke. */
+  invalid_location: 'That shop could not be selected. Please reload and try again.',
   invalid_message: 'That message could not be sent. Check the length and try again.',
   rate_limited: 'That is a lot of messages at once. Please wait a moment.',
   cross_origin: RELOAD
@@ -310,6 +327,31 @@ export class StaffDashboard {
     this.selectedId = null;
     this.thread = null;           /* { conversation, messages } */
 
+    /*
+     * The shops this account may see, exactly as the server last said.
+     *
+     * READ FROM THE ANSWER, NEVER DECIDED HERE. It arrives on every inbox
+     * response and is used for one thing: knowing which filter chips to draw
+     * and whether to draw any at all. Nothing in this file grants access, and
+     * a conversation this account may not see was never in the list to hide.
+     */
+    this.locations = [];
+
+    /*
+     * A VIEW filter, and only a view filter.
+     *
+     * null is "all the shops I can see". Setting it hides rows that are
+     * already on this page, in this tab, from somebody the server has already
+     * decided may read them. It is a convenience for a manager watching both
+     * shops at once, it is not a boundary, and it deliberately does not
+     * travel to the server: /api/admin/chat/conversations takes no location
+     * parameter, so there is no request shape in which a browser can ask for
+     * a shop it is not entitled to.
+     */
+    this.locationFilter = null;
+
+    this.transferring = false;
+
     /* One request of each kind in flight at a time. A poll tick that lands on
        top of a manual refresh is two requests for one answer. */
     this.inboxLoading = false;
@@ -408,6 +450,8 @@ export class StaffDashboard {
     callUi(this.ui, 'onSignOut', () => this.signOut());
     callUi(this.ui, 'onSelect', (id) => this.select(id));
     callUi(this.ui, 'onFilter', (value) => this.setFilter(value));
+    callUi(this.ui, 'onLocationFilter', (value) => this.setLocationFilter(value));
+    callUi(this.ui, 'onTransfer', () => this.requestTransfer());
     callUi(this.ui, 'onRefresh', () => this.refreshAll());
     callUi(this.ui, 'onSend', (fields) => this.send(fields));
     callUi(this.ui, 'onClose', () => this.requestClose());
@@ -578,6 +622,15 @@ export class StaffDashboard {
     this.selectedId = null;
     this.thread = null;
     this.threadMarker = null;
+    /*
+     * WHICH SHOPS THIS ACCOUNT COULD SEE IS PRIVILEGED TOO. Leaving the
+     * filter chips up after a sign-out would tell whoever walks up to the
+     * screen next that the person before them handled both shops - and the
+     * next account to sign in would inherit somebody else's filter.
+     */
+    this.locations = [];
+    this.locationFilter = null;
+    this.transferring = false;
     this.inboxFailures = 0;
     this.threadFailures = 0;
     this.inboxLoading = false;
@@ -585,6 +638,8 @@ export class StaffDashboard {
     this.sending = false;
     this.closing = false;
     callUi(this.ui, 'setStaff', null);
+    callUi(this.ui, 'setLocationFilters', []);
+    callUi(this.ui, 'setLocationFilter', null);
     callUi(this.ui, 'renderInbox', []);
     callUi(this.ui, 'renderThread', null);
     callUi(this.ui, 'setSelected', null);
@@ -734,10 +789,74 @@ export class StaffDashboard {
     const list = payload && Array.isArray(payload.conversations)
       ? payload.conversations
       : [];
+    /*
+     * THE WHOLE AUTHORISED LIST IS KEPT, and the view filter is applied only
+     * on the way to the screen.
+     *
+     * Filtering this array instead would make a conversation the manager has
+     * merely filtered out look ABSENT to reconcileSelected(), which treats
+     * absence as a change and would re-read its transcript on every tick.
+     * The change detector must see what the server sent, not what is being
+     * shown.
+     */
     this.conversations = list.map(normaliseConversation).filter(Boolean);
-    callUi(this.ui, 'renderInbox', this.conversations);
+    this.applyLocations(payload && payload.locations);
+    callUi(this.ui, 'renderInbox', this.visibleConversations());
     callUi(this.ui, 'setSelected', this.selectedId);
     this.reconcileSelected();
+  }
+
+  /* ------------------------------------------------------------ shops */
+
+  /*
+   * Which shops this account may see, from the server's own answer.
+   *
+   * The chips are drawn only when there is a choice to make: one shop is not
+   * a filter, it is the whole inbox, and a row of one button that changes
+   * nothing is noise on a shop monitor. A stale filter for a shop that is no
+   * longer in the set is dropped rather than left selected and empty.
+   */
+  applyLocations(raw) {
+    const next = Array.isArray(raw)
+      ? raw.filter((id) => typeof id === 'string' && id)
+      : [];
+    const changed = next.length !== this.locations.length
+      || next.some((id, i) => id !== this.locations[i]);
+    this.locations = next;
+
+    if (this.locationFilter && next.indexOf(this.locationFilter) === -1) {
+      this.locationFilter = null;
+      callUi(this.ui, 'setLocationFilter', null);
+    }
+    if (!changed) return false;
+
+    callUi(this.ui, 'setLocationFilters', next.length > 1
+      ? next.map((id) => ({ id: id, label: LOC.labelFor(id) }))
+      : []);
+    return true;
+  }
+
+  /* What renderInbox() is given: the authorised list, minus whatever the
+     view filter is hiding right now. */
+  visibleConversations() {
+    if (!this.locationFilter) return this.conversations;
+    return this.conversations.filter((c) => c.locationId === this.locationFilter);
+  }
+
+  setLocationFilter(value) {
+    const next = (typeof value === 'string' && value
+      && this.locations.indexOf(value) !== -1) ? value : null;
+    if (next === this.locationFilter) return false;
+    this.locationFilter = next;
+    callUi(this.ui, 'setLocationFilter', next);
+    /*
+     * NO REQUEST. The rows are already here and already authorised; this
+     * decides which of them are drawn. Re-fetching would spend a round trip
+     * to receive the identical list.
+     */
+    callUi(this.ui, 'renderInbox', this.visibleConversations());
+    callUi(this.ui, 'setSelected', this.selectedId);
+    return true;
   }
 
   /*
@@ -1067,6 +1186,111 @@ export class StaffDashboard {
     }
   }
 
+  /* --------------------------------------------------------- transfer */
+
+  /*
+   * Hand this conversation to the other shop.
+   *
+   * WHY IT IS NOT A COPY. The conversationId does not change, the transcript
+   * does not move, and the customer keeps writing into the same thread. A
+   * misroute is a routing mistake, not a reason to make somebody re-explain
+   * a curved scupper to a second person.
+   *
+   * The destinations offered are ALL THREE shops minus the one it is at -
+   * not the ones this account is authorised for. Main-only staff who find a
+   * Keith Street job in their inbox must be able to send it to Keith Street,
+   * and requiring destination access would mean only a manager could ever
+   * fix a misroute. The server agrees: transferConversation() authorises the
+   * SOURCE and not the destination. What they do not get is a way in - the
+   * moment it lands, their ordinary read rules apply again.
+   */
+  requestTransfer() {
+    if (this.stopped || !this.staff || !this.selectedId) return false;
+    if (this.transferring || this.isClosed()) return false;
+    const from = this.thread && this.thread.conversation
+      ? this.thread.conversation.locationId
+      : null;
+    const options = LOC.LOCATION_IDS
+      .filter((id) => id !== from)
+      .map((id) => ({ id: id, label: LOC.labelFor(id) }));
+    if (!options.length) return false;
+    callUi(this.ui, 'confirmTransfer', options, (id) => this.transfer(id));
+    return true;
+  }
+
+  async transfer(locationId) {
+    if (this.stopped || !this.staff || !this.selectedId) return false;
+    if (this.transferring) return false;
+    /* The dialog only ever offers the three, but the handler is reachable
+       from a console and the request is not worth making without one. */
+    if (!LOC.isLocationId(locationId)) return false;
+
+    const conversationId = this.selectedId;
+    this.transferring = true;
+    callUi(this.ui, 'setTransferBusy', true);
+    callUi(this.ui, 'setNotice', null);
+    try {
+      const payload = await apiPost(this.deps, API_TRANSFER, {
+        conversationId: conversationId,
+        locationId: locationId
+      }, this.identity.user);
+      if (this.stopped) return false;
+
+      /*
+       * IT MAY HAVE JUST LEFT THIS ACCOUNT'S REACH, and that is the normal
+       * case: main-only staff sending a job to Keith Street cannot read it
+       * afterwards. Reading the transcript again would be a 404 dressed up
+       * as an error, so the honest move is to let go of it deliberately and
+       * SAY where it went - a row vanishing from an inbox with no
+       * explanation is how people conclude they deleted something.
+       *
+       * The label comes from the id we asked for, through labelFor(), not
+       * from payload.locationLabel: no server string reaches the screen.
+       */
+      const landed = LOC.resolveLocation(payload && payload.locationId);
+      const mine = this.locations.indexOf(landed) !== -1;
+      if (!mine) {
+        this.selectedId = null;
+        this.thread = null;
+        this.threadMarker = null;
+        callUi(this.ui, 'setSelected', null);
+        callUi(this.ui, 'renderThread', null);
+        callUi(this.ui, 'setNotice',
+          'Moved to ' + LOC.labelFor(landed)
+            + '. It is no longer in your inbox.');
+        this.loadInbox({ silent: true });
+        return true;
+      }
+
+      callUi(this.ui, 'setNotice', 'Moved to ' + LOC.labelFor(landed) + '.');
+      this.noteSuccess('thread');
+      await this.loadThread(conversationId, { silent: true });
+      this.loadInbox({ silent: true });
+      return true;
+    } catch (err) {
+      if (this.stopped) return false;
+      const described = describeFailure(err);
+      if (described.kind === 'auth') {
+        await this.denyAccess(described.text);
+        return false;
+      }
+      /*
+       * NO AUTOMATIC RETRY, for the same reason as a send: an ambiguous
+       * failure may already have moved it, and moving it twice is a second
+       * decision. Go and look instead - loadThread() answers both "it did
+       * move" and "it is gone from this account" honestly.
+       */
+      callUi(this.ui, 'setNotice', described.text);
+      this.noteSuccess('thread');
+      await this.loadThread(conversationId, { silent: true });
+      this.loadInbox({ silent: true });
+      return false;
+    } finally {
+      this.transferring = false;
+      callUi(this.ui, 'setTransferBusy', false);
+    }
+  }
+
   /* --------------------------------------------------------- failures */
 
   async reportFailure(err, options) {
@@ -1096,11 +1320,25 @@ function normaliseConversation(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const id = typeof raw.conversationId === 'string' ? raw.conversationId : '';
   if (!id) return null;
+  /*
+   * THE LABEL IS DERIVED, NOT TAKEN.
+   *
+   * The response carries locationLabel too, and it is ignored on purpose. The
+   * id is one of three known strings; the label is a sentence that goes on a
+   * screen. Deriving it here means the only location text this page can ever
+   * display is one of the three in chat-locations.js - an id this build does
+   * not know reads as "Not Sure / Unassigned" rather than being echoed - and
+   * renaming a shop stays a one-file copy edit instead of a deploy that has
+   * to land on both sides at once.
+   */
+  const locationId = LOC.resolveLocation(raw.locationId);
   return {
     conversationId: id,
     customerName: text(raw.customerName),
     customerEmail: text(raw.customerEmail),
     status: raw.status === 'closed' ? 'closed' : 'open',
+    locationId: locationId,
+    locationLabel: LOC.labelFor(locationId),
     createdAt: millis(raw.createdAt),
     lastMessageAt: millis(raw.lastMessageAt),
     messageCount: typeof raw.messageCount === 'number' && raw.messageCount >= 0
@@ -1132,7 +1370,18 @@ function markerFor(conversation) {
     conversationId: conversation.conversationId,
     lastMessageAt: conversation.lastMessageAt,
     messageCount: conversation.messageCount,
-    status: conversation.status
+    status: conversation.status,
+    /*
+     * FOUR FIELDS NOW. A transfer writes locationId, previousLocationId and
+     * the audit stamps, and deliberately touches NEITHER lastMessageAt NOR
+     * messageCount - nothing was said, so nothing pretends a message
+     * arrived. It does not change status either. Without locationId here, a
+     * conversation handed to the other shop while a manager had it open
+     * would keep showing the old shop in the header until they clicked
+     * something, and a reply typed into it would be a reply to a thread they
+     * no longer hold.
+     */
+    locationId: conversation.locationId
   };
 }
 
@@ -1140,7 +1389,8 @@ function sameSummary(marker, conversation) {
   return marker.conversationId === conversation.conversationId
     && marker.lastMessageAt === conversation.lastMessageAt
     && marker.messageCount === conversation.messageCount
-    && marker.status === conversation.status;
+    && marker.status === conversation.status
+    && marker.locationId === conversation.locationId;
 }
 
 function text(value) {
@@ -1363,6 +1613,25 @@ export function buildUi(root) {
   inboxHead.appendChild(refreshBtn);
   inbox.appendChild(inboxHead);
 
+  /*
+   * The shop chips, for an account that can see more than one.
+   *
+   * Hidden entirely when there is nothing to choose between - which is every
+   * account assigned to a single shop, and is the common case. A VIEW
+   * control: it hides rows already on this page, from somebody the server
+   * already decided may read them. It grants nothing, and the list it filters
+   * arrived filtered.
+   *
+   * "All" is a real button rather than the absence of a selection, so the way
+   * back is as obvious as the way in.
+   */
+  const locFilter = el('div', { class: 'sc__filter sc__filter--loc', role: 'group',
+    'aria-label': 'Show shops', hidden: 'hidden' });
+  const locAllBtn = el('button', { class: 'sc__chip', type: 'button', text: 'All shops',
+    'aria-pressed': 'true', 'data-location': '' });
+  /* Between the head and the list: appended now, and the list follows. */
+  inbox.appendChild(locFilter);
+
   const inboxList = el('ul', { class: 'sc__list', 'aria-live': 'polite',
     'aria-busy': 'false' });
   inbox.appendChild(inboxList);
@@ -1378,12 +1647,30 @@ export function buildUi(root) {
   const threadEmail = el('p', { class: 'sc__thread-email', text: '' });
   threadWho.appendChild(threadName);
   threadWho.appendChild(threadEmail);
+  /*
+   * WHICH SHOP THIS THREAD IS AT, spelled out in the header.
+   *
+   * A manager watching both inboxes is one careless reply away from
+   * answering as the wrong shop, and the transfer button lives right beside
+   * this - so the destination has to be readable before the button is
+   * pressed, not after. Text, never colour alone.
+   */
+  /* hidden from the start: before the first renderThread() there is no
+     conversation and so no shop, and an empty bordered pill beside "No
+     conversation selected" is a stray mark somebody has to explain. Caught
+     in browser QA. */
+  const threadLoc = el('span', { class: 'sc__loc sc__loc--head', text: '',
+    hidden: 'hidden' });
   const threadStatus = el('span', { class: 'sc__status', text: '' });
+  const transferBtn = el('button', { class: 'sc__btn sc__btn--quiet', type: 'button',
+    text: 'Move to other shop', hidden: 'hidden' });
   const closeBtn = el('button', { class: 'sc__btn sc__btn--danger', type: 'button',
     text: 'Close conversation', hidden: 'hidden' });
   threadHead.appendChild(backBtn);
   threadHead.appendChild(threadWho);
+  threadHead.appendChild(threadLoc);
   threadHead.appendChild(threadStatus);
+  threadHead.appendChild(transferBtn);
   threadHead.appendChild(closeBtn);
   thread.appendChild(threadHead);
 
@@ -1421,12 +1708,37 @@ export function buildUi(root) {
   dlgRow.appendChild(dlgConfirm);
   dialog.appendChild(dlgRow);
 
+  /* ---- the transfer dialog ------------------------------------------
+     A separate dialog from the close confirmation, because it asks a
+     different kind of question: not "are you sure" but "where to". The
+     destinations are filled in by confirmTransfer() - this file has no list
+     of shops of its own. */
+  const xfer = el('dialog', { class: 'sc__dialog', 'aria-labelledby': 'sc-xfer-h' });
+  xfer.appendChild(el('h2', { id: 'sc-xfer-h', class: 'sc__dlg-title',
+    text: 'Move this conversation?' }));
+  xfer.appendChild(el('p', { class: 'sc__dlg-body',
+    text: 'The customer keeps the same conversation and the whole transcript '
+      + 'goes with it. Nothing is copied and nothing is lost. If the shop you '
+      + 'choose is not one of yours, it will leave your inbox.' }));
+  const xferChoices = el('div', { class: 'sc__dlg-choices', role: 'radiogroup',
+    'aria-label': 'Move to which shop' });
+  xfer.appendChild(xferChoices);
+  const xferRow = el('div', { class: 'sc__dlg-row' });
+  const xferCancel = el('button', { class: 'sc__btn sc__btn--quiet', type: 'button',
+    text: 'Leave it here' });
+  const xferConfirm = el('button', { class: 'sc__btn sc__btn--primary', type: 'button',
+    text: 'Move conversation' });
+  xferRow.appendChild(xferCancel);
+  xferRow.appendChild(xferConfirm);
+  xfer.appendChild(xferRow);
+
   const starting = el('p', { class: 'sc__starting', role: 'status', text: 'Starting…' });
 
   root.appendChild(starting);
   root.appendChild(authView);
   root.appendChild(appView);
   root.appendChild(dialog);
+  root.appendChild(xfer);
 
   /* ---- state the view keeps ----------------------------------------- */
   let handlers = {};
@@ -1435,6 +1747,8 @@ export function buildUi(root) {
   let composerEnabled = false;
   let sendBusy = false;
   let pendingConfirm = null;
+  let pendingTransfer = null;      /* run(locationId) once one is chosen */
+  let xferInputs = [];
   let lastFocus = null;
 
   function syncSend() {
@@ -1468,6 +1782,12 @@ export function buildUi(root) {
   closeBtn.addEventListener('click', function () {
     if (typeof handlers.close === 'function') handlers.close();
   });
+  transferBtn.addEventListener('click', function () {
+    if (typeof handlers.transfer === 'function') handlers.transfer();
+  });
+  locAllBtn.addEventListener('click', function () {
+    if (typeof handlers.locationFilter === 'function') handlers.locationFilter(null);
+  });
   composer.addEventListener('submit', function (ev) {
     ev.preventDefault();
     if (typeof handlers.send === 'function') handlers.send({ message: replyInput.value });
@@ -1499,6 +1819,32 @@ export function buildUi(root) {
     pendingConfirm = null;
     try { if (dialog.open) dialog.close(); } catch (err) { /* older engine */ }
     dialog.removeAttribute('open');
+    if (lastFocus && typeof lastFocus.focus === 'function') lastFocus.focus();
+    lastFocus = null;
+  }
+
+  xferCancel.addEventListener('click', function () { closeTransfer(); });
+  xferConfirm.addEventListener('click', function () {
+    const run = pendingTransfer;
+    let chosen = null;
+    for (let i = 0; i < xferInputs.length; i++) {
+      if (xferInputs[i].checked) { chosen = xferInputs[i].value; break; }
+    }
+    /* Nothing picked is not a reason to close the question. Leave the dialog
+       up so the answer is still there to give. */
+    if (!chosen) return;
+    closeTransfer();
+    if (typeof run === 'function') run(chosen);
+  });
+  xfer.addEventListener('cancel', function (ev) {
+    ev.preventDefault();
+    closeTransfer();
+  });
+
+  function closeTransfer() {
+    pendingTransfer = null;
+    try { if (xfer.open) xfer.close(); } catch (err) { /* older engine */ }
+    xfer.removeAttribute('open');
     if (lastFocus && typeof lastFocus.focus === 'function') lastFocus.focus();
     lastFocus = null;
   }
@@ -1572,6 +1918,50 @@ export function buildUi(root) {
       closedBtn.setAttribute('aria-pressed', isOpen ? 'false' : 'true');
     },
 
+    /*
+     * Draw the shop chips, or take the whole row away.
+     *
+     * An empty list hides it: one shop is not a choice, and an account with
+     * no shops has nothing to filter. The chips are rebuilt rather than
+     * patched, which is a handful of buttons and removes a whole class of
+     * stale-node bug.
+     */
+    setLocationFilters: function (list) {
+      const items = Array.isArray(list) ? list : [];
+      clear(locFilter);
+      if (!items.length) {
+        locFilter.hidden = true;
+        return;
+      }
+      locFilter.appendChild(locAllBtn);
+      for (const item of items) {
+        if (!item || typeof item.id !== 'string' || !item.id) continue;
+        const chip = el('button', {
+          class: 'sc__chip', type: 'button',
+          /* text: - textContent underneath, like everything else here. */
+          text: String(item.label == null ? item.id : item.label),
+          'aria-pressed': 'false',
+          'data-location': item.id
+        });
+        chip.addEventListener('click', function () {
+          if (typeof handlers.locationFilter === 'function') {
+            handlers.locationFilter(item.id);
+          }
+        });
+        locFilter.appendChild(chip);
+      }
+      locFilter.hidden = false;
+    },
+
+    setLocationFilter: function (id) {
+      const want = typeof id === 'string' && id ? id : '';
+      const chips = locFilter.querySelectorAll('.sc__chip');
+      for (let i = 0; i < chips.length; i++) {
+        const match = chips[i].getAttribute('data-location') === want;
+        chips[i].setAttribute('aria-pressed', match ? 'true' : 'false');
+      }
+    },
+
     setInboxBusy: function (flag) {
       inboxList.setAttribute('aria-busy', flag === true ? 'true' : 'false');
       refreshBtn.disabled = flag === true;
@@ -1605,6 +1995,17 @@ export function buildUi(root) {
           text: c.customerName || 'Someone' }));
         btn.appendChild(el('span', { class: 'sc__row-email', text: c.customerEmail }));
         const meta = el('span', { class: 'sc__row-meta' });
+        /*
+         * WHICH SHOP, ON EVERY ROW. A manager sees both inboxes in one list,
+         * and a row that does not say where it belongs is a row that gets
+         * answered by whoever reads it first. Spelled out, never colour
+         * alone - and the label was derived from the id by
+         * normaliseConversation(), so it is one of exactly three strings.
+         */
+        meta.appendChild(el('span', {
+          class: 'sc__loc sc__loc--' + c.locationId,
+          text: c.locationLabel
+        }));
         meta.appendChild(el('span', { class: 'sc__row-time',
           text: stamp(c.lastMessageAt, now) }));
         /* The status word is spelled out as well as coloured - never colour
@@ -1641,8 +2042,11 @@ export function buildUi(root) {
         composerEnabled = false;
         threadName.textContent = 'No conversation selected';
         threadEmail.textContent = '';
+        threadLoc.textContent = '';
+        threadLoc.hidden = true;
         threadStatus.textContent = '';
         threadStatus.className = 'sc__status';
+        transferBtn.hidden = true;
         closeBtn.hidden = true;
         log.appendChild(el('p', { class: 'sc__empty-text',
           text: 'Choose a conversation on the left to read it.' }));
@@ -1655,8 +2059,14 @@ export function buildUi(root) {
       composerEnabled = !closedNow;
       threadName.textContent = c.customerName || 'Someone';
       threadEmail.textContent = c.customerEmail || '';
+      threadLoc.textContent = c.locationLabel || '';
+      threadLoc.className = 'sc__loc sc__loc--head sc__loc--' + c.locationId;
+      threadLoc.hidden = !c.locationLabel;
       threadStatus.textContent = closedNow ? 'Closed' : 'Open';
       threadStatus.className = 'sc__status sc__pill sc__pill--' + c.status;
+      /* A closed conversation does not change shop - the server refuses it
+         with conversation_closed - so the button is not offered. */
+      transferBtn.hidden = closedNow;
       closeBtn.hidden = closedNow;
 
       const messages = Array.isArray(data.messages) ? data.messages : [];
@@ -1704,6 +2114,11 @@ export function buildUi(root) {
       closeBtn.textContent = flag === true ? 'Closing…' : 'Close conversation';
     },
 
+    setTransferBusy: function (flag) {
+      transferBtn.disabled = flag === true;
+      transferBtn.textContent = flag === true ? 'Moving…' : 'Move to other shop';
+    },
+
     clearComposer: function () {
       replyInput.value = '';
       syncSend();
@@ -1724,6 +2139,50 @@ export function buildUi(root) {
       }, 20);
     },
 
+    /*
+     * Ask which shop, then hand the answer back.
+     *
+     * The destinations come from the controller - this file has no list of
+     * shops - and are drawn as real radios inside a real <dialog>, so
+     * arrow-key navigation, Escape and the focus trap all come from the
+     * platform rather than from a reimplementation of it.
+     *
+     * NOTHING IS PRESELECTED. A default here is a mis-click away from
+     * sending a conversation to a shop nobody chose.
+     */
+    confirmTransfer: function (options, run) {
+      const items = Array.isArray(options) ? options : [];
+      pendingTransfer = typeof run === 'function' ? run : null;
+      xferInputs = [];
+      clear(xferChoices);
+
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i] || {};
+        if (typeof item.id !== 'string' || !item.id) continue;
+        const inputId = 'sc-xfer-' + i;
+        const radio = el('input', { type: 'radio', id: inputId,
+          class: 'sc__dlg-radio', name: 'sc-xfer-to' });
+        radio.value = item.id;
+        xferInputs.push(radio);
+        const label = el('label', { class: 'sc__dlg-choice', for: inputId });
+        label.appendChild(radio);
+        label.appendChild(el('span', { class: 'sc__dlg-choice-text',
+          text: String(item.label == null ? item.id : item.label) }));
+        xferChoices.appendChild(label);
+      }
+
+      lastFocus = document.activeElement;
+      try {
+        if (typeof xfer.showModal === 'function') xfer.showModal();
+        else xfer.setAttribute('open', 'open');
+      } catch (err) {
+        xfer.setAttribute('open', 'open');
+      }
+      /* The safe option, again. Nothing moves until somebody picks a shop
+         and presses the other button. */
+      if (typeof xferCancel.focus === 'function') xferCancel.focus();
+    },
+
     onSignIn: function (h) { handlers.signIn = h; },
     onSignOut: function (h) { handlers.signOut = h; },
     onSelect: function (h) { handlers.select = h; },
@@ -1731,7 +2190,9 @@ export function buildUi(root) {
     onRefresh: function (h) { handlers.refresh = h; },
     onSend: function (h) { handlers.send = h; },
     onClose: function (h) { handlers.close = h; },
-    onBack: function (h) { handlers.back = h; }
+    onBack: function (h) { handlers.back = h; },
+    onLocationFilter: function (h) { handlers.locationFilter = h; },
+    onTransfer: function (h) { handlers.transfer = h; }
   };
 }
 

@@ -23,6 +23,10 @@
 
 const crypto = require('crypto');
 
+/* Routing. The canonical shop ids, the missing-field fallback and the staff
+   authorisation rules all live in one place - see locations.js. */
+const L = require('./locations.js');
+
 const CONVERSATIONS = 'chatConversations';
 const MESSAGES = 'chatMessages';
 
@@ -52,6 +56,15 @@ function notFoundForCustomer() {
   return new ServiceError(404, 'conversation_not_found',
     'We could not find that conversation. Please start a new one.');
 }
+
+/*
+ * The staff-side equivalent, and the reason it is a constant rather than a
+ * literal at each throw site: LocationError below must answer "not your shop"
+ * with THIS EXACT SENTENCE. Two spellings of the same refusal would let a
+ * staff member tell a real conversation at the other shop from one that never
+ * existed - see the note on LocationError.
+ */
+const STAFF_NOT_FOUND = 'That conversation no longer exists.';
 
 /*
  * Deterministic message id: the idempotency key.
@@ -167,6 +180,14 @@ async function startConversation(db, deps, input) {
       customerUid: input.customerUid,    /* from the verified token, never the body */
       customerName: input.name,
       customerEmail: input.email,
+      /*
+       * The shop the customer chose. Validated against the canonical
+       * allow-list before it got here, so this is one of exactly three
+       * strings. The LABEL is never stored - it is derived from this id
+       * wherever a person has to read it, so rewording a shop name is a
+       * copy edit rather than a migration.
+       */
+      locationId: input.locationId,
       status: 'open',
       createdAt: now,
       updatedAt: now,
@@ -183,7 +204,7 @@ async function startConversation(db, deps, input) {
     tx.set(msgRef, buildMessage(conversationId, 'customer', input.message, now));
 
     return { conversationId: conversationId, messageId: msgRef.id, status: 'open',
-      duplicate: false };
+      locationId: input.locationId, duplicate: false };
   });
 }
 
@@ -215,6 +236,21 @@ function resolveExistingStart(conv, input, existingMessageId, requestHash) {
     conversationId: conv.id,
     messageId: existingMessageId,
     status: data.status || 'open',
+    /*
+     * FROM THE STORED DOCUMENT, not from the retried request.
+     *
+     * A retry can arrive after staff have already moved the conversation to
+     * the other shop, and the panel's "Sending to:" line has to say where it
+     * IS - not where this request once asked for. The stored value wins; a
+     * conversation written before routing existed resolves to unassigned.
+     *
+     * locationId is deliberately NOT part of startRequestHash(). Adding it
+     * would make a conversation started before this deploy fail an honest
+     * retry with idempotency_conflict, because its stored hash was computed
+     * without the field. The destination is settled by the document either
+     * way, so nothing is lost by leaving the fingerprint alone.
+     */
+    locationId: L.resolveLocation(data),
     duplicate: true
   };
 }
@@ -318,9 +354,24 @@ async function sendStaffMessage(db, deps, input) {
   return db.runTransaction(async (tx) => {
     const conv = await tx.get(convRef);
     if (!conv.exists) {
-      throw new ServiceError(404, 'conversation_not_found', 'That conversation no longer exists.');
+      throw new ServiceError(404, 'conversation_not_found', STAFF_NOT_FOUND);
     }
     const data = conv.data() || {};
+
+    /*
+     * RE-CHECKED INSIDE THE TRANSACTION, not only at the door.
+     *
+     * The route already refused an unauthorised shop before getting here, but
+     * a transfer can land in the gap between that check and this write. If it
+     * did, the conversation is no longer this staff member's to answer, and
+     * the reply must not be written - "I had it open a second ago" is not
+     * authorisation. Reading it in the same transaction as the write is what
+     * makes that race unwinnable.
+     */
+    if (input.actor && !L.canAccessLocation(input.actor, L.resolveLocation(data))) {
+      throw new LocationError();
+    }
+
     if (data.status !== 'open') {
       throw new ServiceError(409, 'conversation_closed', 'That conversation is closed.');
     }
@@ -352,9 +403,17 @@ async function closeConversation(db, deps, input) {
   return db.runTransaction(async (tx) => {
     const conv = await tx.get(convRef);
     if (!conv.exists) {
-      throw new ServiceError(404, 'conversation_not_found', 'That conversation no longer exists.');
+      throw new ServiceError(404, 'conversation_not_found', STAFF_NOT_FOUND);
     }
     const data = conv.data() || {};
+
+    /* Re-checked in the transaction, for the same reason as the send path: a
+       transfer landing mid-request must not leave the old shop able to close
+       a conversation it no longer holds. */
+    if (input.actor && !L.canAccessLocation(input.actor, L.resolveLocation(data))) {
+      throw new LocationError();
+    }
+
     if (data.status === 'closed') {
       return { conversationId: convRef.id, status: 'closed', alreadyClosed: true };
     }
@@ -372,11 +431,19 @@ async function closeConversation(db, deps, input) {
  */
 function publicConversation(doc) {
   const d = doc.data() || {};
+  /* Missing or unrecognised routing is 'unassigned' - never 'main'. There are
+     real conversations in production from before routing existed. */
+  const locationId = L.resolveLocation(d);
   return {
     conversationId: doc.id,
     customerName: d.customerName || null,
     customerEmail: d.customerEmail || null,
     status: d.status || null,
+    /* Both, deliberately. The id is what authorisation and reconciliation
+       compare; the label is what a person reads, derived here so no client
+       has to know the words and no caller can supply them. */
+    locationId: locationId,
+    locationLabel: L.labelFor(locationId),
     createdAt: toMillis(d.createdAt),
     lastMessageAt: toMillis(d.lastMessageAt),
     messageCount: typeof d.messageCount === 'number' ? d.messageCount : 0,
@@ -442,25 +509,79 @@ async function readConversationStatus(db, input) {
 
   return {
     conversationId: conv.id,
-    status: data.status === 'closed' ? 'closed' : 'open'
+    status: data.status === 'closed' ? 'closed' : 'open',
+    /*
+     * The customer's OWN conversation's destination. Safe to tell them - it
+     * is where their message went, and they chose it. The client derives the
+     * friendly label from this id; no staff uid, no transfer actor, no audit
+     * field and no staff record travels with it.
+     */
+    locationId: L.resolveLocation(data)
   };
 }
 
 /*
- * The staff inbox. Uses the deployed composite index
- * (status ASC, lastMessageAt DESC).
+ * The staff inbox, filtered to the shops this staff member may actually see.
+ *
+ * WHY THIS IS NOT ONE CLEAN `where('locationId','in',[...])`.
+ *
+ * Firestore indexes fields that EXIST. A document written before routing
+ * existed has no locationId at all, so no positive filter on that field can
+ * ever match it - `== 'unassigned'` misses it, and so does `in [...]`. There
+ * are real conversations like that in production, and the instruction is that
+ * they stay visible without a backfill. So the query shape depends on whether
+ * the caller's authorised set includes 'unassigned':
+ *
+ *   INCLUDES 'unassigned'  - no location filter. Query by status exactly as
+ *     before, then drop unauthorised rows here in the server. Legacy
+ *     documents come back, which is the point. Bounded by MAX_INBOX, and for
+ *     the all-shop case (every admin today) nothing is dropped at all.
+ *
+ *   EXCLUDES 'unassigned'  - `where('locationId','in', locations)`. Precise,
+ *     indexed, no over-fetch, and legacy documents are correctly absent
+ *     because an unassigned conversation is not this caller's to see.
+ *
+ * Either way the filtering is SERVER-SIDE. A browser cannot widen it, and the
+ * caller's locations came from their own staff document, not their request.
+ *
+ * THE TRADE, STATED: in the first shape a page of up to MAX_INBOX rows can
+ * come back partly filtered, so a caller may see fewer than `limit` rows even
+ * when more exist. With a handful of open conversations that is invisible;
+ * with hundreds it would need a cursor. Not worth building today, and noted.
  */
 async function listConversations(db, opts) {
   const status = (opts && opts.status) || 'open';
   const limit = Math.min(Math.max(1, (opts && opts.limit) || MAX_INBOX), MAX_INBOX);
+  const allowed = (opts && Array.isArray(opts.locations)) ? opts.locations : [];
 
-  const snap = await db.collection(CONVERSATIONS)
-    .where('status', '==', status)
-    .orderBy('lastMessageAt', 'desc')
-    .limit(limit)
-    .get();
+  /* No shops, no inbox. Not an error - an unassigned staff member simply has
+     nothing to look at yet, and saying so is better than a 403 that reads
+     like "you are not staff". */
+  if (!allowed.length) {
+    return { conversations: [], limit: limit, status: status, locations: [] };
+  }
 
-  return { conversations: snap.docs.map(publicConversation), limit: limit, status: status };
+  const wantsUnassigned = allowed.indexOf(L.UNASSIGNED) !== -1;
+  let query = db.collection(CONVERSATIONS).where('status', '==', status);
+  if (!wantsUnassigned) {
+    /* Every id is canonical - they came from locations.js, not a request. */
+    query = query.where('locationId', 'in', allowed);
+  }
+
+  const snap = await query.orderBy('lastMessageAt', 'desc').limit(limit).get();
+
+  const conversations = snap.docs
+    .map(publicConversation)
+    .filter((c) => allowed.indexOf(c.locationId) !== -1);
+
+  return {
+    conversations: conversations,
+    limit: limit,
+    status: status,
+    /* Echoed so the dashboard can build exactly the filters this account is
+       entitled to, rather than guessing from a role. */
+    locations: allowed.slice()
+  };
 }
 
 /*
@@ -474,7 +595,17 @@ async function readTranscript(db, opts) {
   const limit = Math.min(Math.max(1, (opts && opts.limit) || MAX_TRANSCRIPT), MAX_TRANSCRIPT);
   const conv = await db.collection(CONVERSATIONS).doc(opts.conversationId).get();
   if (!conv.exists) {
-    throw new ServiceError(404, 'conversation_not_found', 'That conversation no longer exists.');
+    throw new ServiceError(404, 'conversation_not_found', STAFF_NOT_FOUND);
+  }
+
+  /*
+   * Load, resolve, authorise, THEN return messages - in that order, before a
+   * single message document is read. An unauthorised id gets the same answer
+   * as a nonexistent one, so guessing ids tells a caller nothing about the
+   * other shop.
+   */
+  if (opts.actor && !L.canAccessLocation(opts.actor, L.resolveLocation(conv.data() || {}))) {
+    throw new LocationError();
   }
 
   const snap = await db.collection(MESSAGES)
@@ -490,8 +621,145 @@ async function readTranscript(db, opts) {
   };
 }
 
+/* ------------------------------------------------- staff location gates */
+
+/*
+ * ONE ANSWER FOR "does not exist" AND "not your shop".
+ *
+ * A staff member who guesses a conversationId belonging to the other shop
+ * must not be able to tell the difference between a real conversation they
+ * may not see and one that was never there. Same status, same code, same
+ * sentence - so the endpoint is not a cross-shop existence oracle.
+ *
+ * THE SENTENCE IS COPIED, NOT INVENTED. It is the exact wording the staff
+ * routes already use when a conversation genuinely does not exist, above and
+ * in sendStaffMessage() and closeConversation(). A near-miss - "not
+ * available" against "no longer exists" - reads as identical to a person and
+ * is a perfect oracle to a script, which is the only reader that matters
+ * here. STAFF_NOT_FOUND is the single definition all four sites share so the
+ * two cannot drift apart in a later edit.
+ *
+ * Extends ServiceError so it carries chatErrorKind: 'service' and is
+ * recognised by respondToError() by tag as well as by instanceof - the same
+ * reason every other error class in this system is tagged.
+ */
+class LocationError extends ServiceError {
+  constructor() {
+    super(404, 'conversation_not_found', STAFF_NOT_FOUND);
+    this.name = 'LocationError';
+  }
+}
+
+/*
+ * Load a conversation and prove this staff member may act on it.
+ *
+ * EVERY staff route that touches one conversation goes through here, in this
+ * order: load the real document, resolve ITS location (missing => unassigned),
+ * then check the actor's own authorised set. The browser supplies only the id;
+ * it never says which shop the conversation is at, so it cannot lie about it.
+ */
+async function loadConversationForStaff(db, actor, conversationId) {
+  const ref = db.collection(CONVERSATIONS).doc(conversationId);
+  const snap = await ref.get();
+  if (!snap.exists) throw new LocationError();
+
+  const data = snap.data() || {};
+  const locationId = L.resolveLocation(data);
+  if (!L.canAccessLocation(actor, locationId)) throw new LocationError();
+
+  return { ref, snap, data, locationId };
+}
+
+/*
+ * Hand a conversation to the other shop.
+ *
+ * SOURCE AUTHORISATION, NOT DESTINATION AUTHORISATION. Main-only staff who
+ * find a curved-scupper job in their inbox must be able to send it to Keith
+ * Street - that is the entire point, and requiring destination access would
+ * mean only a manager could ever fix a misroute. What they do NOT get is a
+ * way in: the moment the id changes, their ordinary read rules apply again
+ * and the conversation is gone from their inbox. Handing something over is
+ * not the same as being let into the room.
+ *
+ * ONE TRANSACTION. The authorisation re-check and the write happen together,
+ * so a transfer racing another transfer cannot act on a location that has
+ * already moved: the loser re-reads, finds a source it is no longer
+ * authorised for, and is refused.
+ *
+ * OPEN ONLY. A closed conversation does not silently change shop - there is
+ * nobody to hand it to and nothing left to do with it.
+ */
+async function transferConversation(db, deps, input) {
+  const now = deps.now();
+  const ref = db.collection(CONVERSATIONS).doc(input.conversationId);
+
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new LocationError();
+
+    const data = snap.data() || {};
+    const from = L.resolveLocation(data);
+
+    /* Re-checked INSIDE the transaction, against the document as it is now -
+       never against anything the request said about where it came from. */
+    if (!L.canAccessLocation(input.actor, from)) throw new LocationError();
+
+    if (data.status !== 'open') {
+      throw new ServiceError(409, 'conversation_closed',
+        'That conversation is closed and cannot be transferred.');
+    }
+
+    /*
+     * Already there. A safe no-op: no write, no audit entry, no bump of
+     * transferCount. Somebody double-clicked, or two people fixed the same
+     * misroute at once, and neither is an event worth recording twice.
+     */
+    if (from === input.locationId) {
+      return {
+        conversationId: ref.id,
+        locationId: from,
+        previousLocationId: from,
+        changed: false
+      };
+    }
+
+    /*
+     * The audit, and only what answers the four questions: where from, where
+     * to, when, and which authenticated staff uid did it. Server-owned every
+     * one - none is accepted from a request, and requireNoPrivilegedFields()
+     * refuses a body that tries.
+     *
+     * DELIBERATELY NOT AN ARRAY. A per-transfer history would grow without
+     * bound inside a document that is read on every inbox poll. The most
+     * recent transfer is what anybody actually asks about; a full history, if
+     * it is ever wanted, belongs in its own collection and is reported as a
+     * separate design rather than smuggled in here.
+     *
+     * lastMessageAt and messageCount are NOT touched: nothing was said. The
+     * dashboard notices the move through locationId, which is part of its
+     * reconciliation marker for exactly this reason.
+     */
+    tx.update(ref, {
+      locationId: input.locationId,
+      previousLocationId: from,
+      lastTransferredAt: now,
+      lastTransferredByStaffUid: input.actor.uid,
+      transferCount: (typeof data.transferCount === 'number' ? data.transferCount : 0) + 1,
+      updatedAt: now
+    });
+
+    return {
+      conversationId: ref.id,
+      locationId: input.locationId,
+      previousLocationId: from,
+      changed: true
+    };
+  });
+}
+
 module.exports = {
   CONVERSATIONS, MESSAGES, MAX_TRANSCRIPT, MAX_INBOX,
+  LocationError, loadConversationForStaff, transferConversation,
   START_ID_DOMAIN, START_HASH_DOMAIN,
   ServiceError, messageId, buildMessage, startConversationId, startRequestHash,
   startConversation, sendCustomerMessage, sendStaffMessage, closeConversation,

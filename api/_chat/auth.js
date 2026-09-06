@@ -19,6 +19,11 @@ const { tagStage } = require('./stages.js');
    deliberate edit here, not something a new Firestore value grants itself. */
 const ALLOWED_STAFF_ROLES = ['admin'];
 
+/* Location authorisation lives in one place; this only attaches its answer to
+   the actor. locations.js requires validation.js and nothing else, so there is
+   no cycle. */
+const { staffLocations } = require('./locations.js');
+
 class AuthError extends Error {
   constructor(status, code, message) {
     super(message);
@@ -200,7 +205,23 @@ async function authenticateStaff(verifyIdToken, db, authorizationHeader) {
     throw new AuthError(403, 'staff_role', 'This account is not authorised.');
   }
 
-  return { uid: decoded.uid, role: data.role, displayName: data.displayName || null };
+  /*
+   * The shops this staff member may act on, resolved from their own document
+   * and attached to the actor so every route works from one answer rather
+   * than each re-deciding. See staffLocations() in locations.js for the rules,
+   * including the transitional allowance for an admin with no assignment.
+   *
+   * An EMPTY array is a legitimate outcome and is not refused here: being
+   * staff and being authorised for a shop are different questions, and the
+   * second one belongs to the route, which can then say "nothing to show"
+   * rather than "you are not staff".
+   */
+  return {
+    uid: decoded.uid,
+    role: data.role,
+    displayName: data.displayName || null,
+    locations: staffLocations(data)
+  };
 }
 
 module.exports = {
