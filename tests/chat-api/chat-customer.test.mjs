@@ -75,7 +75,10 @@ async function load() {
   const customerSrc = CUSTOMER_SRC
     .replace(/const SDK_AUTH = [^;]+;/, `const SDK_AUTH = ${JSON.stringify(STUB_URL)};`)
     .replace(/const SDK_FIRESTORE = [^;]+;/, `const SDK_FIRESTORE = ${JSON.stringify(STUB_URL)};`)
-    .replace(/from '\.\/chat-app-check\.js'/, `from ${JSON.stringify(appCheckUrl)}`)
+    /* The specifier now carries ?v=<CHAT_CLIENT_VERSION> - see the cache
+       versioning block below - so the query has to be tolerated here or the
+       rewrite silently misses and the import fails on a data: URL. */
+    .replace(/from '\.\/chat-app-check\.js(\?[^']*)?'/, `from ${JSON.stringify(appCheckUrl)}`)
     + `\n/* cache-bust ${salt} */\n`;
 
   const mod = await import(dataUrl(customerSrc));
@@ -3186,12 +3189,19 @@ describe('the widget, with the gate shut', () => {
  * right for one turn and wrong on the next is the failure that shipped.
  */
 describe('a restored panel never claims a conversation it has not confirmed', () => {
-  /* The closed explanation, read from the widget so this file cannot drift
-     from the sentence the visitor actually sees. */
+  /*
+   * The closed explanation, read from the widget so this file cannot drift
+   * from the sentence the visitor actually sees.
+   *
+   * EXTRACTED WITHOUT ASSERTING. An exception thrown in a describe() body is
+   * reported as a failed SUITE by node:test but does not count as a failed
+   * test and does not change the exit code - measured on Node v22.22.2 - so
+   * every test below would silently stop running while the run stayed green.
+   * The check belongs in a test, and it is the first one.
+   */
   const CLOSED_NOTE = (() => {
     const m = WIDGET_SRC.match(/var CLOSED_NOTE = '([^']*)'\s*\+\s*'([^']*)';/);
-    assert.ok(m, 'found CLOSED_NOTE in the widget');
-    return m[1] + m[2];
+    return m ? m[1] + m[2] : null;
   })();
 
   const EMPTY_NOTE = 'No messages yet. Send one and we will reply here.';
@@ -3263,6 +3273,13 @@ describe('a restored panel never claims a conversation it has not confirmed', ()
     ui.closedNotes = () => ui.log.filter((t) => t === CLOSED_NOTE).length;
     return ui;
   }
+
+  test('the closed sentence was found in the widget', () => {
+    /* Everything below counts occurrences of this string. If it could not be
+       read, those counts are meaningless - so fail here, loudly, in a test. */
+    assert.ok(typeof CLOSED_NOTE === 'string' && CLOSED_NOTE.length > 20,
+      'CLOSED_NOTE was read out of assets/js/chat.js');
+  });
 
   test('the UI double still matches the widget it stands in for', () => {
     /* If chat.js changes how the closed note is rendered, every "exactly one
@@ -3656,4 +3673,269 @@ describe('a restored panel never claims a conversation it has not confirmed', ()
         fetcher.restore();
       }
     });
+});
+
+/* ================================================ CACHE-SAFE MODULE LOADING
+ *
+ * A browser caches a module by its FULL URL, and the ES module registry
+ * inside a page keys on the same thing. Two different builds served at one
+ * URL are therefore the same module as far as both are concerned, and a
+ * visitor who already has yesterday's can keep running it after a deploy.
+ *
+ * That is not hypothetical here. A conversation staff had closed came back
+ * looking live on the real site because the page was still running the
+ * previous chat-customer.js; a hard reload and a cache-busted import
+ * produced the correct closed state from the very same deployment.
+ *
+ * The contract these tests pin:
+ *
+ *   ONE version string, written out in three files, and in the ?v= of the
+ *   one static import between them. Old and new builds get different cache
+ *   keys, and the whole local graph moves together - a NEW transport can
+ *   never end up running against a STALE chat-app-check.js, which is a
+ *   combination that has never been tested and never should exist.
+ *
+ * It is a LOADING mechanism, not a gate. CHAT_PUBLIC_ENABLED decides whether
+ * anything loads; this decides only which build does.
+ */
+describe('the chat client is loaded by an explicit, source-controlled version', () => {
+  const APP_CHECK_CODE = codeAndStrings(APP_CHECK_SRC);
+
+  /*
+   * The one string, read from the widget - which is where a human bumps it.
+   *
+   * EXTRACTED WITHOUT ASSERTING, for the reason spelled out above the other
+   * extraction in this file: a throw in a describe() body skips every test in
+   * the suite and still exits 0. The declaration is checked in the first test
+   * below, where a failure actually fails the run.
+   */
+  const VERSION = (() => {
+    const m = WIDGET_SRC.match(/var CHAT_CLIENT_VERSION = '([^']+)';/);
+    return m ? m[1] : null;
+  })();
+
+  test('chat.js declares the version as a bare string literal', () => {
+    /*
+     * The load-bearing check, and deliberately the first: every count and
+     * comparison below is against VERSION, so if the declaration is missing
+     * or is an expression rather than a literal, this is what says so.
+     *
+     * `var CHAT_CLIENT_VERSION = String(Date.now());` fails here.
+     */
+    assert.match(WIDGET_SRC, /var CHAT_CLIENT_VERSION = '[^']+';/,
+      'chat.js declares CHAT_CLIENT_VERSION as a quoted literal');
+    assert.ok(typeof VERSION === 'string' && VERSION.length > 0,
+      'and it was read successfully');
+  });
+
+  test('the version is a plain literal, not a date, a clock or a random number',
+    () => {
+      /* A cache key that changes on its own is not a version - it defeats
+         caching entirely and makes every page load a fresh download. */
+      assert.match(VERSION, /^[0-9A-Za-z.\-_]+$/,
+        'safe in a URL without escaping');
+      assert.ok(VERSION.length >= 3 && VERSION.length <= 40);
+
+      for (const [name, src] of [['chat.js', WIDGET_CODE],
+                                 ['chat-customer.js', CUSTOMER_CODE],
+                                 ['chat-app-check.js', APP_CHECK_CODE]]) {
+        const decl = src.match(/CHAT_CLIENT_VERSION = ([^;]+);/);
+        assert.ok(decl, name + ' declares the version');
+        assert.match(decl[1].trim(), /^'[^']+'$/,
+          name + ': the version is a string literal and nothing else');
+      }
+
+      /* Named explicitly because these are the ways it goes wrong. */
+      const forbidden = /CHAT_CLIENT_VERSION\s*=\s*[^;]*(Date\.now|new Date|Math\.random|performance\.now|location|searchParams|localStorage|sessionStorage|document\.cookie)/;
+      assert.equal(forbidden.test(WIDGET_CODE), false);
+      assert.equal(forbidden.test(CUSTOMER_CODE), false);
+      assert.equal(forbidden.test(APP_CHECK_CODE), false);
+    });
+
+  test('all three chat modules state the SAME version', () => {
+    /* A half-finished bump - one file moved, another not - is exactly the
+       failure that would produce the mixed graph this design exists to
+       prevent. */
+    const customer = CUSTOMER_SRC.match(/export const CHAT_CLIENT_VERSION = '([^']+)';/);
+    const appCheck = APP_CHECK_SRC.match(/export const CHAT_CLIENT_VERSION = '([^']+)';/);
+    assert.ok(customer, 'chat-customer.js exports CHAT_CLIENT_VERSION');
+    assert.ok(appCheck, 'chat-app-check.js exports CHAT_CLIENT_VERSION');
+    assert.equal(customer[1], VERSION, 'chat-customer.js agrees with chat.js');
+    assert.equal(appCheck[1], VERSION, 'chat-app-check.js agrees with chat.js');
+  });
+
+  test('the module namespace really exports it, not just the source text',
+    async () => {
+      const { mod, appCheck } = await load();
+      assert.equal(mod.CHAT_CLIENT_VERSION, VERSION);
+      assert.equal(appCheck.CHAT_CLIENT_VERSION, VERSION);
+    });
+
+  test('chat.js imports a VERSIONED chat-customer URL, root-relative', () => {
+    const m = WIDGET_CODE.match(
+      /var TRANSPORT_MODULE = '\/assets\/js\/chat-customer\.js\?v='\s*\+\s*encodeURIComponent\(CHAT_CLIENT_VERSION\);/);
+    assert.ok(m, 'TRANSPORT_MODULE is the versioned root-relative URL');
+
+    /* The bare, unversioned form must not survive anywhere in the loader. */
+    assert.equal(/'\/assets\/js\/chat-customer\.js'/.test(WIDGET_CODE), false,
+      'no unversioned transport URL left in chat.js');
+
+    /* And it is still what the dynamic import actually uses. */
+    assert.match(WIDGET_CODE, /import\(TRANSPORT_MODULE\)/);
+  });
+
+  test('THE TRANSITIVE ONE: the static import of chat-app-check carries the '
+    + 'same version', () => {
+      /*
+       * A query on a module's own URL does NOT reach the specifiers inside
+       * it - './chat-app-check.js' resolves against the importer's path and
+       * drops the query. Measured in Chromium: with a long-lived cache, a
+       * versioned chat-customer.js loads NEW while its chat-app-check.js
+       * stays OLD. Versioning only the top of the graph is not a fix.
+       */
+      const m = CUSTOMER_CODE.match(/from '\.\/chat-app-check\.js\?v=([^']+)';/);
+      assert.ok(m, 'the static import carries a ?v=');
+      assert.equal(m[1], VERSION, 'and it is the same version');
+
+      assert.equal(/from '\.\/chat-app-check\.js'/.test(CUSTOMER_CODE), false,
+        'no unversioned local import left');
+    });
+
+  test('the version appears in each file exactly where it is meant to', () => {
+    /* Bumping the version must be a small, obvious edit in known places -
+       not a hunt. These counts are the contract. */
+    const count = (src, re) => (src.match(re) || []).length;
+    const lit = new RegExp(VERSION.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+
+    assert.equal(count(WIDGET_CODE, lit), 1,
+      'chat.js: once, in the declaration');
+    assert.equal(count(APP_CHECK_CODE, lit), 1,
+      'chat-app-check.js: once, in the declaration');
+    assert.equal(count(CUSTOMER_CODE, lit), 2,
+      'chat-customer.js: twice - the declaration and the import specifier, '
+      + 'because a static specifier cannot interpolate');
+  });
+
+  test('the pinned Firebase SDK URLs are NOT cache-busted', () => {
+    /* gstatic already serves an exact pinned version per URL. Adding a query
+       would only defeat a cache that is doing its job. */
+    for (const src of [CUSTOMER_CODE, APP_CHECK_CODE]) {
+      const urls = src.match(/'https:\/\/www\.gstatic\.com\/firebasejs\/'[^;]*/g) || [];
+      for (const u of urls) {
+        assert.equal(/\?v=/.test(u), false, 'no ?v= on a gstatic URL: ' + u);
+      }
+    }
+    assert.match(APP_CHECK_SRC, /export const SDK_VERSION = '12\.4\.0';/,
+      'the SDK is still pinned by path, as before');
+  });
+
+  /* ---------------------------------------------------------- the gate */
+
+  test('the version is not a gate: a query string cannot turn chat on', () => {
+    /* The ?v= lives on a MODULE url and comes from a source literal. Nothing
+       anywhere reads the PAGE url to decide whether chat runs. */
+    const readsPageUrl =
+      /(location\.(search|href|hash)|URLSearchParams|searchParams)/;
+    assert.equal(readsPageUrl.test(WIDGET_CODE), false,
+      'chat.js never reads the page URL');
+    assert.equal(readsPageUrl.test(CUSTOMER_CODE), false,
+      'chat-customer.js never reads the page URL');
+    assert.equal(readsPageUrl.test(APP_CHECK_CODE), false,
+      'chat-app-check.js never reads the page URL');
+
+    /* Both gates are still plain literals - not computed, not overridable. */
+    assert.match(WIDGET_CODE, /var CHAT_PUBLIC_ENABLED = false;/);
+    assert.match(CUSTOMER_CODE, /export const CHAT_PUBLIC_ENABLED = false;/);
+  });
+
+  test('with the gate false the versioned URL is never even requested', () => {
+    /* connectTransport() holds the only import() of the transport, and the
+       gate holds the only call to connectTransport(). */
+    const calls = (WIDGET_CODE.match(/connectTransport\(\)/g) || []);
+    assert.equal(calls.length, 2,
+      'connectTransport is declared once and called once');
+    assert.match(WIDGET_CODE, /if \(CHAT_PUBLIC_ENABLED\) connectTransport\(\);/,
+      'and the single call site is behind the gate');
+    assert.equal(/import\(TRANSPORT_MODULE\)/.test(WIDGET_CODE), true);
+    assert.equal((WIDGET_CODE.match(/import\(/g) || []).length, 1,
+      'exactly one dynamic import in the widget, and it is that one');
+  });
+
+  test('a gate-off page does no Firebase, App Check or chat work at all',
+    async () => {
+      /* The transport refuses at the entry point rather than in a UI state -
+         nothing is attested, nobody is signed in, no request is made. */
+      const { mod, stub } = await load();
+      const fetcher = captureFetch(jsonResponse(200, OK_START));
+      try {
+        assert.equal(mod.CHAT_PUBLIC_ENABLED, false);
+        const session = await mod.connect(recordingUi(), {});
+        assert.equal(session, null, 'connect() refuses while the gate is shut');
+        assert.equal(fetcher.seen.length, 0, 'no request was made');
+        assert.equal(stub.order.length, 0,
+          'no Firebase SDK call of any kind - no app, no App Check, no auth');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  /* ------------------------------------------------- the served headers */
+
+  test('the three chat scripts are served must-revalidate, and only those',
+    () => {
+      /*
+       * A version constant is only as fresh as the FILE THAT CARRIES IT.
+       * chat.js is a plain <script src> in seven HTML pages - no query can
+       * version it - so if chat.js itself is cached hard, the version inside
+       * it is yesterday's and the whole mechanism is inert. Measured in
+       * Chromium: loader cached hard -> the page asks for ?v=OLD and gets the
+       * old build back. These headers are what keep the loader honest.
+       */
+      const cfg = JSON.parse(
+        readFileSync('/home/user/esthers/vercel.json', 'utf8'));
+      const rules = cfg.headers || [];
+      const cacheOf = (source) => {
+        const rule = rules.find((r) => r.source === source);
+        if (!rule) return null;
+        const h = (rule.headers || []).find((x) => x.key === 'Cache-Control');
+        return h ? h.value : null;
+      };
+
+      for (const file of ['/assets/js/chat.js',
+                          '/assets/js/chat-customer.js',
+                          '/assets/js/chat-app-check.js']) {
+        assert.equal(cacheOf(file), 'public, max-age=0, must-revalidate',
+          file + ' revalidates before use');
+      }
+
+      /* Scope. The images keep their long cache, and nothing global was
+         turned off - a site-wide no-cache would be a real cost for a fix
+         that only three files need. */
+      assert.equal(cacheOf('/assets/img/(.*)'),
+        'public, max-age=604800, stale-while-revalidate=86400',
+        'the image cache is untouched');
+      assert.equal(cacheOf('/(.*)'), null,
+        'no site-wide Cache-Control was introduced');
+
+      /* The security headers are still the global rule, unchanged. */
+      const global = rules.find((r) => r.source === '/(.*)');
+      assert.ok(global, 'the global header rule still exists');
+      const keys = global.headers.map((h) => h.key).sort();
+      assert.deepEqual(keys, ['Permissions-Policy', 'Referrer-Policy',
+        'X-Content-Type-Options', 'X-Frame-Options']);
+    });
+
+  test('no HTML page has been given a versioned or altered script tag', () => {
+    /* The fix is inside the loader, not scattered across seven pages. */
+    const pages = ['index.html', 'about/index.html', 'contact/index.html',
+      'gallery/index.html', 'materials/index.html', 'quote/index.html',
+      'services/index.html'];
+    for (const page of pages) {
+      const html = readFileSync('/home/user/esthers/' + page, 'utf8');
+      assert.match(html, /src="\.?\.?\/?assets\/js\/chat\.js"/,
+        page + ' still loads chat.js by its plain path');
+      assert.equal(/chat-customer\.js/.test(html), false,
+        page + ' still does not reference the transport at all');
+    }
+  });
 });

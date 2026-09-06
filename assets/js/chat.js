@@ -86,10 +86,38 @@
      page leads to it. ------------------------------------------------- */
   var CHAT_PUBLIC_ENABLED = false;
 
+  /* ---- the chat client version ---------------------------------------
+     ONE STRING, BUMPED BY HAND, IN THE SAME COMMIT AS ANY CHANGE TO
+     chat-customer.js OR chat-app-check.js.
+
+     WHY IT EXISTS. A browser caches a module by its full URL. Two different
+     builds served at the same URL are, as far as the module cache and the
+     ES module registry are concerned, the same module - so a visitor who
+     already has the old one can keep running it after a deployment. That is
+     not a theory: a closed conversation came back looking live on the real
+     site because the page was still running the previous chat-customer.js,
+     and a cache-busted import fixed it on the spot.
+
+     Putting the version in the URL gives old and new builds DIFFERENT cache
+     keys, so they cannot be confused for one another - by the HTTP cache, by
+     the CDN, or by the module registry inside a page that has already
+     imported one of them.
+
+     NOT a date, NOT a random number, NOT anything a visitor can influence:
+     it is a literal in source, it changes only when somebody changes it, and
+     the same literal appears in chat-customer.js's import of
+     chat-app-check.js so the whole local graph moves together. A test pins
+     all three copies to each other.
+
+     It does NOT gate anything. The gate is CHAT_PUBLIC_ENABLED above; this
+     string only decides WHICH build loads, never WHETHER one does. -------- */
+  var CHAT_CLIENT_VERSION = '2026-09-05.1';
+
   /* Root-relative, like every other asset path in this file: the widget is
      on /services and /gallery too, and a bare path resolves against the
      directory there and 404s. */
-  var TRANSPORT_MODULE = '/assets/js/chat-customer.js';
+  var TRANSPORT_MODULE = '/assets/js/chat-customer.js?v='
+    + encodeURIComponent(CHAT_CLIENT_VERSION);
 
   /* ---- placement ----------------------------------------------------
      The launcher can be dragged out of the way. Where the visitor put it
@@ -1077,7 +1105,19 @@
        * and guess at class names, and so this widget stays free to change
        * how it is built.
        */
-      transportSurface: enterLiveMode
+      transportSurface: enterLiveMode,
+
+      /*
+       * Which build of the transport this page will load.
+       *
+       * Read-only, and read by the review walkthrough in
+       * docs/CHAT_CUSTOMER_FRONTEND.md: a hand-typed
+       * import('/assets/js/chat-customer.js') is the one path that can
+       * silently give you yesterday's module, so the walkthrough tells you
+       * to append this. Nothing on the page reads it, and it decides
+       * nothing - see CHAT_CLIENT_VERSION above.
+       */
+      clientVersion: CHAT_CLIENT_VERSION
     };
 
     /* ---- the gate ----
