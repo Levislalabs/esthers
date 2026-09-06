@@ -60,6 +60,27 @@ export const calls = {
    assertions read this and nothing else. */
 export const order = [];
 
+/* ------------------------------------------------- auth persistence */
+
+/*
+ * The real SDK's persistence objects are opaque tokens; what matters to a
+ * test is WHICH one was chosen and WHEN. Both are recorded.
+ */
+export const browserSessionPersistence = { type: 'SESSION' };
+export const browserLocalPersistence = { type: 'LOCAL' };
+export const inMemoryPersistence = { type: 'NONE' };
+
+export const persistenceChoices = [];
+export function persistenceErrorOn(flag) { persistenceFails = flag === true; }
+let persistenceFails = false;
+
+export async function setPersistence(auth, persistence) {
+  record('setPersistence');
+  if (persistenceFails) throw new Error('stub: web storage unsupported');
+  persistenceChoices.push(persistence && persistence.type);
+  return undefined;
+}
+
 function record(name, detail) {
   order.push(name);
   if (calls[name]) calls[name].push(detail === undefined ? {} : detail);
@@ -76,7 +97,8 @@ let currentUser = null;
 let restoredUser = null;          /* what onAuthStateChanged reports */
 let authStateError = false;
 let signInError = null;
-let signedInUser = { uid: 'anon-uid-1', getIdToken: async () => 'id-token-1' };
+let signedInUser = { uid: 'anon-uid-1', isAnonymous: true,
+  getIdToken: async () => 'id-token-1' };
 let idTokenError = null;
 
 let snapshotHandlers = [];
@@ -94,8 +116,11 @@ export function reset() {
   restoredUser = null;
   authStateError = false;
   signInError = null;
-  signedInUser = { uid: 'anon-uid-1', getIdToken: async () => 'id-token-1' };
+  signedInUser = { uid: 'anon-uid-1', isAnonymous: true,
+    getIdToken: async () => 'id-token-1' };
   idTokenError = null;
+  persistenceChoices.length = 0;
+  persistenceFails = false;
   snapshotHandlers = [];
   nextSnapshotError = null;
   unsubscribeThrows = false;
@@ -320,3 +345,18 @@ export function onSnapshot(q, next, error) {
  * for one of these. If it ever does, it will fail here loudly rather than
  * quietly working against a stub that was too accommodating.
  */
+
+/*
+ * signOut. The customer transport calls this when it finds a non-anonymous
+ * user in its own tab and has to replace it - see resolveUser().
+ */
+export let signOutCalls = 0;
+export async function signOut(auth) {
+  record('signOut');
+  signOutCalls += 1;
+  currentUser = null;
+  restoredUser = null;
+  return undefined;
+}
+export function signOutCount() { return signOutCalls; }
+export function resetSignOut() { signOutCalls = 0; }

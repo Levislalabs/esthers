@@ -412,8 +412,8 @@ describe('the staff dashboard authenticates before it shows anything', () => {
         assert.equal(ui.staff, null);
         assert.equal(ui.phase, 'signed-out');
         assert.ok(stub.signOutCalls >= 1);
-        assert.equal(session.inboxTimer, null, 'timers stopped');
-        assert.equal(session.threadTimer, null);
+        assert.equal(session.inboxTimer, null, 'the timer stopped');
+        assert.equal(session.threadMarker, null, 'and the change marker cleared');
       } finally {
         fetcher.restore();
       }
@@ -1066,18 +1066,37 @@ describe('the dashboard renders hostile content as text', () => {
 /* ==================================================== 31-37. THE POLLING */
 
 describe('polling is conservative and stops when it should', () => {
-  test('the intervals are the documented ones', async () => {
+  test('THERE IS EXACTLY ONE TIMER, AND IT IS THE INBOX', async () => {
+    /*
+     * The eight-second full-transcript timer is gone. It re-read every
+     * message in the open thread to discover, almost always, that nothing had
+     * changed - see reconcileSelected() for what replaced it.
+     */
     const { mod } = await load();
-    const { clock, fetcher } = await signedIn(mod);
+    const { session, clock, fetcher } = await signedIn(mod);
     try {
-      assert.deepEqual(clock.intervals(), [8000, 15000],
-        'thread 8s, inbox 15s');
+      assert.deepEqual(clock.intervals(), [15000], 'one timer, fifteen seconds');
+      assert.equal(clock.liveTimers(), 1);
       assert.equal(mod._internals.INBOX_POLL_MS, 15 * 1000);
-      assert.equal(mod._internals.THREAD_POLL_MS, 8 * 1000);
+      assert.equal(mod._internals.THREAD_POLL_MS, undefined,
+        'the thread interval constant is gone, not merely unused');
       assert.equal(clock.visibilityListeners(), 1);
+
+      /* And opening a thread does not add one. */
+      session.select('conv-a');
+      await tick();
+      assert.deepEqual(clock.intervals(), [15000],
+        'still one timer with a thread open');
     } finally {
       fetcher.restore();
     }
+  });
+
+  test('no independent thread interval remains anywhere in the source', () => {
+    assert.equal(/THREAD_POLL_MS/.test(STAFF_CODE), false);
+    assert.equal(/threadTimer/.test(STAFF_CODE), false);
+    /* setInterval is called exactly once, and it is the inbox. */
+    assert.equal((STAFF_CODE.match(/deps\.setInterval\(/g) || []).length, 1);
   });
 
   test('a tick with nothing selected does not fetch a transcript', async () => {
@@ -1134,9 +1153,12 @@ describe('polling is conservative and stops when it should', () => {
       await tick();
       const after = fetcher.seen.slice(before).map((r) => r.input);
       assert.ok(after.some((u) => u.indexOf('/api/admin/chat/conversations') === 0),
-        'the inbox caught up');
-      assert.ok(after.some((u) => u.indexOf('/api/admin/chat/messages') === 0),
-        'and so did the open thread');
+        'the inbox caught up at once');
+      /* The transcript does NOT follow automatically - the summary is
+         unchanged, so there is nothing to re-read. That is the whole point of
+         the change-driven design; the change case is tested separately. */
+      assert.equal(after.filter((u) => u.indexOf('/api/admin/chat/messages') === 0).length,
+        0, 'and the unchanged transcript was left alone');
     } finally {
       fetcher.restore();
     }
@@ -1172,29 +1194,53 @@ describe('polling is conservative and stops when it should', () => {
     }
   });
 
-  test('changing the selected thread moves the poll with it', async () => {
-    const { mod } = await load();
-    const { session, clock, fetcher } = await signedIn(mod);
-    try {
-      session.select('conv-a');
-      await tick();
-      session.select('conv-b');
-      await tick();
+  test('change detection follows the selection, and never the one left behind',
+    async () => {
+      const { mod } = await load();
+      /* conv-b's summary advances; conv-a's does not. */
+      let bump = 0;
+      const { session, clock, fetcher } = await signedIn(mod, {
+        responder: staffApi({
+          conversations: () => jsonResponse(200, {
+            ok: true, status: 'open', limit: 50,
+            conversations: [
+              CONV_A,
+              Object.assign({}, CONV_B, { lastMessageAt: 4000 + bump,
+                messageCount: 1 + bump })
+            ]
+          }),
+          messages: (n, input) => jsonResponse(200, {
+            ok: true, limit: 200,
+            conversation: input.indexOf('conv-b') !== -1
+              ? Object.assign({}, CONV_B, { lastMessageAt: 4000 + bump,
+                  messageCount: 1 + bump })
+              : CONV_A,
+            messages: []
+          })
+        })
+      });
+      try {
+        session.select('conv-a');
+        await tick();
+        session.select('conv-b');
+        await tick();
 
-      const before = fetcher.seen.length;
-      clock.fireAll();
-      await tick();
-      const asked = fetcher.seen.slice(before)
-        .filter((r) => r.input.indexOf('/api/admin/chat/messages') === 0)
-        .map((r) => r.input);
-      assert.equal(asked.length, 1);
-      assert.match(asked[0], /conversationId=conv-b/);
-      assert.equal(/conversationId=conv-a/.test(asked[0]), false,
-        'the abandoned thread is not still being polled');
-    } finally {
-      fetcher.restore();
-    }
-  });
+        bump = 1;                        /* something happened, to conv-b */
+        const before = fetcher.seen.length;
+        clock.fireAll();
+        await tick();
+
+        const asked = fetcher.seen.slice(before)
+          .filter((r) => r.input.indexOf('/api/admin/chat/messages') === 0)
+          .map((r) => r.input);
+        assert.equal(asked.length, 1, 'one transcript read');
+        assert.match(asked[0], /conversationId=conv-b/, 'for the OPEN thread');
+        assert.equal(/conversationId=conv-a/.test(asked[0]), false,
+          'the abandoned thread is never re-read');
+      } finally {
+        fetcher.restore();
+      }
+    });
 
   test('a late answer for an abandoned thread is discarded', async () => {
     const { mod } = await load();
@@ -1497,4 +1543,584 @@ describe('the page is usable with a keyboard and on a phone', () => {
     assert.match(STAFF_CODE, /text: 'Back to inbox'/);
     assert.match(STAFF_CODE, /root\.setAttribute\('data-view'/);
   });
+});
+
+/* ======================================= ONE FIREBASE USER PER TAB, NOT PER
+ *                                         BROWSER
+ *
+ * Firebase's web default is browserLocalPersistence: one signed-in user in
+ * localStorage, shared by every tab on the origin. This project has two kinds
+ * of user - anonymous customers and Email/Password staff - and the SDK allows
+ * exactly one signed-in user per app instance. Under the default, a staff
+ * sign-in in one tab replaces the customer in another, and a customer
+ * starting a chat signs the staff member out mid-reply.
+ *
+ * browserSessionPersistence puts the session in sessionStorage, which is
+ * per-tab. What these tests pin is that the choice is made DELIBERATELY, and
+ * made BEFORE anybody is signed in or restored - after would be too late,
+ * because the restore has already happened against the wrong store.
+ */
+describe('the staff dashboard keeps its Firebase session to its own tab', () => {
+  test('browserSessionPersistence is chosen explicitly', async () => {
+    const { mod, stub } = await load();
+    const clock = fakeClock();
+    const fetcher = captureFetch(staffApi());
+    try {
+      await mod.startStaffChat(recordingUi(), { deps: clock.deps });
+      await tick();
+      assert.deepEqual(stub.persistenceChoices, ['SESSION'],
+        'session persistence, once, and nothing else');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('NEITHER local NOR in-memory persistence is configured', () => {
+    /*
+     * local is the shared-across-tabs default this exists to remove.
+     * inMemory would isolate tabs too - and lose the session on every F5,
+     * which would make a staff member sign in again after each reload.
+     */
+    assert.match(STAFF_CODE, /browserSessionPersistence/);
+    assert.equal(/browserLocalPersistence/.test(STAFF_CODE), false);
+    assert.equal(/inMemoryPersistence/.test(STAFF_CODE), false);
+    assert.equal(/indexedDBLocalPersistence/.test(STAFF_CODE), false);
+  });
+
+  test('persistence is set BEFORE any sign-in and BEFORE the restore settles',
+    async () => {
+      const { mod, stub } = await load();
+      const clock = fakeClock();
+      const fetcher = captureFetch(staffApi());
+      try {
+        const ui = recordingUi();
+        await mod.startStaffChat(ui, { deps: clock.deps });
+        await tick();
+        await ui.handlers.signIn({ email: 'manager@esthers.ca', password: 'x' });
+        await tick();
+
+        const set = stub.order.indexOf('setPersistence');
+        const watch = stub.order.indexOf('onAuthStateChanged');
+        const signIn = stub.order.indexOf('signInWithEmailAndPassword');
+        assert.ok(set !== -1, 'it was set at all');
+        assert.ok(set < watch, 'before the restore was awaited');
+        assert.ok(set < signIn, 'and before the Email/Password sign-in');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('a failure to set persistence STOPS the dashboard', async () => {
+    /*
+     * Not tolerated. If setPersistence() rejects the instance keeps the
+     * default, which is the cross-tab bleed this removes - and a staff token
+     * in shared storage is the worse half of that. A sign-in screen that says
+     * something went wrong is better than an isolation guarantee that quietly
+     * is not one.
+     */
+    const { mod, stub } = await load();
+    stub.persistenceErrorOn(true);
+    const clock = fakeClock();
+    const fetcher = captureFetch(staffApi());
+    try {
+      const session = await mod.startStaffChat(recordingUi(), { deps: clock.deps });
+      await tick();
+      assert.equal(session.ui.phase, 'signed-out');
+      assert.ok(typeof session.ui.authError === 'string' && session.ui.authError.length > 0);
+      assert.equal(fetcher.seen.length, 0, 'and nothing privileged was requested');
+      assert.equal(clock.liveTimers(), 0);
+    } finally {
+      stub.persistenceErrorOn(false);
+      fetcher.restore();
+    }
+  });
+
+  test('AN ANONYMOUS RESTORED USER IS A CUSTOMER, NOT STAFF', async () => {
+    /*
+     * Same-tab customer -> staff. Per-tab persistence means another tab's
+     * customer cannot appear here, so an anonymous user at this point is one
+     * this tab created on the website before navigating to /staff/chat.
+     * It is released and the sign-in form is shown - the staff API is never
+     * asked, because asking would earn a 403 that reads like "your staff
+     * account is not authorised", which is a lie.
+     */
+    const { mod, stub } = await load();
+    stub.seedRestoredUser({
+      uid: 'anon-uid-1', email: null, isAnonymous: true,
+      getIdToken: async () => 'anon-token'
+    });
+    const clock = fakeClock();
+    const fetcher = captureFetch(staffApi());
+    try {
+      const session = await mod.startStaffChat(recordingUi(), { deps: clock.deps });
+      await tick();
+      assert.equal(session.ui.phase, 'signed-out', 'the staff sign-in form');
+      assert.equal(session.staff, null);
+      assert.equal(fetcher.seen.length, 0,
+        'the staff API was never asked about a customer identity');
+      assert.ok(stub.signOutCalls >= 1, 'the anonymous identity was released');
+      assert.equal(clock.liveTimers(), 0, 'and nothing is polling');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('a restored EMAIL/PASSWORD user is reused, but still checked by the '
+    + 'backend', async () => {
+      /*
+       * The reuse is what makes F5 work. The check is what makes it safe: a
+       * non-anonymous Firebase session is a reason to ASK the staff API, never
+       * a reason to skip it.
+       */
+      const { mod, stub } = await load();
+      stub.seedRestoredUser({
+        uid: 'staff-1', email: 'manager@esthers.ca', isAnonymous: false,
+        getIdToken: async () => 'staff-id-token'
+      });
+      const clock = fakeClock();
+      const fetcher = captureFetch(staffApi());
+      try {
+        const session = await mod.startStaffChat(recordingUi(), { deps: clock.deps });
+        await tick();
+        assert.equal(session.ui.phase, 'ready', 'the session was reused');
+        assert.equal(stub.order.indexOf('signInWithEmailAndPassword'), -1,
+          'without asking for a password again');
+        assert.ok(fetcher.seen.some((r) =>
+          r.input.indexOf('/api/admin/chat/conversations') === 0),
+          'AND the backend was still asked to authorise it');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('a restored Email/Password user the backend rejects gets no inbox',
+    async () => {
+      /* Provider alone, an email address, or an @esthers.ca domain authorise
+         nothing. Only staff/{uid} does. */
+      const { mod, stub } = await load();
+      stub.seedRestoredUser({
+        uid: 'someone-else', email: 'someone@esthers.ca', isAnonymous: false,
+        getIdToken: async () => 'a-real-token'
+      });
+      const clock = fakeClock();
+      const fetcher = captureFetch(staffApi({
+        conversations: () => jsonResponse(403, { ok: false, code: 'not_staff' })
+      }));
+      try {
+        const session = await mod.startStaffChat(recordingUi(), { deps: clock.deps });
+        await tick();
+        assert.equal(session.ui.phase, 'signed-out');
+        assert.equal(session.staff, null);
+        assert.match(String(session.ui.authError), /not authorised/i);
+      } finally {
+        fetcher.restore();
+      }
+    });
+});
+
+/* ================================ READ EFFICIENCY: THE TRANSCRIPT IS FETCHED
+ *                                  WHEN SOMETHING HAPPENED, AND NOT OTHERWISE
+ *
+ * The old design re-read the whole transcript every eight seconds. The new one
+ * reads the inbox summary every fifteen and compares three fields; the
+ * transcript is fetched only when they move. These tests count requests,
+ * because a design whose whole purpose is to make fewer of them should be
+ * measured in requests.
+ */
+describe('the open transcript is re-read only when it actually changed', () => {
+  /* Thirty messages, so a needless reload would be an expensive one. */
+  const THIRTY = [];
+  for (let i = 0; i < 30; i++) {
+    THIRTY.push({ messageId: 'm' + i, conversationId: 'conv-a',
+      senderType: i % 2 ? 'staff' : 'customer', body: 'line ' + i, createdAt: 1000 + i });
+  }
+
+  /* A world whose summary only moves when a test says so. */
+  function world() {
+    const state = { lastMessageAt: 5000, messageCount: 30, status: 'open',
+      messages: THIRTY.slice(), inboxCalls: 0, messageCalls: 0 };
+    const summary = () => Object.assign({}, CONV_A, {
+      lastMessageAt: state.lastMessageAt,
+      messageCount: state.messageCount,
+      status: state.status
+    });
+    state.responder = staffApi({
+      conversations: () => {
+        state.inboxCalls += 1;
+        const c = summary();
+        return jsonResponse(200, {
+          ok: true, status: c.status, limit: 50,
+          conversations: c.status === 'open' ? [c] : []
+        });
+      },
+      messages: () => {
+        state.messageCalls += 1;
+        return jsonResponse(200,
+          { ok: true, limit: 200, conversation: summary(), messages: state.messages });
+      }
+    });
+    return state;
+  }
+
+  test('NO CHANGE: many ticks, and the transcript is read exactly ONCE',
+    async () => {
+      const { mod } = await load();
+      const w = world();
+      const clock = fakeClock();
+      const { session, fetcher } = await signedIn(mod, { clock, responder: w.responder });
+      try {
+        session.select('conv-a');
+        await tick();
+        assert.equal(w.messageCalls, 1, 'the initial load');
+        assert.equal(session.thread.messages.length, 30);
+
+        /* Twenty polls. Nothing has been written to the conversation. */
+        for (let i = 0; i < 20; i++) { clock.fireAll(); await tick(1); }
+        await tick();
+
+        assert.equal(w.messageCalls, 1,
+          'STILL one - twenty ticks read no messages at all');
+        assert.ok(w.inboxCalls >= 20, 'while the summary was checked every time');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('CHANGE: the summary advances and the transcript reloads exactly once',
+    async () => {
+      const { mod } = await load();
+      const w = world();
+      const clock = fakeClock();
+      const { session, fetcher } = await signedIn(mod, { clock, responder: w.responder });
+      try {
+        session.select('conv-a');
+        await tick();
+        assert.equal(w.messageCalls, 1);
+
+        /* A customer writes. */
+        w.lastMessageAt = 6000;
+        w.messageCount = 31;
+        w.messages = THIRTY.concat([{ messageId: 'm30', conversationId: 'conv-a',
+          senderType: 'customer', body: 'one more', createdAt: 6000 }]);
+
+        clock.fireAll();
+        await tick();
+        assert.equal(w.messageCalls, 2, 'exactly one extra read');
+        assert.equal(session.thread.messages.length, 31, 'and the new line is there');
+
+        /* And it settles again. */
+        for (let i = 0; i < 5; i++) { clock.fireAll(); await tick(1); }
+        await tick();
+        assert.equal(w.messageCalls, 2, 'no further reads once it is caught up');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('MULTIPLE CHANGES: one read each, never two for the same change',
+    async () => {
+      const { mod } = await load();
+      const w = world();
+      const clock = fakeClock();
+      const { session, fetcher } = await signedIn(mod, { clock, responder: w.responder });
+      try {
+        session.select('conv-a');
+        await tick();
+        for (let n = 1; n <= 3; n++) {
+          w.lastMessageAt = 5000 + n * 1000;
+          w.messageCount = 30 + n;
+          clock.fireAll();
+          await tick();
+          clock.fireAll();               /* a second tick, same state */
+          await tick();
+          assert.equal(w.messageCalls, 1 + n,
+            'change ' + n + ': one read, and the repeat tick added none');
+        }
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('A CLOSE IS A CHANGE, even though no message was written', async () => {
+    /*
+     * closeConversation() writes status, closedAt and updatedAt - and NOT
+     * lastMessageAt or messageCount. Two fields would have missed it entirely
+     * and left a closed thread looking open until somebody clicked it. Hence
+     * status in the marker.
+     */
+    const { mod } = await load();
+    const w = world();
+    const clock = fakeClock();
+    const { session, fetcher } = await signedIn(mod, { clock, responder: w.responder });
+    try {
+      session.select('conv-a');
+      await tick();
+      assert.equal(session.isClosed(), false);
+      assert.equal(w.messageCalls, 1);
+
+      /* Somebody closes it elsewhere. The message fields do not move, and it
+         drops out of the Open filter. */
+      w.status = 'closed';
+      clock.fireAll();
+      await tick();
+
+      assert.equal(w.messageCalls, 2, 'the disappearance triggered one read');
+      assert.equal(session.isClosed(), true, 'and the thread caught up');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('the marker is the raw primitives, not a formatted string', async () => {
+    const { mod } = await load();
+    const w = world();
+    const clock = fakeClock();
+    const { session, fetcher } = await signedIn(mod, { clock, responder: w.responder });
+    try {
+      session.select('conv-a');
+      await tick();
+      assert.deepEqual(session.threadMarker, {
+        conversationId: 'conv-a', lastMessageAt: 5000, messageCount: 30, status: 'open'
+      });
+      assert.equal(typeof session.threadMarker.lastMessageAt, 'number');
+      assert.equal(typeof session.threadMarker.messageCount, 'number');
+
+      /* A null lastMessageAt normalises to 0 - a stable value to compare, not
+         a NaN or an undefined that would look like a change every tick. */
+      const m = mod._internals.markerFor(
+        mod._internals.normaliseConversation({ conversationId: 'x', lastMessageAt: null }));
+      assert.equal(m.lastMessageAt, 0);
+      assert.equal(mod._internals.sameSummary(m,
+        mod._internals.normaliseConversation({ conversationId: 'x', lastMessageAt: null })),
+        true, 'and two absent timestamps compare equal');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('a HIDDEN tab reads neither the inbox nor the transcript', async () => {
+    const { mod } = await load();
+    const w = world();
+    const clock = fakeClock();
+    const { session, fetcher } = await signedIn(mod, { clock, responder: w.responder });
+    try {
+      session.select('conv-a');
+      await tick();
+      const inbox = w.inboxCalls;
+      const msgs = w.messageCalls;
+
+      clock.hide();
+      /* Even with something genuinely new waiting. */
+      w.lastMessageAt = 9000;
+      w.messageCount = 31;
+      for (let i = 0; i < 5; i++) { clock.fireAll(); await tick(1); }
+      await tick();
+
+      assert.equal(w.inboxCalls, inbox, 'no summary reads');
+      assert.equal(w.messageCalls, msgs, 'and therefore no transcript reads');
+
+      /* And coming back catches up: one inbox read, and one transcript read
+         BECAUSE the summary moved while we were away. */
+      clock.show();
+      await tick();
+      assert.equal(w.inboxCalls, inbox + 1);
+      assert.equal(w.messageCalls, msgs + 1);
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('MANUAL REFRESH re-reads both, marker or no marker', async () => {
+    /* A person pressing Refresh wants certainty, not "I decided nothing had
+       changed". */
+    const { mod } = await load();
+    const w = world();
+    const clock = fakeClock();
+    const { session, fetcher } = await signedIn(mod, { clock, responder: w.responder });
+    try {
+      session.select('conv-a');
+      await tick();
+      const inbox = w.inboxCalls;
+      const msgs = w.messageCalls;
+
+      session.refreshAll();
+      await tick();
+
+      assert.equal(w.inboxCalls, inbox + 1, 'the inbox was re-read');
+      assert.equal(w.messageCalls, msgs + 1,
+        'and so was the transcript, despite an unchanged summary');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('SEND updates the thread at once, without waiting for a poll',
+    async () => {
+      const { mod } = await load();
+      const w = world();
+      const clock = fakeClock();
+      const { session, fetcher } = await signedIn(mod, { clock, responder: w.responder });
+      try {
+        session.select('conv-a');
+        await tick();
+        const msgs = w.messageCalls;
+
+        await session.send({ message: 'on its way' });
+        await tick();
+
+        assert.equal(w.messageCalls, msgs + 1,
+          'exactly one transcript read, immediately');
+        /* And no runaway: further ticks with an unchanged summary add none. */
+        clock.fireAll(); await tick();
+        clock.fireAll(); await tick();
+        assert.equal(w.messageCalls, msgs + 1, 'no duplicate request loop');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('CLOSE updates immediately and then stops re-reading', async () => {
+    const { mod } = await load();
+    const w = world();
+    const clock = fakeClock();
+    const { session, fetcher } = await signedIn(mod, {
+      clock,
+      responder: staffApi({
+        conversations: () => {
+          w.inboxCalls += 1;
+          return jsonResponse(200, { ok: true, status: 'open', limit: 50,
+            conversations: w.status === 'open'
+              ? [Object.assign({}, CONV_A, { lastMessageAt: w.lastMessageAt,
+                  messageCount: w.messageCount, status: w.status })]
+              : [] });
+        },
+        messages: () => {
+          w.messageCalls += 1;
+          return jsonResponse(200, { ok: true, limit: 200,
+            conversation: Object.assign({}, CONV_A, { lastMessageAt: w.lastMessageAt,
+              messageCount: w.messageCount, status: w.status }),
+            messages: w.messages });
+        },
+        close: () => { w.status = 'closed'; return jsonResponse(200,
+          { ok: true, conversationId: 'conv-a', status: 'closed' }); }
+      })
+    });
+    try {
+      session.select('conv-a');
+      await tick();
+      const msgs = w.messageCalls;
+
+      await session.close();
+      await tick();
+      assert.equal(session.isClosed(), true, 'closed at once');
+      assert.equal(w.messageCalls, msgs + 1, 'one read to confirm it');
+
+      /* A closed thread has nothing further to learn: the marker now says
+         closed, and the conversation is gone from the Open list, so absence
+         is expected rather than a change. */
+      const settled = w.messageCalls;
+      for (let i = 0; i < 5; i++) { clock.fireAll(); await tick(1); }
+      await tick();
+      assert.equal(w.messageCalls, settled,
+        'and no further transcript reads for a closed thread');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('reconciliation never fires two overlapping transcript reads', async () => {
+    const { mod } = await load();
+    const w = world();
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const clock = fakeClock();
+    let gated = false;
+    const { session, fetcher } = await signedIn(mod, {
+      clock,
+      responder: staffApi({
+        conversations: () => {
+          w.inboxCalls += 1;
+          return jsonResponse(200, { ok: true, status: 'open', limit: 50,
+            conversations: [Object.assign({}, CONV_A, { lastMessageAt: w.lastMessageAt,
+              messageCount: w.messageCount })] });
+        },
+        messages: async () => {
+          w.messageCalls += 1;
+          if (gated) await gate;
+          return jsonResponse(200, { ok: true, limit: 200,
+            conversation: Object.assign({}, CONV_A, { lastMessageAt: w.lastMessageAt,
+              messageCount: w.messageCount }),
+            messages: w.messages });
+        }
+      })
+    });
+    try {
+      session.select('conv-a');
+      await tick();
+      gated = true;
+      w.lastMessageAt = 7000; w.messageCount = 31;
+
+      clock.fireAll(); await tick(1);      /* starts a read, which blocks */
+      const inFlight = w.messageCalls;
+      clock.fireAll(); await tick(1);      /* must be refused */
+      clock.fireAll(); await tick(1);
+      assert.equal(w.messageCalls, inFlight, 'three ticks, one read');
+
+      release();
+      await tick();
+    } finally {
+      fetcher.restore();
+    }
+  });
+});
+
+/* ================================================== THE VERSION BUMP */
+
+describe('the whole local chat graph moved to one new version', () => {
+  test('every local chat module and the staff page agree', () => {
+    const WANT = '2026-09-05.2';
+    const files = {
+      'assets/js/chat.js': [/var CHAT_CLIENT_VERSION = '([^']+)';/],
+      'assets/js/chat-customer.js': [/export const CHAT_CLIENT_VERSION = '([^']+)';/,
+                                     /from '\.\/chat-app-check\.js\?v=([^']+)';/],
+      'assets/js/chat-app-check.js': [/export const CHAT_CLIENT_VERSION = '([^']+)';/],
+      'assets/js/chat-staff.js': [/export const CHAT_CLIENT_VERSION = '([^']+)';/,
+                                  /from '\.\/chat-app-check\.js\?v=([^']+)';/],
+      'staff/chat/index.html': [/chat-staff\.js\?v=([^"]+)"/,
+                                /chat-staff\.css\?v=([^"]+)"/]
+    };
+    for (const file of Object.keys(files)) {
+      const src = readFileSync(ROOT + '/' + file, 'utf8');
+      for (const re of files[file]) {
+        const m = src.match(re);
+        assert.ok(m, file + ' matches ' + re);
+        assert.equal(m[1], WANT, file + ' is on ' + WANT);
+      }
+    }
+  });
+
+  test('no module is left behind on the previous version', () => {
+    for (const file of ['assets/js/chat.js', 'assets/js/chat-customer.js',
+                        'assets/js/chat-app-check.js', 'assets/js/chat-staff.js',
+                        'staff/chat/index.html']) {
+      const src = readFileSync(ROOT + '/' + file, 'utf8');
+      assert.equal(src.indexOf('2026-09-05.1'), -1,
+        file + ' has no trace of the old version');
+    }
+  });
+
+  test('the pinned Firebase SDK is still 12.4.0 and still not cache-busted',
+    () => {
+      const appCheck = readFileSync(ROOT + '/assets/js/chat-app-check.js', 'utf8');
+      assert.match(appCheck, /export const SDK_VERSION = '12\.4\.0';/);
+      for (const file of ['assets/js/chat-customer.js', 'assets/js/chat-app-check.js',
+                          'assets/js/chat-staff.js']) {
+        const src = codeAndStrings(readFileSync(ROOT + '/' + file, 'utf8'));
+        const urls = src.match(/'https:\/\/www\.gstatic\.com\/firebasejs\/'[^;]*/g) || [];
+        assert.ok(urls.length >= 1, file + ' loads the SDK');
+        for (const u of urls) {
+          assert.equal(/\?v=/.test(u), false, file + ': no ?v= on ' + u);
+        }
+      }
+    });
 });

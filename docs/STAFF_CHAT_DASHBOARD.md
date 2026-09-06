@@ -31,9 +31,15 @@ to anybody to set this up, and this document does not contain one.
 3. The inbox appears.
 
 **Sign out** is the button at the top right. Use it on a shared machine — the
-shop counter especially. Closing the tab is not signing out: the browser keeps
-the session so a page refresh does not make you sign in again, which is
-convenient for you and equally convenient for the next person to sit down.
+shop counter especially. Refreshing the page does not sign you out: the tab
+keeps your session so F5 does not make you type your password again.
+
+**Closing the tab DOES end the session.** The sign-in is remembered per tab,
+not per browser, so a new tab starts signed out. That is deliberate: it means
+you can have this dashboard open in one tab and the customer-facing website in
+another without the two interfering — signing in here does not disturb a
+customer chat in the other tab, and vice versa. It also means the next person
+to open a fresh tab on this machine does not inherit your session.
 
 If a sign-in fails you get one sentence: *"That email address and password did
 not match."* That is deliberate and it is the same sentence for a wrong
@@ -90,22 +96,45 @@ conversation, which is what the customer-side panel offers them.
 
 ## How fresh is what I am looking at
 
-The page checks for new messages on its own:
+Every 15 seconds, while the tab is visible, the page asks the server for the
+conversation list. That list says, for each conversation, when it last had a
+message and how many it has.
 
-| what | how often |
-|---|---|
-| the conversation list | every 15 seconds |
-| the conversation you have open | every 8 seconds |
+If the conversation you have open has not changed since you last read it, the
+page does nothing more. If it has — a new customer message, or somebody closed
+it — the page fetches that one conversation, once, and the new message appears.
 
 **It stops entirely when the tab is not visible.** Switch to another tab and
-nothing is fetched; come back and it refreshes immediately, so you are never
-looking at a stale screen after a break.
+nothing is fetched at all; come back and it checks straight away, so you are
+never looking at a stale screen after a break.
 
-**Refresh** at the top of the list forces a check right now.
+**Refresh** at the top of the list checks both the list and the open
+conversation immediately, whether or not anything looks changed. When you want
+to be certain, press it.
+
+Sending a reply or closing a conversation updates the screen at once — neither
+waits for the next 15-second check.
 
 If the server stops answering, the page waits longer between attempts instead
 of hammering it, and picks up again on its own when things recover. Pressing
 Refresh always tries immediately.
+
+### What changed here, and why it matters
+
+The first version of this page re-read **every message in the open
+conversation every 8 seconds**, whether or not anything had happened. A
+conversation with thirty messages in it therefore had all thirty read from the
+database roughly seven times a minute, just to discover — almost always — that
+nothing was new.
+
+It now reads the conversation *list* every 15 seconds and the messages
+themselves only when that list says something actually happened. On a quiet
+afternoon with a thread left open, the number of message reads goes from
+"constantly" to none at all until somebody writes something.
+
+The exact saving depends on how many messages a conversation has and how busy
+the day is, so this is not a promise about a bill — but the shape of it is
+that the expensive read now happens on real events rather than on a clock.
 
 ---
 
@@ -134,6 +163,16 @@ immediately. Sign-in tokens are never written to browser storage, cookies, the
 address bar or any log by this page. Firebase Auth keeps its own session in its
 own storage — that is what makes a refresh work — and that is the only thing
 kept.
+
+**And it keeps it per tab, not per browser.** Firebase's default is to share
+one signed-in user across every tab, which would be wrong here: the same
+Firebase project holds anonymous customer sessions as well as staff accounts,
+and only one user can be signed in at a time. Under the default, signing in
+here would have kicked a customer's chat session out in another tab, and a
+customer starting a chat would have signed a staff member out mid-reply. The
+session is deliberately confined to the tab it was created in, so the two
+cannot collide. The practical consequence is the one described above: closing
+the tab ends the session.
 
 **Staff browsers have no direct database access, deliberately.** The customer's
 own chat panel reads its transcript straight from Firestore, because the

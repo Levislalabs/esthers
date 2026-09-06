@@ -19,8 +19,8 @@
  * /api/admin/chat/* where the server decides what to serialise.
  *
  * The consequence is that there is no live listener here, so the inbox polls.
- * See INBOX_POLL_MS and THREAD_POLL_MS for the intervals and the arithmetic
- * behind them.
+ * See INBOX_POLL_MS for the one interval, and reconcileSelected() for why the
+ * open transcript does not need one of its own.
  *
  * THE ORDER, WHICH IS THE SAME ORDER THE SERVER CHECKS IN
  *
@@ -50,13 +50,13 @@ import {
   getFirebaseApp,
   initAppCheck,
   authorizedFetch
-} from './chat-app-check.js?v=2026-09-05.1';
+} from './chat-app-check.js?v=2026-09-05.2';
 
 /* The chat client version. THE SAME STRING as CHAT_CLIENT_VERSION in
    chat.js, chat-customer.js and chat-app-check.js, and the same string as the
    ?v= in the import above and in staff/chat/index.html. One version for the
    whole local chat graph; a test pins every copy to the others. */
-export const CHAT_CLIENT_VERSION = '2026-09-05.1';
+export const CHAT_CLIENT_VERSION = '2026-09-05.2';
 
 /* Pinned by path, exactly as the customer transport loads it. No cache-busting
    query: gstatic already serves an exact version per URL. */
@@ -78,30 +78,33 @@ const MESSAGE_MAX = 2000;
 /* ------------------------------------------------------------- polling */
 
 /*
- * WHY THESE NUMBERS, AND WHAT THEY COST.
+ * ONE TIMER, AND IT ONLY READS SUMMARIES.
  *
  * Neither GET spends a rate-limit allowance - conversations.js and
  * messages.js both carry needsRateSecret: false - so the constraint is
- * Firestore document reads, not the API.
+ * Firestore document reads.
  *
- * INBOX, 15 s. One indexed query returning at most MAX_INBOX documents, and
- * in practice the number of OPEN conversations, which for a sheet-metal shop
- * is a handful. Four polls a minute against ten open threads is forty
- * document reads a minute per staff browser.
+ * THE INBOX POLL, 15 s. One indexed query returning at most MAX_INBOX
+ * conversation documents, and in practice the number of OPEN threads, which
+ * for a sheet-metal shop is a handful. Only while the tab is visible.
  *
- * THREAD, 8 s. One indexed query returning the whole transcript, because the
- * messages endpoint has no "since" parameter - it is all or nothing. A
- * thirty-message thread left open and VISIBLE therefore costs about 225
- * document reads a minute. That is the expensive one, and it is why the
- * visibility rules below are not a nicety: a hidden tab polls nothing at all,
- * so the cost exists only while somebody is actually looking at a thread.
+ * THERE IS NO THREAD TIMER. There used to be: every 8 seconds it re-read the
+ * ENTIRE transcript, because /api/admin/chat/messages has no "since"
+ * parameter and is all-or-nothing. A thirty-message thread left open cost
+ * roughly 225 document reads a minute to discover, almost always, that
+ * nothing had changed.
  *
- * If this ever becomes a real bill, the fix is a `?since=` parameter on
- * /api/admin/chat/messages so a poll returns only what is new. That is a
- * backend change and deliberately not made here.
+ * It does not need a timer, because the inbox poll ALREADY carries the answer.
+ * Every conversation in that response includes lastMessageAt and
+ * messageCount, and service.js updates both in the SAME transaction that
+ * writes a message - startConversation() sets them, sendCustomerMessage() and
+ * sendStaffMessage() both bump them, and each returns early WITHOUT bumping
+ * on an idempotent replay, so the count matches the stored messages exactly.
+ * Those two fields plus status are therefore a reliable "did anything happen
+ * to this conversation" signal, and the transcript is fetched only when they
+ * move. See threadMarker and reconcileSelected() below.
  */
 const INBOX_POLL_MS = 15 * 1000;
-const THREAD_POLL_MS = 8 * 1000;
 
 /*
  * Failure backoff. A poll that fails does not simply keep firing on schedule
@@ -315,8 +318,18 @@ export class StaffDashboard {
     this.closing = false;
 
     this.inboxTimer = null;
-    this.threadTimer = null;
     this.onVisibility = null;
+
+    /*
+     * What the summary looked like when the transcript was last read:
+     * { conversationId, lastMessageAt, messageCount, status }.
+     *
+     * The exact normalised primitives the backend returned - numbers and a
+     * string, never a formatted date. lastMessageAt is 0 rather than null
+     * when absent, which is a stable value to compare, and timestamps are NOT
+     * assumed unique: this is a change detector, not a cursor.
+     */
+    this.threadMarker = null;
 
     this.inboxFailures = 0;
     this.threadFailures = 0;
@@ -354,6 +367,41 @@ export class StaffDashboard {
     const authMod = await this.deps.loadAuth();
     if (this.stopped) return this;
     const auth = authMod.getAuth(app);
+
+    /*
+     * ONE FIREBASE USER PER TAB, NOT PER BROWSER - and set BEFORE anything
+     * signs in or is restored.
+     *
+     * Firebase's web default is browserLocalPersistence: one signed-in user
+     * shared by every tab on the origin. This project has two kinds of user -
+     * anonymous customers and Email/Password staff - and the SDK allows one
+     * signed-in user per app instance, so under the default a staff sign-in
+     * here would replace a customer's anonymous session in another tab, and a
+     * customer starting a chat would sign the staff member out mid-reply.
+     *
+     * browserSessionPersistence puts the session in sessionStorage, which is
+     * per-tab: two tabs, two independent users. A reload of THIS tab still
+     * restores THIS staff session, which is why it is not inMemoryPersistence.
+     *
+     * A rejection is fatal on purpose. If setPersistence() fails the instance
+     * keeps the default, which is the cross-tab bleed this removes - and a
+     * staff token in shared storage is the worse half of that. Better a sign-in
+     * screen that says so than an isolation guarantee that quietly is not one.
+     */
+    try {
+      if (typeof authMod.setPersistence !== 'function'
+          || !authMod.browserSessionPersistence) {
+        throw new Error('persistence unavailable');
+      }
+      await authMod.setPersistence(auth, authMod.browserSessionPersistence);
+    } catch (err) {
+      if (this.stopped) return this;
+      callUi(this.ui, 'setPhase', 'signed-out');
+      callUi(this.ui, 'setAuthError', GENERIC);
+      return this;
+    }
+    if (this.stopped) return this;
+
     this.identity = { app: app, auth: auth, authMod: authMod, user: null };
 
     callUi(this.ui, 'onSignIn', (fields) => this.signIn(fields));
@@ -391,6 +439,31 @@ export class StaffDashboard {
       callUi(this.ui, 'setPhase', 'signed-out');
       return false;
     }
+
+    /*
+     * AN ANONYMOUS USER IS A CUSTOMER, IN THIS TAB.
+     *
+     * Per-tab persistence means another tab's customer cannot appear here, so
+     * this is the same-tab case: somebody used the chat panel on the website
+     * and then navigated THIS tab to /staff/chat. That anonymous identity has
+     * no business being offered to the staff API - the server would refuse it
+     * 403 not_staff, correctly, but asking is pointless and the answer would
+     * read like "your staff account is not authorised", which is a lie.
+     *
+     * Let it go and show the sign-in form. Signing in as staff below will
+     * replace this tab's identity, which is the intended transition.
+     */
+    if (user.isAnonymous === true) {
+      try {
+        await this.identity.authMod.signOut(this.identity.auth);
+      } catch (err) {
+        /* Already gone. The phase below is what matters. */
+      }
+      this.identity.user = null;
+      callUi(this.ui, 'setPhase', 'signed-out');
+      return false;
+    }
+
     return this.authorise(user);
   }
 
@@ -504,6 +577,7 @@ export class StaffDashboard {
     this.conversations = [];
     this.selectedId = null;
     this.thread = null;
+    this.threadMarker = null;
     this.inboxFailures = 0;
     this.threadFailures = 0;
     this.inboxLoading = false;
@@ -554,15 +628,10 @@ export class StaffDashboard {
     this.inboxTimer = this.deps.setInterval(() => {
       if (this.stopped || !this.staff) { this.stopWatch(); return; }
       if (this.isHidden()) return;          /* nobody is looking */
+      /* The ONLY timer. The open thread rides on this one's answer - see
+         reconcileSelected(). */
       this.loadInbox({ silent: true });
     }, INBOX_POLL_MS);
-
-    this.threadTimer = this.deps.setInterval(() => {
-      if (this.stopped || !this.staff) { this.stopWatch(); return; }
-      if (this.isHidden()) return;
-      if (!this.selectedId) return;         /* nothing open to refresh */
-      this.loadThread(this.selectedId, { silent: true });
-    }, THREAD_POLL_MS);
 
     const doc = this.deps.document();
     if (doc && typeof doc.addEventListener === 'function') {
@@ -570,9 +639,9 @@ export class StaffDashboard {
         if (this.stopped || !this.staff) return;
         if (this.isHidden()) return;
         /* Back from a hidden tab: catch up at once rather than waiting out
-           the remainder of an interval that did nothing while away. */
+           the remainder of an interval that did nothing while away. The
+           transcript follows only if the summary moved while we were away. */
         this.loadInbox({ silent: true });
-        if (this.selectedId) this.loadThread(this.selectedId, { silent: true });
       };
       doc.addEventListener('visibilitychange', this.onVisibility);
     }
@@ -583,10 +652,6 @@ export class StaffDashboard {
     if (this.inboxTimer !== null) {
       this.deps.clearInterval(this.inboxTimer);
       this.inboxTimer = null;
-    }
-    if (this.threadTimer !== null) {
-      this.deps.clearInterval(this.threadTimer);
-      this.threadTimer = null;
     }
     if (this.onVisibility) {
       const doc = this.deps.document();
@@ -606,7 +671,7 @@ export class StaffDashboard {
   shouldSkip(kind) {
     const failures = kind === 'inbox' ? this.inboxFailures : this.threadFailures;
     if (failures === 0) return false;
-    const base = kind === 'inbox' ? INBOX_POLL_MS : THREAD_POLL_MS;
+    const base = INBOX_POLL_MS;
     const wait = Math.min(base * Math.pow(2, failures), MAX_BACKOFF_MS);
     const last = kind === 'inbox' ? this.inboxFailedAt : this.threadFailedAt;
     return typeof last === 'number' && (this.deps.now() - last) < wait;
@@ -672,6 +737,63 @@ export class StaffDashboard {
     this.conversations = list.map(normaliseConversation).filter(Boolean);
     callUi(this.ui, 'renderInbox', this.conversations);
     callUi(this.ui, 'setSelected', this.selectedId);
+    this.reconcileSelected();
+  }
+
+  /*
+   * Does the open transcript need re-reading?
+   *
+   * This is what replaced the eight-second thread timer. The inbox answer
+   * already says everything needed to decide: if the selected conversation's
+   * lastMessageAt, messageCount and status are all exactly what they were
+   * when the transcript was read, nothing has been written to it and there is
+   * nothing to fetch. Almost every tick takes that branch.
+   *
+   * THREE FIELDS, NOT TWO. lastMessageAt and messageCount move together on
+   * every message write, but closeConversation() writes only status, closedAt
+   * and updatedAt - a close leaves both message fields untouched. Without
+   * status in the marker, a thread closed from another device would stay
+   * looking open here until somebody clicked it.
+   *
+   * A SELECTED CONVERSATION MISSING FROM THE LIST IS ALSO A CHANGE. The inbox
+   * is filtered by status, so a thread closing while the Open filter is on
+   * makes it disappear rather than reappear as closed. Absence is therefore
+   * the signal, and one transcript read settles it - /messages fetches by id
+   * and does not filter by status, so it returns the real state.
+   */
+  reconcileSelected() {
+    if (this.stopped || !this.staff || !this.selectedId) return false;
+    /* No marker means no transcript has been read yet; select() and the
+       explicit paths do that, not this. */
+    if (!this.threadMarker || this.threadMarker.conversationId !== this.selectedId) {
+      return false;
+    }
+
+    const now = this.conversations.find(
+      (c) => c.conversationId === this.selectedId) || null;
+
+    if (now) {
+      if (sameSummary(this.threadMarker, now)) return false;        /* nothing happened */
+    } else if (this.threadMarker.status !== this.filter) {
+      /*
+       * ABSENT, AND WE ALREADY KNOW WHY.
+       *
+       * A thread we have read and know is closed will never appear in the
+       * Open list again. Treating that permanent absence as a change would
+       * re-read the whole transcript on every single tick, forever - which is
+       * worse than the timer this design replaced, and is exactly what the
+       * first version of this did until a test counted the requests.
+       *
+       * Absence only means something when the marker says the conversation
+       * SHOULD still be in this list. Then it is read once, the answer
+       * updates the marker, and the next tick takes the branch above.
+       */
+      return false;
+    }
+
+    this.noteSuccess('thread');
+    this.loadThread(this.selectedId, { silent: true });
+    return true;
   }
 
   setFilter(value) {
@@ -687,6 +809,13 @@ export class StaffDashboard {
     return true;
   }
 
+  /*
+   * Refresh, because a person pressed the button.
+   *
+   * Explicit, so it does NOT consult the marker: somebody pressing Refresh
+   * wants to be sure, and "I decided nothing had changed" is not the answer
+   * they asked for. Both the inbox and the open transcript are re-read.
+   */
   refreshAll() {
     this.noteSuccess('inbox');
     this.noteSuccess('thread');
@@ -706,6 +835,7 @@ export class StaffDashboard {
 
     this.selectedId = id;
     this.thread = null;
+    this.threadMarker = null;
     this.noteSuccess('thread');
     callUi(this.ui, 'setSelected', id);
     callUi(this.ui, 'renderThread', null);
@@ -759,6 +889,7 @@ export class StaffDashboard {
         /* Gone. Drop it rather than leave a dead thread on screen. */
         this.selectedId = null;
         this.thread = null;
+        this.threadMarker = null;
         callUi(this.ui, 'setSelected', null);
         callUi(this.ui, 'renderThread', null);
         callUi(this.ui, 'setNotice', described.text);
@@ -782,6 +913,15 @@ export class StaffDashboard {
        a transcript. */
     messages.sort((a, b) => (a.createdAt - b.createdAt) || (a.messageId < b.messageId ? -1 : 1));
     this.thread = { conversation: conversation, messages: messages };
+
+    /*
+     * The marker comes from THIS response, not from the inbox row that
+     * triggered the fetch: it is the summary as it stood at the moment the
+     * transcript was actually read, which is the only thing a later inbox
+     * answer can honestly be compared against.
+     */
+    this.threadMarker = conversation ? markerFor(conversation) : null;
+
     callUi(this.ui, 'renderThread', this.thread);
   }
 
@@ -983,6 +1123,26 @@ function normaliseMessage(raw) {
   };
 }
 
+/*
+ * The change marker for one conversation. Exact normalised primitives, so a
+ * comparison is === on three values and nothing is parsed or formatted.
+ */
+function markerFor(conversation) {
+  return {
+    conversationId: conversation.conversationId,
+    lastMessageAt: conversation.lastMessageAt,
+    messageCount: conversation.messageCount,
+    status: conversation.status
+  };
+}
+
+function sameSummary(marker, conversation) {
+  return marker.conversationId === conversation.conversationId
+    && marker.lastMessageAt === conversation.lastMessageAt
+    && marker.messageCount === conversation.messageCount
+    && marker.status === conversation.status;
+}
+
 function text(value) {
   return typeof value === 'string' ? value : '';
 }
@@ -1057,12 +1217,13 @@ export function activeSession() {
 
 /* Tests import the pieces directly; nothing here is used by the page. */
 export const _internals = {
-  INBOX_POLL_MS, THREAD_POLL_MS, MAX_BACKOFF_MS,
+  INBOX_POLL_MS, MAX_BACKOFF_MS,
   MAX_INBOX, MAX_TRANSCRIPT, MESSAGE_MAX,
   API_CONVERSATIONS, API_MESSAGES, API_SEND, API_CLOSE,
   SIGN_IN_FAILED, MESSAGES_BY_CODE,
   StaffApiError, StaffNetworkError,
-  normaliseConversation, normaliseMessage, defaultDeps
+  normaliseConversation, normaliseMessage, defaultDeps,
+  markerFor, sameSummary
 };
 
 /* =========================================================================

@@ -989,16 +989,25 @@ describe('regressions', () => {
     }
   });
 
-  test('a signed-in STAFF session is refused, never adopted, never clobbered',
-    async () => {
+  test('A STAFF SESSION IN THIS TAB IS REPLACED, NOT ADOPTED', async () => {
       /*
-       * THE BUG: resolveUser() reused whatever user was signed in. Staff hold
-       * Email/Password accounts in the same Firebase project and Firebase
-       * allows one user per app, so a staff member with the inbox open in
-       * another tab had a non-anonymous currentUser sitting right where this
-       * looked. Adopting it sends an Email/Password token to the customer API,
-       * which authenticateCustomer() refuses 403 forever; the listener fails
-       * too, because isAnonymousCustomer() tests the same provider.
+       * WHAT CHANGED, AND WHY.
+       *
+       * This used to refuse outright. Adopting a staff user was never an
+       * option - an Email/Password token sent to the customer API is refused
+       * 403 by authenticateCustomer() forever, and the Firestore listener
+       * fails too because isAnonymousCustomer() tests the same provider - but
+       * refusing was the wrong half of the fix. It was there because Firebase
+       * shared ONE user across every tab, so a staff member's inbox in
+       * another tab appeared here, and signing in anonymously would have
+       * signed them out of it mid-reply.
+       *
+       * browserSessionPersistence removes that: sessions are per-tab, so
+       * another tab's staff user is invisible from here. A non-anonymous user
+       * seen at this point is therefore THIS tab's - somebody navigated from
+       * /staff/chat to a customer page - and replacing this tab's identity is
+       * both correct and free. The dashboard tab, if there still is one, is
+       * untouched, which the two-tab browser test proves separately.
        */
       const { mod, stub } = await load();
       stub.seedCurrentUser({
@@ -1013,11 +1022,18 @@ describe('regressions', () => {
         });
         await tick();
 
-        assert.equal(session, null, 'it refuses rather than half-connecting');
-        assert.equal(stub.calls.signInAnonymously.length, 0,
-          'and does NOT sign the staff member out of their own inbox');
-        assert.equal(fetcher.seen.length, 0, 'no doomed request is made');
-        assert.match(ui.notice, /staff inbox/);
+        assert.ok(session, 'the customer chat starts');
+        assert.equal(session.identity.user.isAnonymous, true,
+          'as a NEW anonymous customer');
+        assert.notEqual(session.identity.user.uid, 'staff-uid',
+          'never as the staff account');
+        assert.equal(stub.calls.signInAnonymously.length, 1,
+          'exactly one anonymous sign-in');
+        /* Signed out first: signInAnonymously() on top of a signed-in user is
+           not defined to replace it cleanly. */
+        assert.ok(stub.order.indexOf('signOut') !== -1, 'the staff user was released');
+        assert.ok(stub.order.indexOf('signOut') < stub.order.indexOf('signInAnonymously'),
+          'and released BEFORE the anonymous sign-in');
       } finally {
         fetcher.restore();
       }
@@ -3938,4 +3954,142 @@ describe('the chat client is loaded by an explicit, source-controlled version', 
         page + ' still does not reference the transport at all');
     }
   });
+});
+
+/* ======================================= ONE FIREBASE USER PER TAB, NOT PER
+ *                                         BROWSER
+ *
+ * Firebase's web default is browserLocalPersistence: one signed-in user in
+ * localStorage, shared by every tab on the origin. Esther's has two kinds of
+ * user in one project - anonymous customers here, Email/Password staff in
+ * /staff/chat - and the SDK allows exactly one signed-in user per app
+ * instance. Under the default the two fight: a staff sign-in replaces the
+ * customer, a customer sign-in signs the staff member out mid-reply.
+ *
+ * browserSessionPersistence puts the session in sessionStorage, which is
+ * per-tab. Two tabs, two users, neither aware of the other - and a reload of
+ * either still restores its own, which is why it is not inMemoryPersistence.
+ */
+describe('the customer session belongs to its tab', () => {
+  test('browserSessionPersistence is chosen explicitly', async () => {
+    const { mod, stub } = await load();
+    const fetcher = captureFetch(jsonResponse(200, OK_START));
+    try {
+      await mod.openChatForReview({
+        ui: recordingUi(), openPanel: () => {},
+        deps: Object.assign({ storage: () => memoryStorage() }, fakeClock().deps)
+      });
+      await tick();
+      assert.deepEqual(stub.persistenceChoices, ['SESSION'],
+        'session persistence, once, and nothing else');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('NEITHER local NOR in-memory persistence is configured', () => {
+    /* local is the shared-across-tabs default this removes. inMemory would
+       isolate tabs too, and lose the anonymous uid on every F5 - which would
+       lose the conversation that uid owns. */
+    assert.match(CUSTOMER_CODE, /browserSessionPersistence/);
+    assert.equal(/browserLocalPersistence/.test(CUSTOMER_CODE), false);
+    assert.equal(/inMemoryPersistence/.test(CUSTOMER_CODE), false);
+    assert.equal(/indexedDBLocalPersistence/.test(CUSTOMER_CODE), false);
+  });
+
+  test('persistence is set BEFORE the restore settles and BEFORE any sign-in',
+    async () => {
+      /* After would be too late: the restore would already have happened
+         against the wrong store. */
+      const { mod, stub } = await load();
+      const fetcher = captureFetch(jsonResponse(200, OK_START));
+      try {
+        await mod.openChatForReview({
+          ui: recordingUi(), openPanel: () => {},
+          deps: Object.assign({ storage: () => memoryStorage() }, fakeClock().deps)
+        });
+        await tick();
+        const set = stub.order.indexOf('setPersistence');
+        const watch = stub.order.indexOf('onAuthStateChanged');
+        const signIn = stub.order.indexOf('signInAnonymously');
+        assert.ok(set !== -1, 'it was set at all');
+        assert.ok(set < watch, 'before the restore was awaited');
+        assert.ok(set < signIn, 'and before the anonymous sign-in');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('a failure to set persistence STOPS the chat', async () => {
+    /* Carrying on would leave the instance on the shared-across-tabs default,
+       which is the thing being removed. */
+    const { mod, stub } = await load();
+    stub.persistenceErrorOn(true);
+    const ui = recordingUi();
+    const fetcher = captureFetch(jsonResponse(200, OK_START));
+    try {
+      const session = await mod.openChatForReview({
+        ui, openPanel: () => {},
+        deps: Object.assign({ storage: () => memoryStorage() }, fakeClock().deps)
+      });
+      await tick();
+      assert.equal(session, null, 'the chat refuses to start');
+      assert.equal(stub.calls.signInAnonymously.length, 0,
+        'and no account was minted');
+      assert.equal(fetcher.seen.length, 0, 'no request was made');
+    } finally {
+      stub.persistenceErrorOn(false);
+      fetcher.restore();
+    }
+  });
+
+  test('an anonymous session in this tab is REUSED - the same uid after a reload',
+    async () => {
+      const { mod, stub } = await load();
+      stub.seedRestoredUser({
+        uid: 'anon-restored', isAnonymous: true, getIdToken: async () => 'tok'
+      });
+      const fetcher = captureFetch(jsonResponse(200, OK_START));
+      try {
+        const session = await mod.openChatForReview({
+          ui: recordingUi(), openPanel: () => {},
+          deps: Object.assign({ storage: () => memoryStorage() }, fakeClock().deps)
+        });
+        await tick();
+        assert.equal(session.identity.user.uid, 'anon-restored',
+          'the tab kept its own uid');
+        assert.equal(stub.calls.signInAnonymously.length, 0,
+          'no second account was minted');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('a restored EMAIL/PASSWORD user is never adopted as a customer',
+    async () => {
+      /* Same-tab staff -> customer. An Email/Password token sent to
+         /api/chat/send is refused 403 not_a_customer forever, and the
+         Firestore listener fails too because isAnonymousCustomer() tests the
+         same provider. So this tab gets a fresh anonymous identity. */
+      const { mod, stub } = await load();
+      stub.seedRestoredUser({
+        uid: 'staff-1', email: 'manager@esthers.ca', isAnonymous: false,
+        getIdToken: async () => 'staff-token'
+      });
+      const fetcher = captureFetch(jsonResponse(200, OK_START));
+      try {
+        const session = await mod.openChatForReview({
+          ui: recordingUi(), openPanel: () => {},
+          deps: Object.assign({ storage: () => memoryStorage() }, fakeClock().deps)
+        });
+        await tick();
+        assert.ok(session, 'the chat starts');
+        assert.notEqual(session.identity.user.uid, 'staff-1',
+          'but NOT as the staff account');
+        assert.equal(session.identity.user.isAnonymous, true);
+        assert.equal(stub.calls.signInAnonymously.length, 1);
+      } finally {
+        fetcher.restore();
+      }
+    });
 });

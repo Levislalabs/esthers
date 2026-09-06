@@ -42,12 +42,32 @@ let signedInUser = null;
 
 function record(name) { order.push(name); }
 
+/* ------------------------------------------------- auth persistence */
+
+export const browserSessionPersistence = { type: 'SESSION' };
+export const browserLocalPersistence = { type: 'LOCAL' };
+export const inMemoryPersistence = { type: 'NONE' };
+
+export const persistenceChoices = [];
+let persistenceFails = false;
+export function persistenceErrorOn(flag) { persistenceFails = flag === true; }
+
+export async function setPersistence(auth, persistence) {
+  record('setPersistence');
+  if (persistenceFails) throw new Error('stub: web storage unsupported');
+  persistenceChoices.push(persistence && persistence.type);
+  return undefined;
+}
+
+
 export function reset() {
   order.length = 0;
   signOutCalls = 0;
   apps = [];
   appCheckToken = 'stub.app.check.token';
   appCheckInitError = null;
+  persistenceChoices.length = 0;
+  persistenceFails = false;
   restoredUser = null;
   currentUser = null;
   signInError = null;

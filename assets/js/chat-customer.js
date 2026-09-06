@@ -61,7 +61,7 @@ import {
   getFirebaseApp,
   initAppCheck,
   authorizedFetch
-} from './chat-app-check.js?v=2026-09-05.1';
+} from './chat-app-check.js?v=2026-09-05.2';
 
 /*
  * The chat client version. THE SAME STRING as CHAT_CLIENT_VERSION in
@@ -82,7 +82,7 @@ import {
  * out rather than interpolated. That is the cost of the guarantee, and the
  * test is what keeps the copies honest.
  */
-export const CHAT_CLIENT_VERSION = '2026-09-05.1';
+export const CHAT_CLIENT_VERSION = '2026-09-05.2';
 
 /* -------------------------------------------------------------------------
  * THE ROLLOUT GATE
@@ -221,12 +221,6 @@ const MESSAGES_BY_CODE = {
   bad_authorization: EXPIRED,
   invalid_token: EXPIRED,
   not_a_customer: RELOAD,
-  /* A staff Email/Password session is signed in on this browser. Firebase
-     allows one user per app, so customer chat cannot open a session without
-     ending theirs. Said plainly rather than as a mystifying "reload". */
-  staff_session_active: 'You are signed in to the staff inbox in this browser, '
-    + 'so customer chat cannot start here. Please use a private window.',
-
   /* The visitor's own input. These are the only ones a person can act on,
      so they are the only ones that say anything specific. */
   invalid_name: 'Please give us a name we can use.',
@@ -616,15 +610,46 @@ async function establishIdentity(deps) {
   const app = await deps.getFirebaseApp();
   if (!app) throw new ChatApiError(503, 'service_unavailable', null);
 
-  /* 3. ANONYMOUS AUTH. */
+  /* 3. ANONYMOUS AUTH, IN THIS TAB ONLY. */
   const authMod = await deps.loadAuth();
   const auth = authMod.getAuth(app);
+  await applySessionPersistence(authMod, auth);
   const user = await resolveUser(authMod, auth);
   if (!user || typeof user.uid !== 'string' || !user.uid) {
     throw new ChatApiError(401, 'invalid_token', null);
   }
 
   return { app: app, auth: auth, authMod: authMod, user: user };
+}
+
+/*
+ * ONE FIREBASE USER PER TAB, NOT PER BROWSER.
+ *
+ * Firebase's web default is browserLocalPersistence: one signed-in user
+ * shared by every tab on the origin, in localStorage. Esther's has TWO kinds
+ * of user in one project - anonymous customers and Email/Password staff - and
+ * the SDK allows exactly one signed-in user per app instance. Under the
+ * default, a staff member signing into /staff/chat in one tab would replace
+ * the anonymous customer in another tab, and a customer starting a chat would
+ * sign the staff member out mid-reply.
+ *
+ * browserSessionPersistence puts the session in sessionStorage, which is
+ * per-tab. Two tabs, two independent users, neither aware of the other - and
+ * a reload of either tab still restores its own user, which is why this is
+ * not inMemoryPersistence.
+ *
+ * NOT WRAPPED IN A TOLERANT try/catch, deliberately. If setPersistence()
+ * rejects - blocked web storage, usually - the instance keeps the DEFAULT,
+ * which is the shared-across-tabs behaviour this exists to remove. Silently
+ * carrying on would restore the exact bug. Failing here surfaces as a chat
+ * that will not start, which is honest and which the panel already handles.
+ */
+async function applySessionPersistence(authMod, auth) {
+  if (!authMod || typeof authMod.setPersistence !== 'function'
+      || !authMod.browserSessionPersistence) {
+    throw new ChatApiError(503, 'service_unavailable', null);
+  }
+  await authMod.setPersistence(auth, authMod.browserSessionPersistence);
 }
 
 /*
@@ -640,55 +665,65 @@ async function establishIdentity(deps) {
  * if there is genuinely nobody there.
  */
 async function resolveUser(authMod, auth) {
-  if (auth.currentUser) return requireAnonymous(auth.currentUser);
+  let existing = auth.currentUser;
+  if (!existing) existing = await settleAuthState(authMod, auth);
 
-  const restored = await new Promise((resolve) => {
+  /* An anonymous user in this tab is OUR user. Reuse it - that is what makes
+     a reload keep the same uid, and the conversation it owns. */
+  if (existing && existing.isAnonymous !== false) return existing;
+
+  if (existing) {
+    /*
+     * A NON-ANONYMOUS user, in this tab.
+     *
+     * With per-tab persistence a staff session in ANOTHER tab is invisible
+     * from here, so this is the same-tab case: somebody was on /staff/chat
+     * and navigated this tab to a customer page. Replacing this tab's
+     * identity is the right answer and costs the staff member nothing - the
+     * dashboard tab, if they still have one, is untouched.
+     *
+     * Sign out FIRST. signInAnonymously() on top of a signed-in user is not
+     * defined to replace it cleanly, and being explicit is cheap.
+     */
+    try {
+      await authMod.signOut(auth);
+    } catch (err) {
+      /* Already gone, or the SDK refused. The sign-in below is what matters. */
+    }
+  }
+
+  const credential = await authMod.signInAnonymously(auth);
+  const user = (credential && credential.user) || auth.currentUser || null;
+  if (!user || user.isAnonymous === false) {
+    throw new ChatApiError(401, 'invalid_token', null);
+  }
+  return user;
+}
+
+/*
+ * THE WAIT IS THE WHOLE POINT. auth.currentUser is null for a moment after
+ * getAuth() even when this tab has a perfectly good session, because the SDK
+ * restores it asynchronously. Signing in during that moment does not fail -
+ * it succeeds, and mints a SECOND anonymous account. The visitor loses their
+ * conversation (the old uid owned it), Esther's inbox gains a stranger, and
+ * the project accumulates an orphan account per reload.
+ */
+function settleAuthState(authMod, auth) {
+  return new Promise((resolve) => {
     let done = false;
     let unsubscribe = null;
     const finish = (value) => {
       if (done) return;
       done = true;
       if (typeof unsubscribe === 'function') unsubscribe();
-      resolve(value);
+      resolve(value || null);
     };
     try {
-      unsubscribe = authMod.onAuthStateChanged(auth, (u) => finish(u || null), () => finish(null));
+      unsubscribe = authMod.onAuthStateChanged(auth, (u) => finish(u), () => finish(null));
     } catch (err) {
       finish(null);
     }
   });
-  if (restored) return requireAnonymous(restored);
-
-  const credential = await authMod.signInAnonymously(auth);
-  return requireAnonymous((credential && credential.user) || auth.currentUser || null);
-}
-
-/*
- * A customer is an ANONYMOUS session, and only that.
- *
- * Esther's staff hold real Email/Password accounts in the same Firebase
- * project, and Firebase allows exactly one signed-in user per app instance.
- * So a staff member with the admin inbox open in another tab has a
- * non-anonymous currentUser sitting right where this code looks.
- *
- * Adopting it would send an Email/Password ID token to /api/chat/send, which
- * authenticateCustomer() refuses with 403 not_a_customer - forever, on every
- * message, with a "reload the page" that cannot possibly help. The Firestore
- * listener would fail too: isAnonymousCustomer() in firestore.rules tests the
- * same provider.
- *
- * The other tempting move - calling signInAnonymously() anyway - is worse. It
- * would succeed, and sign the staff member out of their own inbox mid-reply.
- *
- * So: refuse, and say something true. Rare, and a dead end either way; this
- * is the dead end that does not take somebody's session down with it.
- */
-function requireAnonymous(user) {
-  if (!user) return null;
-  if (user.isAnonymous === false) {
-    throw new ChatApiError(403, 'staff_session_active', null);
-  }
-  return user;
 }
 
 /* ------------------------------------------------------------------ API */
