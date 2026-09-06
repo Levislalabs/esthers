@@ -1,10 +1,10 @@
 /* =========================================================================
    STAFF CHAT INBOX  —  staff/chat/index.html
-   
+
    Standalone on purpose. This page is not part of the marketing site: it
    loads no site.css, no base.css and no navigation, so nothing here can
    affect a customer-facing page and nothing there can shift this one.
-   
+
    The palette is the site's, restated locally as tokens so the two stay
    recognisably the same product without coupling their stylesheets.
    ========================================================================= */
