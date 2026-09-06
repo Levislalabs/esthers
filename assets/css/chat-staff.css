@@ -1,0 +1,514 @@
+/* =========================================================================
+   STAFF CHAT INBOX  —  staff/chat/index.html
+   
+   Standalone on purpose. This page is not part of the marketing site: it
+   loads no site.css, no base.css and no navigation, so nothing here can
+   affect a customer-facing page and nothing there can shift this one.
+   
+   The palette is the site's, restated locally as tokens so the two stay
+   recognisably the same product without coupling their stylesheets.
+   ========================================================================= */
+
+:root {
+  --sc-black:      #111111;
+  --sc-raised:     #1b1b1b;
+  --sc-panel:      #212121;
+  --sc-elevated:   #2a2a2a;
+  --sc-hover:      #333333;
+  --sc-white:      #ffffff;
+  --sc-body:       #f0f1f2;
+  --sc-body-2:     #d2d5d6;
+  --sc-faint:      #adb0b2;
+  --sc-line:       rgba(255, 255, 255, 0.18);
+  --sc-line-strong: rgba(255, 255, 255, 0.34);
+  --sc-orange:     #f36c21;
+  --sc-orange-dark:#d4560f;
+  --sc-danger:     #ff6b5e;
+  --sc-bev:        14px;
+  --sc-bev-s:      10px;
+  --sc-sans: "Helvetica Neue", Helvetica, Arial, "Segoe UI", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+/*
+ * [hidden] MUST WIN.
+ *
+ * The UA stylesheet's [hidden] { display: none } is a single attribute
+ * selector, so any class rule that sets display beats it - and .sc__app,
+ * .sc__auth and .sc__cols all set one. Without this, hiding the app shell
+ * with the hidden attribute left it laid out and on screen: a signed-out
+ * visitor saw the empty inbox chrome, and a revoked session left it there
+ * too. Caught in browser QA, not by reading the CSS.
+ */
+[hidden] { display: none !important; }
+
+html, body { height: 100%; }
+
+body.sc {
+  margin: 0;
+  background: var(--sc-black);
+  color: var(--sc-body);
+  font: 15px/1.5 var(--sc-sans);
+  -webkit-text-size-adjust: 100%;
+}
+
+/* A visible focus ring everywhere, and a real one - not the removal of the
+   browser's. Somebody working the counter with a keyboard has to be able to
+   see where they are. */
+:focus-visible {
+  outline: 2px solid var(--sc-orange);
+  outline-offset: 2px;
+}
+
+.sc__sr {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.sc__root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.sc__noscript,
+.sc__starting {
+  margin: 0;
+  padding: 24px;
+  color: var(--sc-faint);
+}
+
+/* ------------------------------------------------------------ sign in */
+
+.sc__auth {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.sc__auth-form {
+  width: 100%;
+  max-width: 380px;
+  background: var(--sc-panel);
+  border: 1px solid var(--sc-line);
+  border-radius: var(--sc-bev);
+  padding: 28px 24px;
+}
+
+.sc__auth-title {
+  margin: 0 0 6px;
+  font-size: 19px;
+  line-height: 1.25;
+  color: var(--sc-white);
+}
+
+.sc__auth-sub {
+  margin: 0 0 20px;
+  color: var(--sc-faint);
+  font-size: 14px;
+}
+
+.sc__field { display: block; margin-bottom: 14px; }
+
+.sc__label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: var(--sc-body-2);
+}
+
+.sc__input,
+.sc__text {
+  width: 100%;
+  background: var(--sc-elevated);
+  color: var(--sc-body);
+  border: 1px solid var(--sc-line);
+  border-radius: var(--sc-bev-s);
+  padding: 11px 12px;
+  /* 16px so iOS does not zoom the page when the field takes focus. */
+  font: 16px/1.4 var(--sc-sans);
+}
+
+.sc__input:disabled,
+.sc__text:disabled { opacity: 0.55; }
+
+.sc__auth-error {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: var(--sc-bev-s);
+  background: rgba(255, 107, 94, 0.12);
+  border: 1px solid rgba(255, 107, 94, 0.4);
+  color: var(--sc-body);
+  font-size: 14px;
+}
+
+/* ------------------------------------------------------------ buttons */
+
+.sc__btn {
+  font: 600 14px/1 var(--sc-sans);
+  border-radius: var(--sc-bev-s);
+  border: 1px solid transparent;
+  padding: 0 16px;
+  /* 44px: a real touch target, on a phone in a shop. */
+  min-height: 44px;
+  cursor: pointer;
+  background: var(--sc-elevated);
+  color: var(--sc-body);
+}
+
+.sc__btn:hover:not(:disabled) { background: var(--sc-hover); }
+.sc__btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.sc__btn--primary {
+  background: var(--sc-orange);
+  color: #17120f;
+}
+.sc__btn--primary:hover:not(:disabled) { background: var(--sc-orange-dark); }
+
+/* Full width is a property of the SIGN-IN submit, not of every primary
+   button. It was on .sc__btn--primary, which the composer's Send button also
+   carries - so Send stretched to the width of the thread column and pushed
+   the page 20px wider than the viewport. */
+.sc__auth-form .sc__btn--primary { width: 100%; }
+
+.sc__btn--quiet {
+  background: transparent;
+  border-color: var(--sc-line);
+  color: var(--sc-body-2);
+}
+
+.sc__btn--danger {
+  background: transparent;
+  border-color: rgba(255, 107, 94, 0.5);
+  color: var(--sc-danger);
+}
+.sc__btn--danger:hover:not(:disabled) { background: rgba(255, 107, 94, 0.12); }
+
+/* --------------------------------------------------------------- app */
+
+.sc__app {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sc__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--sc-raised);
+  border-bottom: 1px solid var(--sc-line);
+}
+
+.sc__brand { font-weight: 700; color: var(--sc-white); }
+
+.sc__brand-sub {
+  color: var(--sc-orange);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sc__who {
+  margin-left: auto;
+  color: var(--sc-faint);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40vw;
+}
+
+.sc__notice {
+  margin: 0;
+  padding: 10px 16px;
+  background: rgba(243, 108, 33, 0.12);
+  border-bottom: 1px solid rgba(243, 108, 33, 0.35);
+  color: var(--sc-body);
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sc__retry { min-height: 34px; padding: 0 12px; }
+
+.sc__cols {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) 1fr;
+  min-height: 0;
+}
+
+/* ------------------------------------------------------------- inbox */
+
+.sc__inbox {
+  border-right: 1px solid var(--sc-line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sc__inbox-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--sc-line);
+}
+
+.sc__h2 { margin: 0; font-size: 15px; color: var(--sc-white); }
+
+.sc__filter { display: flex; gap: 6px; margin-left: auto; }
+
+.sc__chip {
+  font: 600 13px/1 var(--sc-sans);
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--sc-line);
+  background: transparent;
+  color: var(--sc-body-2);
+  cursor: pointer;
+}
+
+/* The pressed chip is filled AND outlined - not colour alone. */
+.sc__chip[aria-pressed="true"] {
+  background: var(--sc-orange);
+  border-color: var(--sc-orange);
+  color: #17120f;
+}
+
+.sc__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.sc__row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--sc-line);
+  border-left: 3px solid transparent;
+  padding: 12px 14px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.sc__row:hover { background: var(--sc-raised); }
+
+/* Selected: an orange edge, a lifted background AND a heavier name. Three
+   signals, so it never depends on colour alone. */
+.sc__row[aria-pressed="true"] {
+  background: var(--sc-panel);
+  border-left-color: var(--sc-orange);
+}
+.sc__row[aria-pressed="true"] .sc__row-name {
+  color: var(--sc-white);
+  font-weight: 700;
+}
+
+.sc__row-name {
+  display: block;
+  font-weight: 600;
+  color: var(--sc-body);
+  overflow-wrap: anywhere;
+}
+
+.sc__row-email {
+  display: block;
+  font-size: 13px;
+  color: var(--sc-faint);
+  overflow-wrap: anywhere;
+}
+
+.sc__row-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--sc-faint);
+}
+
+.sc__pill {
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  border: 1px solid var(--sc-line);
+}
+
+.sc__pill--open { color: var(--sc-orange); border-color: rgba(243, 108, 33, 0.5); }
+.sc__pill--closed { color: var(--sc-faint); }
+
+.sc__empty { padding: 0; }
+
+.sc__empty-text {
+  margin: 0;
+  padding: 24px 16px;
+  color: var(--sc-faint);
+  font-size: 14px;
+}
+
+/* ------------------------------------------------------------ thread */
+
+.sc__thread {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sc__thread-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--sc-line);
+}
+
+.sc__thread-who { min-width: 0; }
+
+.sc__thread-email {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--sc-faint);
+  overflow-wrap: anywhere;
+}
+
+.sc__status { margin-left: auto; flex: none; }
+
+.sc__back { display: none; flex: none; }
+
+.sc__log {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sc__msg { max-width: min(560px, 82%); }
+.sc__msg--staff { align-self: flex-end; }
+.sc__msg--cust { align-self: flex-start; }
+
+.sc__bubble {
+  margin: 0;
+  padding: 10px 13px;
+  border-radius: var(--sc-bev);
+  background: var(--sc-panel);
+  border: 1px solid var(--sc-line);
+  /* A customer can paste an unbroken 500-character string. It wraps rather
+     than pushing the whole layout sideways. */
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* Staff replies sit right, in orange, AND are labelled "Esther's" underneath.
+   Two signals plus the text - never side or colour alone. */
+.sc__msg--staff .sc__bubble {
+  background: rgba(243, 108, 33, 0.16);
+  border-color: rgba(243, 108, 33, 0.45);
+}
+
+.sc__msg-meta {
+  margin: 4px 2px 0;
+  font-size: 12px;
+  color: var(--sc-faint);
+  display: flex;
+  gap: 8px;
+}
+
+.sc__msg--staff .sc__msg-meta { justify-content: flex-end; }
+
+.sc__sys {
+  margin: 0;
+  align-self: center;
+  text-align: center;
+  max-width: 520px;
+  color: var(--sc-faint);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.sc__sys--closed {
+  border-top: 1px solid var(--sc-line);
+  padding-top: 12px;
+  width: 100%;
+}
+
+.sc__composer {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  padding: 12px 16px;
+  border-top: 1px solid var(--sc-line);
+  background: var(--sc-raised);
+}
+
+.sc__text { resize: vertical; min-height: 44px; }
+
+.sc__composer .sc__btn { flex: none; }
+
+/* ------------------------------------------------------------ dialog */
+
+.sc__dialog {
+  border: 1px solid var(--sc-line-strong);
+  border-radius: var(--sc-bev);
+  background: var(--sc-panel);
+  color: var(--sc-body);
+  padding: 22px;
+  max-width: 400px;
+  width: calc(100% - 32px);
+}
+
+.sc__dialog::backdrop { background: rgba(0, 0, 0, 0.62); }
+
+.sc__dlg-title { margin: 0 0 8px; font-size: 17px; color: var(--sc-white); }
+.sc__dlg-body { margin: 0 0 18px; color: var(--sc-body-2); font-size: 14px; }
+
+.sc__dlg-row { display: flex; gap: 10px; justify-content: flex-end; }
+
+/* ------------------------------------------------------------- phone */
+
+@media (max-width: 720px) {
+  /* One column at a time. The inbox is the page until a conversation is
+     chosen, and Back returns to it. */
+  .sc__cols { grid-template-columns: 1fr; }
+
+  .sc__inbox { border-right: 0; }
+
+  .sc__root[data-view="inbox"] .sc__thread { display: none; }
+  .sc__root[data-view="thread"] .sc__inbox { display: none; }
+  .sc__root[data-view="thread"] .sc__back { display: inline-flex; }
+
+  .sc__msg { max-width: 92%; }
+  .sc__who { max-width: 28vw; }
+  .sc__bar { flex-wrap: wrap; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}

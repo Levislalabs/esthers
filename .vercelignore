@@ -15,13 +15,30 @@
 # ---------------------------------------------------------------------
 # Phase 2A messaging backend - written, reviewed, NOT deployed.
 #
-# supabase/ holds the migrations and Edge Function source. staff/ is a
-# sign-in page for an inbox that does not exist yet: publishing it would
-# invite people to try credentials against a system with no backend, and
-# would advertise the internal structure of one that is still being built.
+# supabase/ holds the migrations and Edge Function source.
 # ---------------------------------------------------------------------
 supabase/
-staff/
+
+# ---------------------------------------------------------------------
+# staff/ USED TO BE LISTED HERE, AND IS NOT ANY MORE.
+#
+# The old rule excluded a Supabase-era sign-in page for an inbox that did
+# not exist: publishing it would have invited people to try credentials
+# against a system with no backend. That page was deleted long ago, and
+# staff/chat/ is now the real inbox, on the real API - so it has to be
+# served to be of any use.
+#
+# Note that gitignore semantics do not allow re-including a file whose
+# parent directory is excluded, so a blanket "staff/" with an exception
+# underneath would not have worked. The rule is gone rather than narrowed.
+#
+# NOTHING IS PROTECTED BY LEAVING A PAGE UNSERVED. staff/chat/ ships a
+# noindex meta tag and no link from anywhere on the site, but that is
+# tidiness. The protection is that every /api/admin/chat/* route verifies
+# App Check, then a Firebase ID token that is not anonymous, then
+# staff/{uid}.isActive and .role - and that firestore.rules gives a staff
+# browser no direct read of chat data at all.
+# ---------------------------------------------------------------------
 
 # ---------------------------------------------------------------------
 # Internal documentation.

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<!-- An internal tool. Keeping it out of search results is tidiness, NOT
+     security: the page may still be found, and the real protection is that
+     every /api/admin/chat/* route verifies App Check, then a Firebase ID
+     token, then staff/{uid}.isActive and .role before returning a byte. -->
+<meta name="robots" content="noindex,nofollow,noarchive">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+
+<title>Staff Chat — Esther's Sheet Metal</title>
+
+<link rel="stylesheet" href="/assets/css/chat-staff.css?v=2026-09-05.1">
+
+<!-- The version is the chat client version. Old and new builds get different
+     cache keys so a deployment cannot leave a staff browser running the
+     previous dashboard - see the cache-safety section in
+     docs/CHAT_CUSTOMER_FRONTEND.md. This file is the one place the staff
+     bundle's version is written out; a test pins it to the constant inside
+     the module. -->
+<script type="module" src="/assets/js/chat-staff.js?v=2026-09-05.1"></script>
+</head>
+<body class="sc">
+
+<main id="staff-chat" class="sc__root" data-view="inbox">
+  <noscript>
+    <p class="sc__noscript">The staff chat inbox needs JavaScript.</p>
+  </noscript>
+</main>
+
+</body>
+</html>
