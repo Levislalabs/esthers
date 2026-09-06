@@ -17,10 +17,13 @@
  * ##  routes that do reach the shop, the phone and the quote form.  ##
  * ##  Nothing here may imply a person is reading.                   ##
  * ##                                                                ##
- * ##  Phase 2 decides how messages actually reach the shop and how  ##
- * ##  staff replies come back. Nothing here presumes that answer:   ##
- * ##  submit() is the single place a real transport would go, and   ##
- * ##  the notice and the reply both come out on the same day.       ##
+ * ##  THE REAL TRANSPORT NOW EXISTS, AND IS SWITCHED OFF.          ##
+ * ##  assets/js/chat-customer.js can sign a visitor in, post to     ##
+ * ##  /api/chat/* and stream the transcript back from Firestore.    ##
+ * ##  CHAT_PUBLIC_ENABLED below is false, so this file never loads  ##
+ * ##  it, never imports Firebase, and behaves exactly as it did     ##
+ * ##  before that module was written. The notice and the canned     ##
+ * ##  reply both go on the day the gate is flipped, not before.     ##
  * ##                                                                ##
  * ####################################################################
  *
@@ -60,6 +63,34 @@
 
   var DEMO_DELAY = 1100;
 
+  /* ---- THE ROLLOUT GATE ----------------------------------------------
+     FALSE, and it must stay false until the launch checklist in
+     docs/CHAT_APP_CHECK.md is complete.
+
+     While it is false this file does not import chat-customer.js at all,
+     so on an ordinary page load there is: no Firebase SDK download, no
+     reCAPTCHA challenge, no anonymous sign-in, no request to /api/chat/*
+     and no Firestore listener. The visitor gets the demo above, exactly
+     as they did before the real transport was written.
+
+     A SOURCE CONSTANT, deliberately. No query string, no cookie, no
+     storage key and no hidden control can reach it - switching chat on is
+     a commit, a review and a deploy, which is the right weight for the
+     decision. chat-customer.js carries its own matching constant and
+     connect() refuses while EITHER is false; both are flipped in the same
+     commit when chat goes live.
+
+     To exercise the real thing before then, see openChatForReview() in
+     chat-customer.js and the walkthrough in docs/CHAT_CUSTOMER_FRONTEND.md.
+     That path is a person typing an import into DevTools; nothing on the
+     page leads to it. ------------------------------------------------- */
+  var CHAT_PUBLIC_ENABLED = false;
+
+  /* Root-relative, like every other asset path in this file: the widget is
+     on /services and /gallery too, and a bare path resolves against the
+     directory there and 404s. */
+  var TRANSPORT_MODULE = '/assets/js/chat-customer.js';
+
   /* ---- placement ----------------------------------------------------
      The launcher can be dragged out of the way. Where the visitor put it
      is remembered per browser (localStorage) and whether they dismissed
@@ -91,6 +122,25 @@
   var replyTimer = null;
   var nudgeTimer = null;
   var lastFocus = null;
+
+  /* ---- real-transport state ----
+     All null while the gate is shut. `mode` is the one thing the rest of
+     this file branches on: 'demo' is everything that shipped before, 'live'
+     is a real conversation driven by chat-customer.js. */
+  var mode = 'demo';
+  var transport = null;          /* the imported module namespace */
+  var startPanel = null;         /* the name/email/message form           */
+  var startFields = null;        /* { name, email, message } elements     */
+  var startSubmit = null;
+  var noticeBox = null;          /* one inline sentence, textContent only */
+  var retryBtn = null;
+  var statusLine = null;
+  var onStartHandler = null;
+  var onSendHandler = null;
+  var retryHandler = null;
+  var isBusy = false;
+  var isClosed = false;
+  var composerEnabled = true;
 
   function el(tag, attrs, kids) {
     var n = document.createElement(tag);
@@ -183,7 +233,13 @@
   }
 
   function syncSend() {
-    send.disabled = input.value.trim() === '';
+    var empty = input.value.trim() === '';
+    /* In live mode the composer has three more reasons to be dead: a send
+       already in flight, a closed conversation, and a session that has not
+       finished connecting. Checking them here means every path that touches
+       the composer - typing, sending, a state change - agrees. */
+    send.disabled = empty || (mode === 'live' && (isBusy || isClosed || !composerEnabled));
+    input.disabled = mode === 'live' && (isClosed || !composerEnabled);
   }
 
   /*
@@ -197,6 +253,20 @@
   function submit() {
     var text = input.value.trim();
     if (!text) return;
+
+    /* LIVE. The transport owns the transcript from here: it echoes the
+       message optimistically, posts it, and the Firestore listener delivers
+       the stored copy - which replaces the echo rather than joining it,
+       because both carry the same derived id. Nothing is drawn here. */
+    if (mode === 'live') {
+      if (!composerEnabled || isBusy || isClosed) return;
+      input.value = '';
+      autoGrow();
+      syncSend();
+      input.focus();
+      if (typeof onSendHandler === 'function') onSendHandler({ message: text });
+      return;
+    }
 
     addMessage('me', text);
 
@@ -225,6 +295,10 @@
     root.setAttribute('data-open', 'true');
     launcher.setAttribute('aria-expanded', 'true');
     nudge();
+    /* Pick the listener back up. The other half of the suspend in close(). */
+    if (mode === 'live' && transport && typeof transport.resume === 'function') {
+      transport.resume();
+    }
     /* Focus lands on the composer, which is what the visitor came for. The
        close button is one Shift+Tab away. */
     setTimeout(function () { input.focus(); scrollLog(); }, 60);
@@ -234,6 +308,19 @@
     if (!isOpen()) return;
     root.setAttribute('data-open', 'false');
     launcher.setAttribute('aria-expanded', 'false');
+    /*
+     * SUSPEND, not disconnect.
+     *
+     * A closed panel must not keep a Firestore listener open - it bills a
+     * read for every message arriving at a widget nobody is looking at. But
+     * tearing the session down was a bug: nothing re-established it, so
+     * reopening gave the visitor a composer that looked fine and silently
+     * discarded everything typed into it. Suspending stops the listener and
+     * keeps the conversation; open() resumes it.
+     */
+    if (mode === 'live' && transport && typeof transport.suspend === 'function') {
+      transport.suspend();
+    }
     /* Only pull focus back on a deliberate close - Escape or the button.
        Doing it unconditionally would yank the page around. */
     if (returnFocus !== false) launcher.focus();
@@ -380,6 +467,277 @@
 
   /* -------------------------------------------------------------- markup */
 
+  /* ==================================================================
+   * THE TRANSPORT SURFACE
+   *
+   * Everything below exists so chat-customer.js can drive this widget
+   * without knowing a single CSS class, and so this file can render a real
+   * conversation without knowing what Firebase is. The interface is the
+   * `ui` object returned by transportSurface(), documented under THE UI
+   * CONTRACT in chat-customer.js.
+   *
+   * EVERY STRING THAT CROSSES THAT BOUNDARY IS SET WITH textContent.
+   * Message bodies, status lines, error sentences - all of them. There is
+   * no innerHTML anywhere in this section and there must never be: a
+   * transcript carries whatever a customer typed and whatever a staff
+   * member typed back, which is precisely the input you do not hand to an
+   * HTML parser. The three innerHTML calls in build() are ours, they are
+   * fixed SVG icons, and no message ever reaches them.
+   * ================================================================== */
+
+  /* Defensive ceiling on one render pass. Firestore is already capped at
+     200 by the rules and by the listener's own limit(), so this only fires
+     if something upstream is very wrong - and when it does, it draws 200
+     bubbles instead of hanging the tab. */
+  var MAX_RENDER = 200;
+
+  function clearLog() {
+    while (log.firstChild) log.removeChild(log.firstChild);
+  }
+
+  /* Bottom-pinned unless the visitor has deliberately scrolled up to read
+     something. Yanking them back down mid-sentence because a message
+     arrived is the single most irritating thing a chat can do. */
+  function nearBottom() {
+    return (log.scrollHeight - log.scrollTop - log.clientHeight) < 48;
+  }
+
+  function buildStartPanel() {
+    function field(id, labelText, control) {
+      return el('div', { class: 'chat__field' }, [
+        el('label', { class: 'chat__label', for: id, text: labelText }),
+        control
+      ]);
+    }
+
+    var nameInput = el('input', {
+      class: 'chat__text', id: 'chat-start-name', type: 'text',
+      name: 'name', maxlength: '100', required: 'required',
+      autocomplete: 'name', placeholder: 'Your name'
+    });
+    var emailInput = el('input', {
+      class: 'chat__text', id: 'chat-start-email', type: 'email',
+      name: 'email', maxlength: '254', required: 'required',
+      autocomplete: 'email', placeholder: 'you@example.com'
+    });
+    var messageInput = el('textarea', {
+      class: 'chat__text chat__text--area', id: 'chat-start-message',
+      name: 'message', rows: '3', maxlength: '2000', required: 'required',
+      placeholder: 'How can we help?'
+    });
+
+    startSubmit = el('button', { class: 'chat__send chat__start-send', type: 'submit' });
+    startSubmit.textContent = 'Start conversation';
+
+    startFields = { name: nameInput, email: emailInput, message: messageInput };
+
+    startPanel = el('form', { class: 'chat__start', novalidate: 'novalidate' }, [
+      el('p', {
+        class: 'chat__start-lede',
+        text: 'Tell us who you are and what you need, and we will reply here.'
+      }),
+      field('chat-start-name', 'Name', nameInput),
+      field('chat-start-email', 'Email', emailInput),
+      field('chat-start-message', 'Message', messageInput),
+      startSubmit
+    ]);
+
+    startPanel.addEventListener('submit', function (e) {
+      e.preventDefault();
+      if (isBusy) return;
+      if (typeof onStartHandler !== 'function') return;
+      /* Trimmed here only so an all-spaces field does not look accepted.
+         The server validates for real, and its answer is what the visitor
+         is shown - this file does not second-guess it. */
+      onStartHandler({
+        name: nameInput.value.trim(),
+        email: emailInput.value.trim(),
+        message: messageInput.value.trim()
+      });
+    });
+
+    return startPanel;
+  }
+
+  /* One inline sentence, above the composer. Never markup, never a server
+     string - chat-customer.js chooses it from its own allow-list. */
+  function ensureNotice() {
+    if (noticeBox) return noticeBox;
+    noticeBox = el('p', {
+      class: 'chat__notice',
+      role: 'alert',
+      hidden: 'hidden'
+    });
+    retryBtn = el('button', { class: 'chat__retry', type: 'button', hidden: 'hidden' });
+    retryBtn.textContent = 'Try again';
+    retryBtn.addEventListener('click', function () {
+      var handler = retryHandler;
+      if (typeof handler !== 'function') return;
+      /* Cleared BEFORE the call, so one press is one attempt however long
+         it takes to answer. */
+      setRetryHandler(null);
+      handler();
+    });
+    var wrap = el('div', { class: 'chat__notice-wrap' }, [noticeBox, retryBtn]);
+    panel.insertBefore(wrap, form);
+    return noticeBox;
+  }
+
+  function setRetryHandler(handler) {
+    retryHandler = typeof handler === 'function' ? handler : null;
+    if (!retryBtn) return;
+    if (retryHandler) retryBtn.removeAttribute('hidden');
+    else retryBtn.setAttribute('hidden', 'hidden');
+  }
+
+  /*
+   * Draw the transcript.
+   *
+   * A full rebuild from the list the store hands over, not a diff. The
+   * store is already deduplicated and ordered by id, so rebuilding cannot
+   * produce a duplicate no matter how many snapshots arrive - which is
+   * exactly the property worth having here, and it costs nothing at 200
+   * rows.
+   */
+  function renderMessages(list) {
+    var pinned = nearBottom();
+    clearLog();
+    var items = Array.isArray(list) ? list.slice(0, MAX_RENDER) : [];
+
+    if (!items.length) {
+      log.appendChild(el('p', {
+        class: 'chat__note',
+        text: 'No messages yet. Send one and we will reply here.'
+      }));
+      return;
+    }
+
+    for (var i = 0; i < items.length; i++) {
+      var m = items[i] || {};
+      var body = typeof m.body === 'string' ? m.body : '';
+
+      /* A 'system' message is the API telling the customer something -
+         "this conversation was closed" - not a person. It reads as a note,
+         not as a bubble from Esther's. */
+      if (m.senderType === 'system') {
+        log.appendChild(el('p', { class: 'chat__note', text: body }));
+        continue;
+      }
+
+      var mine = m.senderType === 'customer';
+      var bubble = el('div', {
+        class: 'chat__msg chat__msg--' + (mine ? 'me' : 'them')
+          + (m.pending ? ' is-pending' : '')
+      });
+      /* textContent. The whole reason this function exists. */
+      bubble.textContent = body;
+      if (m.pending) bubble.setAttribute('aria-label', 'Sending: ' + body);
+      log.appendChild(bubble);
+    }
+
+    if (pinned) scrollLog();
+  }
+
+  /*
+   * Hand the widget over to the real transport.
+   *
+   * The demo conversation is cleared first - leaving "our messaging is
+   * under construction" above a working transcript would be worse than
+   * either state on its own.
+   */
+  function enterLiveMode() {
+    mode = 'live';
+    clearTimeout(replyTimer);
+    clearLog();
+    isClosed = false;
+    isBusy = false;
+    composerEnabled = false;
+    syncSend();
+    ensureNotice();
+    return transportSurface();
+  }
+
+  function showStartForm() {
+    if (!startPanel) buildStartPanel();
+    clearLog();
+    log.appendChild(startPanel);
+    form.setAttribute('hidden', 'hidden');
+    /* The panel is already open by the time this runs, so moving focus is
+       taking the visitor where they were going, not stealing it. */
+    setTimeout(function () {
+      if (startFields && startFields.name) startFields.name.focus();
+    }, 60);
+  }
+
+  function showTranscript() {
+    if (startPanel && startPanel.parentNode) startPanel.parentNode.removeChild(startPanel);
+    form.removeAttribute('hidden');
+  }
+
+  /*
+   * The object chat-customer.js drives. Deliberately small, deliberately
+   * all strings and booleans: nothing here accepts a node, so nothing on
+   * the other side of the boundary can put markup on the page.
+   */
+  function transportSurface() {
+    return {
+      showStartForm: showStartForm,
+      showTranscript: showTranscript,
+      renderMessages: renderMessages,
+
+      setStatus: function (text) {
+        if (statusLine) statusLine.textContent = String(text == null ? '' : text);
+      },
+
+      setNotice: function (text) {
+        ensureNotice();
+        if (text == null || text === '') {
+          noticeBox.textContent = '';
+          noticeBox.setAttribute('hidden', 'hidden');
+          return;
+        }
+        noticeBox.textContent = String(text);
+        noticeBox.removeAttribute('hidden');
+      },
+
+      setBusy: function (flag) {
+        isBusy = flag === true;
+        if (startSubmit) startSubmit.disabled = isBusy;
+        panel.setAttribute('data-busy', isBusy ? 'true' : 'false');
+        syncSend();
+      },
+
+      setComposerEnabled: function (flag) {
+        composerEnabled = flag === true;
+        syncSend();
+      },
+
+      setClosed: function (flag) {
+        isClosed = flag === true;
+        panel.setAttribute('data-closed', isClosed ? 'true' : 'false');
+        if (isClosed) {
+          log.appendChild(el('p', {
+            class: 'chat__note',
+            text: 'This conversation has been closed. Call us or use the '
+              + 'Quote Request form if you need anything else.'
+          }));
+          scrollLog();
+        }
+        syncSend();
+      },
+
+      setRetry: setRetryHandler,
+
+      onStart: function (handler) {
+        onStartHandler = typeof handler === 'function' ? handler : null;
+      },
+
+      onSend: function (handler) {
+        onSendHandler = typeof handler === 'function' ? handler : null;
+      }
+    };
+  }
+
   function build() {
     root = $('#chat');
     if (!root) return false;
@@ -448,7 +806,16 @@
            hours" was true of the intent and false of the fact: messaging is
            not connected, so nobody replies here at all. It can go back the
            day the backend does. */
-        el('p', { class: 'chat__status', text: 'Online messaging coming soon.' })
+        /* Replaced by the transport in live mode - see setStatus() in
+           transportSurface(). While the gate is shut this is the whole
+           truth and must stay that way. */
+        (statusLine = el('p', {
+          class: 'chat__status',
+          id: 'chat-status',
+          role: 'status',
+          'aria-live': 'polite',
+          text: 'Online messaging coming soon.'
+        }))
       ]),
       closeBtn
     ]);
@@ -530,13 +897,19 @@
     root.setAttribute('data-hidden', 'false');
 
     /* ---- opening lines ---- */
+    showDemoConversation();
+
+    return true;
+  }
+
+  /* The demo conversation, in one place so the transport fallback can put it
+     back if the real thing fails to connect. Identical to what shipped. */
+  function showDemoConversation() {
     addMessage('them', 'Hi! How can we help with your sheet metal project?');
     log.appendChild(el('p', {
       class: 'chat__note',
       text: CONSTRUCTION_NOTICE
     }));
-
-    return true;
   }
 
   /* --------------------------------------------------------------- wiring */
@@ -667,8 +1040,96 @@
       close: close,
       toggle: toggle,
       hide: function () { setHidden(true, false); },
-      show: function () { setHidden(false, false); }
+      show: function () { setHidden(false, false); },
+
+      /*
+       * The seam chat-customer.js attaches to.
+       *
+       * NOT a way to turn chat on. It touches no network: it does not fetch,
+       * sign anyone in, attest, or open a listener. What it hands back is an
+       * object that can draw a conversation, and nothing draws until a
+       * transport drives it - and reaching a transport means importing a
+       * module no page loads.
+       *
+       * IT IS NOT A GETTER, THOUGH. Calling it switches the widget into live
+       * mode, which clears the demo conversation, so somebody typing it into
+       * a console blanks their own chat panel until they reload. That IS the
+       * handover and it is the point - but the side effect is real, and it is
+       * why nothing on the page calls this.
+       *
+       * It exists so the review harness does not have to reach into the DOM
+       * and guess at class names, and so this widget stays free to change
+       * how it is built.
+       */
+      transportSurface: enterLiveMode
     };
+
+    /* ---- the gate ----
+       False on every production page today, so this branch does not run,
+       nothing is imported, and the widget is the demo it has always been.
+       When it is flipped, THIS is the only place the real transport is
+       reached from automatically. */
+    if (CHAT_PUBLIC_ENABLED) connectTransport();
+  }
+
+  /*
+   * Load the transport and start a conversation.
+   *
+   * Dynamically imported so the Firebase SDK, the reCAPTCHA challenge and
+   * this module itself cost nothing on a page whose visitor never opens
+   * chat. Failure is quiet and total: the widget stays in demo mode, which
+   * is a working page with an honest notice on it rather than a broken one.
+   */
+  function connectTransport() {
+    import(TRANSPORT_MODULE).then(function (mod) {
+      transport = mod;
+      /*
+       * Check the transport's own gate BEFORE handing the widget over.
+       * enterLiveMode() blanks the demo conversation, and setting mode back
+       * to 'demo' afterwards does not un-blank it - the visitor was left
+       * looking at an empty panel with a dead composer. Both constants have
+       * to be true; either one false and we never touch the widget.
+       */
+      if (typeof mod.isPublicChatEnabled === 'function' && !mod.isPublicChatEnabled()) {
+        return null;
+      }
+      return mod.connect(enterLiveMode(), {});
+    }).then(function (session) {
+      if (!session) restoreDemo();
+    })['catch'](function () {
+      restoreDemo();
+    });
+  }
+
+  /*
+   * Put the widget back the way it was.
+   *
+   * Reached when the transport cannot connect - a blocked CDN, a refused
+   * attestation, a gate that turned out to be shut. A visitor is better served
+   * by the working demo and its honest notice than by an empty panel, and this
+   * is the only path that can tell them anything at all.
+   */
+  function restoreDemo() {
+    if (mode !== 'live') return;
+    mode = 'demo';
+    onStartHandler = null;
+    onSendHandler = null;
+    setRetryHandler(null);
+    isBusy = false;
+    isClosed = false;
+    composerEnabled = true;
+    if (startPanel && startPanel.parentNode) startPanel.parentNode.removeChild(startPanel);
+    form.removeAttribute('hidden');
+    if (noticeBox) {
+      noticeBox.textContent = '';
+      noticeBox.setAttribute('hidden', 'hidden');
+    }
+    if (statusLine) statusLine.textContent = 'Online messaging coming soon.';
+    panel.setAttribute('data-busy', 'false');
+    panel.setAttribute('data-closed', 'false');
+    clearLog();
+    showDemoConversation();
+    syncSend();
   }
 
   if (document.readyState === 'loading') {

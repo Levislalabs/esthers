@@ -30,6 +30,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { codeOnly, codeAndStrings } from './fixtures/source-view.mjs';
 
 const SRC_PATH = '/home/user/esthers/assets/js/chat-app-check.js';
 const STUB_PATH = '/home/user/esthers/tests/chat-api/fixtures/firebase-sdk-stub.mjs';
@@ -63,8 +64,7 @@ async function loadModule() {
 }
 
 /*
- * The source with comments blanked out, and a second copy with the string
- * literals blanked out too.
+ * Two views of the source, from fixtures/source-view.mjs.
  *
  * The assertions below that say "this does not appear in the module" have to
  * tell a use from a mention. This file explains itself at length: the prose
@@ -72,57 +72,14 @@ async function loadModule() {
  * RECAPTCHA_ENTERPRISE_SITE_KEY. A plain substring search reads both as code
  * and fails on the documentation.
  *
- * So there are two views, and each test uses the stricter one it can:
- *
  *   NO_COMMENTS  comments gone, strings kept - for "no endpoint is hard-coded
  *                here", which must still catch fetch('/api/chat/start')
  *   CODE         comments and string bodies gone - for "this identifier is
  *                only used in one place", where a name inside a message is
  *                not a use
- *
- * Newlines survive both, so reported line numbers still match the real file.
  */
-function blank(src, opts) {
-  const keepStrings = Boolean(opts && opts.keepStrings);
-  const gap = (ch) => (ch === '\n' ? '\n' : ' ');
-  let out = '';
-  let i = 0;
-  while (i < src.length) {
-    const two = src.slice(i, i + 2);
-    if (two === '/*') {
-      const end = src.indexOf('*/', i + 2);
-      const stop = end === -1 ? src.length : end + 2;
-      for (; i < stop; i++) out += gap(src[i]);
-      continue;
-    }
-    if (two === '//') {
-      while (i < src.length && src[i] !== '\n') { out += ' '; i += 1; }
-      continue;
-    }
-    const quote = src[i];
-    if (quote === "'" || quote === '"' || quote === '`') {
-      out += quote;
-      i += 1;
-      while (i < src.length) {
-        if (src[i] === '\\') {
-          out += keepStrings ? src.slice(i, i + 2) : (' ' + gap(src[i + 1] || ' '));
-          i += 2;
-          continue;
-        }
-        if (src[i] === quote) { out += quote; i += 1; break; }
-        out += keepStrings ? src[i] : gap(src[i]);
-        i += 1;
-      }
-      continue;
-    }
-    out += src[i];
-    i += 1;
-  }
-  return out;
-}
-
-const NO_COMMENTS = blank(SRC, { keepStrings: true });
-const CODE = blank(SRC);
+const NO_COMMENTS = codeAndStrings(SRC);
+const CODE = codeOnly(SRC);
 
 /* ============================================================ THE CONFIG */
 
