@@ -814,6 +814,17 @@
   outline-offset: 2px;
 }
 
+/* ---- the closed-conversation note ------------------------------------
+   The single explanation shown when a thread is finished. Slightly stronger
+   than an ordinary note because it is the reason the composer below it is
+   dead, and a visitor who does not find it will try to type anyway. */
+
+.chat__note--closed {
+  border-color: var(--chat-accent-line);
+  background: var(--chat-accent-soft);
+  color: var(--ink);
+}
+
 /* ---- a message still in flight --------------------------------------
    The optimistic echo. Dimmed rather than marked with a spinner: it is
    almost always on screen for a few hundred milliseconds, and a spinner

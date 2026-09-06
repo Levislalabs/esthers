@@ -117,6 +117,29 @@ const TRANSCRIPT_ORDER = 'desc';
 
 const API_START = '/api/chat/start';
 const API_SEND = '/api/chat/send';
+const API_STATUS = '/api/chat/status';
+
+/*
+ * How often an OPEN conversation re-checks whether staff have closed it.
+ *
+ * Closing writes only to the conversation document, which no browser may read,
+ * so the transcript listener cannot see it. This is the backstop that notices.
+ *
+ * SIXTY SECONDS, and the number is a judgement rather than a constraint. The
+ * cost of being late is small - the customer sees "Connected" for up to a
+ * minute after a close, and if they send in that window the API refuses them
+ * and the UI corrects itself immediately, which is what happened before this
+ * fix and was never wrong, only rude. The cost of being eager is a request per
+ * customer per interval, forever, on a read that exists to notice something
+ * that happens once. A minute is slow enough to be nearly free and quick
+ * enough that nobody types a paragraph into a dead thread.
+ *
+ * The timer is the SECONDARY signal. The primary ones cost nothing: the
+ * restore path checks before enabling anything, and the tab becoming visible
+ * again checks immediately - which covers the common shape of "customer left
+ * the tab, staff closed the thread, customer came back".
+ */
+const STATUS_POLL_MS = 60 * 1000;
 
 /* Where a recovered conversation id is remembered. Per TAB, deliberately:
    see rememberConversation() for why this is sessionStorage and not
@@ -662,6 +685,19 @@ function requireAnonymous(user) {
  * only here, and never goes anywhere near the App Check header.
  */
 async function apiPost(deps, path, body, user) {
+  return apiRequest(deps, 'POST', path, body, user);
+}
+
+/*
+ * A GET, with the same two credentials and the same refusal handling.
+ * Separate from apiPost only so a caller cannot accidentally send a body on a
+ * GET, which some runtimes drop and others reject.
+ */
+async function apiGet(deps, path, user) {
+  return apiRequest(deps, 'GET', path, null, user);
+}
+
+async function apiRequest(deps, method, path, body, user) {
   let idToken;
   try {
     /* No forceRefresh. The SDK already refreshes a token that is close to
@@ -677,14 +713,16 @@ async function apiPost(deps, path, body, user) {
 
   let res;
   try {
-    res = await deps.authorizedFetch(path, {
-      method: 'POST',
+    const init = {
+      method: method,
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + idToken
-      },
-      body: JSON.stringify(body)
-    });
+      }
+    };
+    /* No body on a GET. */
+    if (body !== null && body !== undefined) init.body = JSON.stringify(body);
+    res = await deps.authorizedFetch(path, init);
   } catch (err) {
     /* fetch() rejects for a dropped connection, DNS, CORS - never for a 4xx.
        So this branch is genuinely "the request did not happen". */
@@ -850,6 +888,11 @@ class CustomerChatSession {
     this.stopped = false;
     this.sending = false;
     this.listenerFailed = false;
+    /* The staff-close backstop. See STATUS_POLL_MS and watchStatus(). */
+    this.statusTimer = null;
+    this.statusChecking = false;
+    this.statusErrorText = null;
+    this.onVisibility = null;
   }
 
   /* ---------------------------------------------------------- lifecycle */
@@ -874,12 +917,160 @@ class CustomerChatSession {
     const recalled = this.deps.recallConversation(this.deps.storage(), this.identity.user.uid);
     if (recalled) {
       this.conversationId = recalled;
+      /*
+       * ASK THE SERVER WHAT THIS CONVERSATION ACTUALLY IS, BEFORE ANYTHING
+       * ELSE IS ENABLED.
+       *
+       * THE BUG THIS FIXES. A restored conversation used to go straight to
+       * openTranscript(), which says "Connected" and enables the composer. The
+       * transcript listener only watches chatMessages, and closing a
+       * conversation writes no message - so a thread staff had closed came back
+       * after a reload looking completely live. The customer could type, press
+       * Send, and only then be told. The backend refused correctly throughout;
+       * the client was the thing telling the lie.
+       *
+       * The status call happens BEFORE openTranscript() rather than alongside
+       * it, so there is no window in which the composer is enabled on a
+       * conversation we have not confirmed.
+       */
+      const known = await this.refreshStatus({ initial: true });
+      if (this.stopped) return this;
+      if (known === 'gone') return this;      /* discarded; start form shown */
       this.openTranscript();
+      if (this.closed) {
+        this.applyClosed();
+      } else {
+        /* The check did not land. Say so AFTER openTranscript(), which clears
+           the notice, and only when we are not already showing a closed state
+           - a closed conversation is not also a warning. */
+        if (known === 'unknown' && this.statusErrorText) {
+          callUi(this.ui, 'setNotice', this.statusErrorText);
+        }
+        this.watchStatus();
+      }
     } else {
       callUi(this.ui, 'setStatus', 'Send us a message');
       callUi(this.ui, 'showStartForm');
     }
     return this;
+  }
+
+  /* -------------------------------------------------------- close watch */
+
+  /*
+   * Ask the server whether this conversation is still open.
+   *
+   * Returns 'open', 'closed', 'gone' (the server says it does not exist or is
+   * not ours - the session discards it and offers a fresh start), or 'unknown'
+   * when the question could not be answered.
+   *
+   * 'unknown' NEVER REOPENS A CLOSED CONVERSATION. A dropped request is not
+   * evidence that staff reopened a thread - there is no reopen path in the API
+   * at all - so a failed check leaves whatever we already knew in place. The
+   * failure mode of a flaky network must not be a composer that comes back to
+   * life on a dead conversation.
+   */
+  async refreshStatus(options) {
+    const opts = options || {};
+    if (this.stopped || !this.conversationId) return 'unknown';
+    /* One in flight at a time. A visibility change during the interval tick
+       must not produce two overlapping requests. */
+    if (this.statusChecking) return 'unknown';
+    this.statusChecking = true;
+    this.statusErrorText = null;
+
+    try {
+      const payload = await apiGet(
+        this.deps,
+        API_STATUS + '?conversationId=' + encodeURIComponent(this.conversationId),
+        this.identity.user);
+      if (this.stopped) return 'unknown';
+
+      if (payload.status === 'closed') {
+        if (!this.closed) {
+          /* Learned WITHOUT the customer having to send anything. */
+          this.applyClosed();
+          this.stopStatusWatch();
+        }
+        return 'closed';
+      }
+      return 'open';
+    } catch (err) {
+      const described = describeFailure(err);
+      /* The server says this conversation is not ours or no longer exists.
+         Same treatment as a rules refusal: let it go and offer a fresh start,
+         rather than leaving a dead id that fails identically forever. */
+      if (described.code === 'conversation_not_found'
+          || described.code === 'invalid_conversation_id') {
+        this.discardConversation();
+        return 'gone';
+      }
+      /*
+       * Recorded, NOT painted here.
+       *
+       * openTranscript() clears the notice as part of switching to the
+       * transcript view, and on the restore path it runs immediately after
+       * this - so a notice set here was wiped a moment later and the visitor
+       * was told nothing at all. begin() shows it once the view has settled.
+       */
+      this.statusErrorText = described.text;
+      return 'unknown';
+    } finally {
+      this.statusChecking = false;
+    }
+  }
+
+  /*
+   * Start noticing a staff-side close.
+   *
+   * Two signals, cheapest first:
+   *
+   *   VISIBILITY. Free, event-driven, and it covers the common shape - the
+   *   customer switches tabs, staff close the thread, the customer comes back.
+   *   No timer fires and nothing is polled to get this one.
+   *
+   *   A SLOW TIMER. The backstop for a customer who simply sits on the page.
+   *   Sixty seconds; see STATUS_POLL_MS for why that number.
+   *
+   * Idempotent: calling it twice does not produce two timers or two listeners.
+   * Never started on a conversation already known closed - closed is terminal,
+   * there is no reopen path in the API, so there is nothing further to learn.
+   */
+  watchStatus() {
+    if (this.stopped || this.closed || !this.conversationId) return false;
+    this.stopStatusWatch();
+
+    this.statusTimer = this.deps.setInterval(() => {
+      if (this.stopped || this.closed) { this.stopStatusWatch(); return; }
+      this.refreshStatus({});
+    }, STATUS_POLL_MS);
+
+    const doc = this.deps.document();
+    if (doc && typeof doc.addEventListener === 'function') {
+      this.onVisibility = () => {
+        if (this.stopped || this.closed) return;
+        if (doc.visibilityState === 'visible') this.refreshStatus({});
+      };
+      doc.addEventListener('visibilitychange', this.onVisibility);
+    }
+    return true;
+  }
+
+  /* Stop both signals. Safe to call twice, and called from every teardown
+     path so a closed panel, a stopped session and a closed conversation all
+     leave nothing running. */
+  stopStatusWatch() {
+    if (this.statusTimer !== null) {
+      this.deps.clearInterval(this.statusTimer);
+      this.statusTimer = null;
+    }
+    if (this.onVisibility) {
+      const doc = this.deps.document();
+      if (doc && typeof doc.removeEventListener === 'function') {
+        doc.removeEventListener('visibilitychange', this.onVisibility);
+      }
+      this.onVisibility = null;
+    }
   }
 
   /*
@@ -890,6 +1081,7 @@ class CustomerChatSession {
   stop() {
     this.stopped = true;
     this.stopTranscript();
+    this.stopStatusWatch();
     this.store.clear();
     callUi(this.ui, 'setRetry', null);
   }
@@ -910,12 +1102,23 @@ class CustomerChatSession {
   suspend() {
     if (this.stopped) return false;
     this.stopTranscript();
+    /* Nobody is looking, so nothing needs noticing. The timer and the
+       visibility listener both stop with the listener. */
+    this.stopStatusWatch();
     return true;
   }
 
   resume() {
     if (this.stopped) return false;
-    if (this.conversationId) this.openTranscript();
+    if (!this.conversationId) return true;
+    this.openTranscript();
+    /*
+     * Reopening the panel is exactly when a stale "Connected" would be seen,
+     * so check immediately rather than waiting up to a minute for the timer.
+     * refreshStatus() applies the closed state itself if the answer is closed.
+     */
+    this.refreshStatus({});
+    this.watchStatus();
     return true;
   }
 
@@ -1046,6 +1249,7 @@ class CustomerChatSession {
         this.deps.storage(), this.identity.user.uid, this.conversationId);
       this.openTranscript();
       if (this.closed) this.applyClosed();
+      else this.watchStatus();
       return payload;
     } catch (err) {
       /* The key travels with the retry, so pressing Try again re-attempts THIS
@@ -1075,7 +1279,9 @@ class CustomerChatSession {
     if (this.stopped || this.sending) return null;
     if (!this.conversationId) return null;
     if (this.closed) {
-      callUi(this.ui, 'setNotice', messageForCode('conversation_closed'));
+      /* Already closed and the panel already says so. Do not add a banner
+         repeating it - the composer is disabled, so this is a path only a
+         programmatic caller reaches. */
       return null;
     }
 
@@ -1216,6 +1422,7 @@ class CustomerChatSession {
    */
   discardConversation() {
     this.stopTranscript();
+    this.stopStatusWatch();
     this.conversationId = null;
     this.closed = false;
     this.store.clear();
@@ -1227,6 +1434,21 @@ class CustomerChatSession {
 
   applyClosed() {
     this.closed = true;
+    /* Nothing left to learn: there is no reopen path in the API, so closed is
+       terminal and the watch can stop for good. */
+    this.stopStatusWatch();
+    /*
+     * ONE explanation, not two.
+     *
+     * This used to run straight after setNotice('This conversation has been
+     * closed.') on the 409 path, and then setClosed() added its own, fuller
+     * note - so the customer was told the same thing twice, once tersely in an
+     * error banner and once properly in the transcript. The banner is cleared
+     * here: the closed state is a state, not an error, and the panel says so
+     * in one place.
+     */
+    callUi(this.ui, 'setNotice', null);
+    callUi(this.ui, 'setRetry', null);
     /* The transcript stays readable - the rules still permit reading a
        closed conversation's messages, and taking somebody's history away
        the moment it ends would be gratuitous. Only writing stops. */
@@ -1272,6 +1494,11 @@ function defaultDeps(overrides) {
         return null;      /* blocked-storage settings throw on ACCESS */
       }
     },
+    /* Injectable so a test can drive the close watch without waiting a
+       minute, and so a non-browser environment has no timers at all. */
+    setInterval: (fn, ms) => globalThis.setInterval(fn, ms),
+    clearInterval: (id) => globalThis.clearInterval(id),
+    document: () => (typeof globalThis.document === 'undefined' ? null : globalThis.document),
     now: () => Date.now()
   };
   return Object.assign(d, overrides || {});
@@ -1399,6 +1626,8 @@ export const _internals = {
   chronological,
   API_START,
   API_SEND,
+  API_STATUS,
+  STATUS_POLL_MS,
   CONVERSATION_KEY,
   MESSAGES_BY_CODE,
   NUL,

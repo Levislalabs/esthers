@@ -210,7 +210,7 @@ manual walkthrough on production.**
 | 1 | Build the customer frontend | **done** — `assets/js/chat-customer.js` |
 | 2 | Deploy with the public gate OFF | **done for the API half**; the frontend is written and unmerged |
 | 3 | **Deploy the `(conversationId ASC, createdAt DESC)` Firestore index** | required before the listener works at all |
-| 4 | Manually invoke review mode on esthers.ca | see `docs/CHAT_CUSTOMER_FRONTEND.md` §9 |
+| 4 | Manually invoke review mode on esthers.ca | see `docs/CHAT_CUSTOMER_FRONTEND.md` §10 |
 | 5 | Verify anonymous auth (same uid across a reload) | |
 | 6 | Verify `POST /api/chat/start` | |
 | 7 | Verify `POST /api/chat/send` | |
@@ -365,6 +365,7 @@ removes the protection App Check exists to provide.
 
 | File | Role |
 |---|---|
+| `api/chat/status.js` | the customer's own view of one conversation: open or closed |
 | `api/_chat/app-check.js` | server verification, the enforcement switch |
 | `api/_chat/handler.js` | calls the gate, in order, for every chat route |
 | `api/_chat/firebase-admin.js` | loads `firebase-admin/app-check`, exposes `appCheck` |
@@ -372,9 +373,10 @@ removes the protection App Check exists to provide.
 | `assets/js/chat-customer.js` | the customer flow: App Check, anonymous auth, API writes, realtime reads — **gate off** |
 | `assets/js/chat.js` | the widget, and the gate that decides whether the transport is ever loaded |
 | `docs/CHAT_CUSTOMER_FRONTEND.md` | the customer architecture and the DevTools review walkthrough |
+| `tests/chat-api/status.test.mjs` | 28 tests, the customer status endpoint |
 | `tests/chat-api/app-check.test.mjs` | 41 tests, the server gate |
 | `tests/chat-api/app-check-client.test.mjs` | 24 tests, the browser App Check module |
-| `tests/chat-api/chat-customer.test.mjs` | 117 tests, the customer frontend |
+| `tests/chat-api/chat-customer.test.mjs` | 142 tests, the customer frontend |
 | `tests/chat-api/fixtures/firebase-sdk-stub.mjs` | stands in for the Firebase Web SDK so the client tests need no network |
 | `tests/chat-api/fixtures/firebase-sdk-full-stub.mjs` | the same, plus Auth and Firestore, for the customer flow |
 | `tests/chat-api/fixtures/source-view.mjs` | reads a module as code rather than as text, so a mention in a comment is not read as a use |
