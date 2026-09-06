@@ -893,6 +893,15 @@ class CustomerChatSession {
     this.statusChecking = false;
     this.statusErrorText = null;
     this.onVisibility = null;
+    /*
+     * Has the SERVER told us what this conversation is?
+     *
+     * Not "is it open" - `closed` answers that. This answers the prior
+     * question of whether anybody has said. False means nothing has been
+     * confirmed yet, and paintConversationState() refuses to draw a live
+     * conversation on an unanswered question. See the comment there.
+     */
+    this.statusKnown = false;
   }
 
   /* ---------------------------------------------------------- lifecycle */
@@ -940,12 +949,11 @@ class CustomerChatSession {
       if (this.closed) {
         this.applyClosed();
       } else {
-        /* The check did not land. Say so AFTER openTranscript(), which clears
-           the notice, and only when we are not already showing a closed state
-           - a closed conversation is not also a warning. */
-        if (known === 'unknown' && this.statusErrorText) {
-          callUi(this.ui, 'setNotice', this.statusErrorText);
-        }
+        /* The check did not land. openTranscript() has already left the
+           composer shut - see paintConversationState() - so all that is left
+           is to say why and offer a way to ask again. AFTER openTranscript(),
+           which clears the notice. */
+        if (known === 'unknown') this.holdUnconfirmed();
         this.watchStatus();
       }
     } else {
@@ -978,6 +986,9 @@ class CustomerChatSession {
     if (this.statusChecking) return 'unknown';
     this.statusChecking = true;
     this.statusErrorText = null;
+    /* Captured before the await: whether the conversation was already
+       confirmed decides whether a 'open' answer has anything to repaint. */
+    const wasKnown = this.statusKnown;
 
     try {
       const payload = await apiGet(
@@ -987,6 +998,7 @@ class CustomerChatSession {
       if (this.stopped) return 'unknown';
 
       if (payload.status === 'closed') {
+        this.statusKnown = true;
         if (!this.closed) {
           /* Learned WITHOUT the customer having to send anything. */
           this.applyClosed();
@@ -994,6 +1006,9 @@ class CustomerChatSession {
         }
         return 'closed';
       }
+      this.statusKnown = true;
+      /* Only when this ANSWERS an open question - see applyOpen(). */
+      if (!wasKnown && !this.closed && !this.listenerFailed) this.applyOpen();
       return 'open';
     } catch (err) {
       const described = describeFailure(err);
@@ -1018,6 +1033,45 @@ class CustomerChatSession {
     } finally {
       this.statusChecking = false;
     }
+  }
+
+  /*
+   * Ask again, because the visitor pressed Try again.
+   *
+   * ONE REQUEST PER PRESS. A button somebody has to push is not a retry loop,
+   * and there is no timer behind this - the sixty-second watch is a separate
+   * thing and keeps running underneath.
+   *
+   * Nothing is repainted optimistically on the way in. paintConversationState()
+   * already left the panel saying it is not connected, which stays true for as
+   * long as the question is unanswered; the retry button disappearing is what
+   * tells the visitor the press registered.
+   */
+  async recheckStatus() {
+    if (this.stopped || !this.conversationId) return 'unknown';
+    if (!this.closed) {
+      callUi(this.ui, 'setNotice', null);
+      callUi(this.ui, 'setRetry', null);
+    }
+    const known = await this.refreshStatus({});
+    if (this.stopped) return known;
+    /* 'closed' and 'open' both repainted themselves on the way through
+       refreshStatus(); 'gone' discarded the conversation. Only an unanswered
+       question is left to report. */
+    if (known === 'unknown' && !this.closed) this.holdUnconfirmed();
+    return known;
+  }
+
+  /*
+   * Nothing was confirmed. Say so, and leave a way out.
+   *
+   * The composer is already shut by paintConversationState() - this only adds
+   * the explanation and the button, so a visitor is never looking at a dead
+   * composer with no reason given and nothing to press.
+   */
+  holdUnconfirmed() {
+    if (this.statusErrorText) callUi(this.ui, 'setNotice', this.statusErrorText);
+    callUi(this.ui, 'setRetry', () => this.recheckStatus());
   }
 
   /*
@@ -1115,9 +1169,12 @@ class CustomerChatSession {
     /*
      * Reopening the panel is exactly when a stale "Connected" would be seen,
      * so check immediately rather than waiting up to a minute for the timer.
-     * refreshStatus() applies the closed state itself if the answer is closed.
+     * openTranscript() has already painted whatever was last confirmed -
+     * including "Conversation closed", which it used to overwrite with
+     * "Connected" - and recheckStatus() corrects it or explains why it could
+     * not.
      */
-    this.refreshStatus({});
+    this.recheckStatus();
     this.watchStatus();
     return true;
   }
@@ -1146,8 +1203,9 @@ class CustomerChatSession {
     callUi(this.ui, 'showTranscript');
     callUi(this.ui, 'setNotice', null);
     callUi(this.ui, 'setRetry', null);
-    callUi(this.ui, 'setStatus', 'Connected');
-    callUi(this.ui, 'setComposerEnabled', !this.closed);
+    /* Before renderMessages(), which reads the widget's closed flag to decide
+       whether the transcript carries the closed explanation. */
+    this.paintConversationState();
     callUi(this.ui, 'renderMessages', this.store.list());
 
     this.unsubscribe = subscribeTranscript(this.fs, this.db, this.conversationId, {
@@ -1245,6 +1303,9 @@ class CustomerChatSession {
       if (this.stopped) return null;
       this.conversationId = payload.conversationId;
       this.closed = payload.status === 'closed';
+      /* Straight from the response that created it: as confirmed as a status
+         gets, and set BEFORE openTranscript() paints from it. */
+      this.statusKnown = true;
       this.deps.rememberConversation(
         this.deps.storage(), this.identity.user.uid, this.conversationId);
       this.openTranscript();
@@ -1425,6 +1486,8 @@ class CustomerChatSession {
     this.stopStatusWatch();
     this.conversationId = null;
     this.closed = false;
+    /* Nothing is confirmed about a conversation this session no longer has. */
+    this.statusKnown = false;
     this.store.clear();
     this.deps.forgetConversation(this.deps.storage());
     callUi(this.ui, 'setRetry', null);
@@ -1434,6 +1497,7 @@ class CustomerChatSession {
 
   applyClosed() {
     this.closed = true;
+    this.statusKnown = true;
     /* Nothing left to learn: there is no reopen path in the API, so closed is
        terminal and the watch can stop for good. */
     this.stopStatusWatch();
@@ -1455,6 +1519,71 @@ class CustomerChatSession {
     callUi(this.ui, 'setClosed', true);
     callUi(this.ui, 'setComposerEnabled', false);
     callUi(this.ui, 'setStatus', 'Conversation closed');
+  }
+
+  /*
+   * The server confirmed the conversation is OPEN, and we did not know that a
+   * moment ago.
+   *
+   * Only ever called on that transition. A routine sixty-second poll on a
+   * conversation already known open has nothing to repaint, and repainting
+   * anyway would clear a notice and a Try again that onListenerError() put up
+   * for an entirely different problem.
+   */
+  applyOpen() {
+    this.statusKnown = true;
+    /* Closed is terminal. There is no reopen path in the API, so an 'open'
+       answer on a conversation already known closed is not a state change -
+       it is a bug somewhere else, and this is not the place to act on it. */
+    if (this.closed) return;
+    callUi(this.ui, 'setNotice', null);
+    callUi(this.ui, 'setRetry', null);
+    callUi(this.ui, 'setClosed', false);
+    callUi(this.ui, 'setComposerEnabled', true);
+    callUi(this.ui, 'setStatus', 'Connected');
+  }
+
+  /*
+   * Draw the conversation from the only thing entitled to decide it: the last
+   * definitive answer the SERVER gave.
+   *
+   * THE BUG THIS FIXES. openTranscript() used to say 'Connected' and enable
+   * the composer unconditionally, and begin() only corrected that afterwards
+   * IF the status check had come back. So a check that did not come back - a
+   * 500, a 401 while attestation was being refused, a dropped connection, a
+   * cold start that timed out - left the panel claiming a live conversation
+   * on a thread staff had closed. The visitor typed, pressed Send, and only
+   * then found out. That is precisely the lie /api/chat/status was added to
+   * stop telling; it was simply being told one layer further up, on the path
+   * where the endpoint had not answered.
+   *
+   * AN UNANSWERED QUESTION IS NOT A YES. Three states, and exactly one of
+   * them opens the composer:
+   *
+   *   closed   terminal. The composer is dead and the transcript says why.
+   *   open     confirmed. The ordinary live conversation.
+   *   unknown  nothing was confirmed. The transcript stays readable, the
+   *            composer stays shut, and holdUnconfirmed() supplies the reason
+   *            and a Try again.
+   *
+   * Failing this way costs a visitor on a healthy conversation one press of a
+   * button during an outage. Failing the other way costs a visitor on a closed
+   * conversation a message they believe they sent.
+   */
+  paintConversationState() {
+    if (this.closed) {
+      callUi(this.ui, 'setClosed', true);
+      callUi(this.ui, 'setComposerEnabled', false);
+      callUi(this.ui, 'setStatus', 'Conversation closed');
+      return;
+    }
+    if (!this.statusKnown) {
+      callUi(this.ui, 'setComposerEnabled', false);
+      callUi(this.ui, 'setStatus', 'Not connected');
+      return;
+    }
+    callUi(this.ui, 'setComposerEnabled', true);
+    callUi(this.ui, 'setStatus', 'Connected');
   }
 }
 

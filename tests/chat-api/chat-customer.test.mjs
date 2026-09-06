@@ -3154,3 +3154,506 @@ describe('the widget, with the gate shut', () => {
     assert.equal(/\brgba?\(/.test(added), false, 'no raw rgb colours');
   });
 });
+
+/* ============================================ THE PRODUCTION RESTORE PATH
+ *
+ * A conversation staff had closed came back after F5 as
+ *
+ *     session.closed === false,  "Connected",  live composer
+ *
+ * on the real site, and the suite above was green throughout. This block is
+ * about why, and about the one rule that stops it happening again.
+ *
+ * WHY THE EXISTING TESTS MISSED IT. "a failed status check does NOT silently
+ * pretend the thread is fine" asserts one thing: that a notice appears. It
+ * never looked at session.closed, at the status line, or at the composer. So
+ * the panel was free to put an explanation in the notice box and, directly
+ * underneath it, say "Connected" over a live composer on a dead thread - and
+ * the assertion passed. A test that checks the warning but not the state
+ * being warned about is not testing the state.
+ *
+ * WHAT WAS ACTUALLY BROKEN. begin() only trusted the status check when the
+ * check came back. openTranscript() asserted 'Connected' and enabled the
+ * composer unconditionally, and the closed correction ran afterwards, from
+ * `if (this.closed)`. An unanswered question - a 500, a 401 while attestation
+ * was refused, a dropped connection, a cold start that timed out - therefore
+ * landed in the "not closed" branch and was painted as a live conversation.
+ * The lie /api/chat/status exists to stop was simply being told one layer up.
+ *
+ * These tests assert the WHOLE settled end state through the public entry
+ * point, and then keep going: they fire the interval, fire a visibility
+ * change, and drain the microtask queue afterwards, because a state that is
+ * right for one turn and wrong on the next is the failure that shipped.
+ */
+describe('a restored panel never claims a conversation it has not confirmed', () => {
+  /* The closed explanation, read from the widget so this file cannot drift
+     from the sentence the visitor actually sees. */
+  const CLOSED_NOTE = (() => {
+    const m = WIDGET_SRC.match(/var CLOSED_NOTE = '([^']*)'\s*\+\s*'([^']*)';/);
+    assert.ok(m, 'found CLOSED_NOTE in the widget');
+    return m[1] + m[2];
+  })();
+
+  const EMPTY_NOTE = 'No messages yet. Send one and we will reply here.';
+
+  /*
+   * A UI that renders the way chat.js renders.
+   *
+   * recordingUi() records calls; this also models the two widget rules that
+   * decide whether the visitor can see and do anything:
+   *
+   *   renderMessages() rebuilds the log from scratch, and the closed note is
+   *   part of that render - the empty-transcript branch IS the note when the
+   *   conversation is closed, and a populated transcript gets it appended.
+   *
+   *   setClosed() appends only on the false -> true edge, because the render
+   *   above already carries it every other time.
+   *
+   * Both are transcribed from assets/js/chat.js, and the test below pins the
+   * transcription against that source so it cannot quietly go stale. Without
+   * this, "exactly one closed explanation" is a claim about a fake.
+   */
+  function widgetLikeUi() {
+    const ui = recordingUi();
+    ui.log = [];
+    ui.isClosed = false;
+    ui.isBusy = false;
+    ui.enabled = false;
+
+    const appendClosedNote = () => {
+      if (!ui.isClosed) return;
+      ui.log.push(CLOSED_NOTE);
+    };
+
+    ui.renderMessages = (list) => {
+      ui.calls.push('renderMessages');
+      ui.renderCount += 1;
+      ui.messages = list;
+      ui.log = [];
+      const items = Array.isArray(list) ? list : [];
+      if (!items.length) {
+        ui.log.push(ui.isClosed ? CLOSED_NOTE : EMPTY_NOTE);
+        return;
+      }
+      for (const m of items) ui.log.push(String((m && m.body) || ''));
+      appendClosedNote();
+    };
+    ui.setClosed = (flag) => {
+      ui.calls.push('setClosed');
+      const was = ui.isClosed;
+      ui.isClosed = flag === true;
+      ui.closed = flag;
+      ui.closedHistory.push(flag);
+      if (ui.isClosed && !was) appendClosedNote();
+    };
+    ui.setComposerEnabled = (flag) => {
+      ui.calls.push('setComposerEnabled');
+      ui.enabled = flag === true;
+      ui.composerEnabled = flag;
+    };
+    ui.setBusy = (flag) => {
+      ui.calls.push('setBusy');
+      ui.isBusy = flag === true;
+      ui.busy = flag;
+    };
+
+    /* The widget's own two lines, and the only thing the visitor can act on. */
+    ui.inputDisabled = () => ui.isClosed || !ui.enabled;
+    ui.sendDisabled = (empty) => empty === true || ui.isBusy || ui.isClosed || !ui.enabled;
+    ui.closedNotes = () => ui.log.filter((t) => t === CLOSED_NOTE).length;
+    return ui;
+  }
+
+  test('the UI double still matches the widget it stands in for', () => {
+    /* If chat.js changes how the closed note is rendered, every "exactly one
+       explanation" assertion below becomes a claim about a fake. This is the
+       tripwire for that. */
+    assert.match(WIDGET_CODE,
+      /function appendClosedNote\(\)\s*\{\s*if \(!isClosed\) return;/);
+    assert.match(WIDGET_CODE,
+      /if \(!items\.length\)\s*\{[\s\S]*?isClosed[\s\S]*?CLOSED_NOTE[\s\S]*?return;/);
+    assert.match(WIDGET_CODE, /if \(isClosed && !was\)\s*\{\s*appendClosedNote\(\);/);
+    assert.match(WIDGET_CODE,
+      /input\.disabled = mode === 'live' && \(isClosed \|\| !composerEnabled\);/);
+    assert.match(WIDGET_CODE,
+      /send\.disabled = empty \|\| \(mode === 'live' && \(isBusy \|\| isClosed \|\| !composerEnabled\)\);/);
+  });
+
+  const STORED = 'conv-closed';
+
+  /* sessionStorage exactly as a returning visitor's browser holds it: the uid
+     the stub restores, and the conversation that uid opened. */
+  const storedFor = (mod, id = STORED) => memoryStorage({
+    [mod._internals.CONVERSATION_KEY]:
+      JSON.stringify({ uid: 'anon-uid-1', conversationId: id })
+  });
+
+  /* One responder, one queue of status answers. The last one repeats, so a
+     poll that fires twice does not fall off the end. */
+  function statusQueue(answers) {
+    const queue = answers.slice();
+    let used = 0;
+    const responder = (n, input) => {
+      if (String(input).indexOf('/api/chat/status') === 0) {
+        const answer = queue[Math.min(used, queue.length - 1)];
+        used += 1;
+        return typeof answer === 'function' ? answer() : answer;
+      }
+      return jsonResponse(200, OK_START);
+    };
+    responder.statusCalls = () => used;
+    return responder;
+  }
+
+  const CLOSED_200 = () => jsonResponse(200,
+    { ok: true, conversationId: STORED, status: 'closed' });
+  const OPEN_200 = () => jsonResponse(200,
+    { ok: true, conversationId: STORED, status: 'open' });
+  const SERVER_500 = () => jsonResponse(500, { ok: false, code: 'internal_error' });
+
+  /* Everything the transport could still do on its own after begin() returns:
+     the poll, the visibility listener, and any queued microtask. A state that
+     survives all three is settled. */
+  async function settleAndProvoke(clock) {
+    await tick();
+    clock.fireInterval();
+    clock.becomeVisible();
+    await tick();
+  }
+
+  test('A RESTORED CLOSED CONVERSATION IS CLOSED WHEN THE DUST SETTLES',
+    async () => {
+      const { mod, stub } = await load();
+      const clock = fakeClock();
+      const ui = widgetLikeUi();
+      const storage = storedFor(mod);
+      const responder = statusQueue([CLOSED_200]);
+      const fetcher = captureFetch(responder);
+      try {
+        const session = await mod.openChatForReview({
+          ui,
+          openPanel: () => {},
+          deps: Object.assign({ storage: () => storage }, clock.deps)
+        });
+        await settleAndProvoke(clock);
+
+        /* The whole point, and the thing production disagreed with. */
+        assert.equal(session.closed, true, 'session.closed');
+        assert.equal(ui.status, 'Conversation closed', 'the status line');
+        assert.equal(ui.enabled, false, 'the composer is disabled');
+        assert.equal(ui.inputDisabled(), true, 'the textarea is disabled');
+        assert.equal(ui.sendDisabled(false), true,
+          'Send is dead even with something typed');
+
+        /* The transcript is still there to read - closing a conversation is
+           not the same as taking someone's history away. */
+        assert.equal(ui.transcriptShown, 1, 'the transcript was restored');
+        assert.equal(ui.startFormShown, 0, 'and no start form appeared');
+        assert.equal(stub.liveListenerCount(), 1, 'the listener is open');
+
+        /* Exactly one explanation. Not none, not two. */
+        assert.equal(ui.closedNotes(), 1, 'one closed explanation');
+        assert.equal(ui.notice, null, 'and it is not ALSO an error banner');
+
+        /* Nothing was written to find any of this out. */
+        const writes = fetcher.seen.filter((r) => r.init && r.init.method === 'POST');
+        assert.equal(writes.length, 0, 'no send was needed to learn it is closed');
+
+        /* Closed is terminal: the watch is gone, so the interval and the
+           visibility change fired above could not have asked again. */
+        assert.equal(clock.liveTimers(), 0, 'the poll stopped');
+        assert.equal(clock.visibilityListeners(), 0, 'the visibility hook stopped');
+        assert.equal(responder.statusCalls(), 1, 'exactly one status request');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('A STATUS CHECK THAT DOES NOT COME BACK LEAVES THE COMPOSER SHUT - '
+    + 'THE PRODUCTION BUG', async () => {
+      /*
+       * THE REGRESSION THAT SHIPPED. The server never answered, so nothing is
+       * known - and "nothing is known" was being drawn as "Connected" with a
+       * live composer. An unanswered question is not a yes.
+       */
+      const { mod } = await load();
+      const clock = fakeClock();
+      const ui = widgetLikeUi();
+      const storage = storedFor(mod);
+      const responder = statusQueue([SERVER_500]);
+      const fetcher = captureFetch(responder);
+      try {
+        const session = await mod.openChatForReview({
+          ui,
+          openPanel: () => {},
+          deps: Object.assign({ storage: () => storage }, clock.deps)
+        });
+        await tick();
+
+        assert.equal(session.closed, false, 'nothing was confirmed either way');
+        assert.equal(ui.enabled, false,
+          'THE FIX: the composer stays shut on an unconfirmed conversation');
+        assert.equal(ui.inputDisabled(), true, 'the textarea is disabled');
+        assert.equal(ui.sendDisabled(false), true, 'and Send with it');
+        assert.notEqual(ui.status, 'Connected',
+          'the panel does not claim a connection it has not got');
+        assert.equal(ui.status, 'Not connected');
+
+        /* Told why, and given a way out - a dead composer with no explanation
+           is the worst of the three states. */
+        assert.ok(typeof ui.notice === 'string' && ui.notice.length > 0,
+          'the visitor is told the check did not land');
+        assert.equal(typeof ui.retry, 'function', 'and can ask again');
+
+        /* The transcript is still readable, and no write was attempted. */
+        assert.equal(ui.transcriptShown, 1);
+        assert.equal(ui.closedNotes(), 0, 'it is not claimed closed either');
+        const writes = fetcher.seen.filter((r) => r.init && r.init.method === 'POST');
+        assert.equal(writes.length, 0);
+
+        /* The watch keeps running: this is the state that is meant to heal. */
+        assert.equal(clock.liveTimers(), 1, 'the poll is still going');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('nothing scheduled afterwards flips a confirmed CLOSED back open',
+    async () => {
+      /*
+       * The failure this guards is a later turn, not the first one: a snapshot
+       * arriving, a poll firing, a visibility change - anything that runs a
+       * lifecycle method after begin() has finished and repaints the panel
+       * from a default rather than from what the server said.
+       */
+      const { mod, stub } = await load();
+      const clock = fakeClock();
+      const ui = widgetLikeUi();
+      const storage = storedFor(mod);
+      const fetcher = captureFetch(statusQueue([CLOSED_200]));
+      try {
+        const session = await mod.openChatForReview({
+          ui,
+          openPanel: () => {},
+          deps: Object.assign({ storage: () => storage }, clock.deps)
+        });
+        await settleAndProvoke(clock);
+        assert.equal(session.closed, true, 'closed to begin with');
+
+        /* A snapshot lands, the way one does the moment the listener attaches. */
+        stub.emitSnapshot([
+          { id: 'm1', data: { conversationId: STORED, senderType: 'customer',
+            body: 'hello', createdAt: { toMillis: () => 1 } } }
+        ]);
+        await tick();
+
+        assert.equal(session.closed, true, 'still closed after a snapshot');
+        assert.equal(ui.enabled, false, 'composer still shut');
+        assert.equal(ui.status, 'Conversation closed');
+        assert.equal(ui.closedNotes(), 1,
+          'and the explanation survived the re-render, exactly once');
+        assert.equal(ui.log[ui.log.length - 1], CLOSED_NOTE,
+          'below the transcript, where it reads as the end of it');
+
+        /* The panel is closed and reopened - suspend() then resume(), which is
+           what the widget does. resume() used to run openTranscript(), which
+           said "Connected" unconditionally. */
+        session.suspend();
+        await tick();
+        session.resume();
+        await settleAndProvoke(clock);
+
+        assert.equal(session.closed, true, 'still closed after a reopen');
+        assert.equal(ui.status, 'Conversation closed',
+          'THE FIX: reopening the panel does not repaint it as Connected');
+        assert.equal(ui.enabled, false, 'composer still shut');
+        assert.equal(ui.closedNotes(), 1, 'still exactly one explanation');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('an unconfirmed conversation heals to CLOSED when the answer arrives',
+    async () => {
+      const { mod } = await load();
+      const clock = fakeClock();
+      const ui = widgetLikeUi();
+      const storage = storedFor(mod);
+      const fetcher = captureFetch(statusQueue([SERVER_500, CLOSED_200]));
+      try {
+        const session = await mod.openChatForReview({
+          ui,
+          openPanel: () => {},
+          deps: Object.assign({ storage: () => storage }, clock.deps)
+        });
+        await tick();
+        assert.equal(ui.enabled, false);
+        assert.equal(typeof ui.retry, 'function');
+
+        /* The visitor presses Try again. */
+        await ui.retry();
+        await tick();
+
+        assert.equal(session.closed, true);
+        assert.equal(ui.status, 'Conversation closed');
+        assert.equal(ui.enabled, false);
+        assert.equal(ui.closedNotes(), 1, 'one explanation, and only now');
+        assert.equal(ui.notice, null, 'the error banner is gone');
+        assert.equal(clock.liveTimers(), 0, 'and the watch stopped for good');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('an unconfirmed conversation heals to OPEN when the answer arrives',
+    async () => {
+      /* The cost of failing safe, and the proof it is only a delay: one press
+         and a healthy conversation is live again. */
+      const { mod } = await load();
+      const clock = fakeClock();
+      const ui = widgetLikeUi();
+      const storage = storedFor(mod);
+      const fetcher = captureFetch(statusQueue([SERVER_500, OPEN_200]));
+      try {
+        const session = await mod.openChatForReview({
+          ui,
+          openPanel: () => {},
+          deps: Object.assign({ storage: () => storage }, clock.deps)
+        });
+        await tick();
+        assert.equal(ui.enabled, false, 'held while unconfirmed');
+
+        await ui.retry();
+        await tick();
+
+        assert.equal(session.closed, false);
+        assert.equal(ui.status, 'Connected');
+        assert.equal(ui.enabled, true, 'the composer is live again');
+        assert.equal(ui.inputDisabled(), false);
+        assert.equal(ui.notice, null, 'and the warning is cleared');
+        assert.equal(ui.closedNotes(), 0);
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('A RESTORED OPEN CONVERSATION IS STILL FULLY LIVE', async () => {
+    /* The regression that matters in the other direction: failing safe must
+       not cost an ordinary returning visitor anything at all. */
+    const { mod, stub } = await load();
+    const clock = fakeClock();
+    const ui = widgetLikeUi();
+    const storage = storedFor(mod);
+    const responder = statusQueue([OPEN_200]);
+    const fetcher = captureFetch(responder);
+    try {
+      const session = await mod.openChatForReview({
+        ui,
+        openPanel: () => {},
+        deps: Object.assign({ storage: () => storage }, clock.deps)
+      });
+      await tick();
+
+      assert.equal(session.closed, false);
+      assert.equal(ui.status, 'Connected');
+      assert.equal(ui.enabled, true, 'the composer is live');
+      assert.equal(ui.inputDisabled(), false);
+      assert.equal(ui.sendDisabled(false), false, 'and Send works');
+      assert.equal(ui.transcriptShown, 1, 'the transcript restored');
+      assert.equal(ui.startFormShown, 0);
+      assert.equal(ui.notice, null, 'with nothing to warn about');
+      assert.equal(ui.closedNotes(), 0);
+      assert.equal(stub.liveListenerCount(), 1);
+
+      /* The watch is running, which is what will catch a later staff close. */
+      assert.equal(clock.liveTimers(), 1, 'the poll is active');
+      assert.equal(clock.intervalMs(), 60 * 1000, 'at sixty seconds');
+      assert.equal(clock.visibilityListeners(), 1, 'and the tab hook is set');
+
+      /* One more turn, to be sure nothing degrades it. */
+      clock.fireInterval();
+      await tick();
+      assert.equal(ui.status, 'Connected');
+      assert.equal(ui.enabled, true);
+      assert.equal(responder.statusCalls(), 2, 'the poll did ask again');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('reopening the panel on an unconfirmed conversation still explains itself',
+    async () => {
+      /*
+       * The gap M6 found. resume() runs openTranscript(), which now paints
+       * the held state correctly - so a CLOSED conversation survives a reopen
+       * whichever way resume() re-asks. An UNCONFIRMED one does not: the
+       * composer comes back shut, and if resume() re-asks through
+       * refreshStatus() instead of recheckStatus() the notice and the Try
+       * again are never restored. The visitor is then looking at a dead
+       * composer with no reason given and nothing to press, which is the one
+       * state worse than the bug this whole change is about.
+       */
+      const { mod } = await load();
+      const clock = fakeClock();
+      const ui = widgetLikeUi();
+      const storage = storedFor(mod);
+      const fetcher = captureFetch(statusQueue([SERVER_500]));
+      try {
+        const session = await mod.openChatForReview({
+          ui,
+          openPanel: () => {},
+          deps: Object.assign({ storage: () => storage }, clock.deps)
+        });
+        await tick();
+        assert.equal(ui.enabled, false, 'held on the way in');
+        assert.equal(typeof ui.retry, 'function', 'with a way out');
+
+        /* The visitor closes the panel and opens it again. */
+        session.suspend();
+        await tick();
+        session.resume();
+        await tick();
+
+        assert.equal(session.closed, false, 'still nothing confirmed');
+        assert.equal(ui.enabled, false, 'still held');
+        assert.equal(ui.status, 'Not connected');
+        assert.ok(typeof ui.notice === 'string' && ui.notice.length > 0,
+          'THE FIX: the reopened panel still says why');
+        assert.equal(typeof ui.retry, 'function',
+          'and still offers Try again');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('a brand new conversation is live the moment the server opens it',
+    async () => {
+      /* start() gets its status straight from the response that created the
+         conversation. If that did not count as confirmation, failing safe
+         would have shut the composer on a thread the visitor had just
+         successfully opened. */
+      const { mod } = await load();
+      const clock = fakeClock();
+      const ui = widgetLikeUi();
+      const fetcher = captureFetch(statusQueue([OPEN_200]));
+      try {
+        const session = await mod.openChatForReview({
+          ui,
+          openPanel: () => {},
+          deps: Object.assign({ storage: () => memoryStorage() }, clock.deps)
+        });
+        await tick();
+        assert.equal(ui.startFormShown, 1, 'a first-time visitor gets the form');
+
+        await ui.startHandler({ name: 'Sam', email: 'sam@example.com', message: 'Hi' });
+        await tick();
+
+        assert.equal(session.closed, false);
+        assert.equal(ui.status, 'Connected');
+        assert.equal(ui.enabled, true, 'the composer is live straight away');
+        assert.equal(ui.closedNotes(), 0);
+      } finally {
+        fetcher.restore();
+      }
+    });
+});
