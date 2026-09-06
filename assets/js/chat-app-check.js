@@ -105,6 +105,18 @@ export const FIREBASE_CONFIG = {
 export const RECAPTCHA_ENTERPRISE_SITE_KEY = '6LcZfKotAAAAAG3nYWcAxT6P_nWyTRJp9XXMw6C6';
 
 /*
+ * The chat client version - the same string as CHAT_CLIENT_VERSION in
+ * chat.js and chat-customer.js, and the same string chat-customer.js puts in
+ * its ?v= when it imports this file.
+ *
+ * Declared here so the three local chat modules state one shared version and
+ * a test can pin them to each other: a half-finished bump, where one file
+ * moved and another did not, is the failure this catches. Nothing in this
+ * module reads it.
+ */
+export const CHAT_CLIENT_VERSION = '2026-09-05.1';
+
+/*
  * Where the Firebase Web SDK comes from.
  *
  * Firebase's own ESM CDN build, pinned to an exact version. Pinned rather than

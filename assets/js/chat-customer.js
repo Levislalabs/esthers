@@ -61,7 +61,28 @@ import {
   getFirebaseApp,
   initAppCheck,
   authorizedFetch
-} from './chat-app-check.js';
+} from './chat-app-check.js?v=2026-09-05.1';
+
+/*
+ * The chat client version. THE SAME STRING as CHAT_CLIENT_VERSION in
+ * chat.js and in chat-app-check.js, and the same string as the ?v= in the
+ * import directly above. A test pins all four to each other.
+ *
+ * WHY THE IMPORT ABOVE CARRIES IT TOO, AND CANNOT JUST INHERIT IT.
+ *
+ * A query string on a module's own URL does NOT propagate to the specifiers
+ * inside it: './chat-app-check.js' resolves against the importer's path and
+ * drops the query, so a page loading chat-customer.js?v=NEW would fetch
+ * chat-app-check.js with no version at all. Measured in Chromium, not
+ * assumed: with a long-lived cache that produces a NEW transport running
+ * against a STALE App Check module - a mixed graph, which is worse than
+ * either build on its own because it has never been tested.
+ *
+ * A static import specifier has to be a literal, so the version is written
+ * out rather than interpolated. That is the cost of the guarantee, and the
+ * test is what keeps the copies honest.
+ */
+export const CHAT_CLIENT_VERSION = '2026-09-05.1';
 
 /* -------------------------------------------------------------------------
  * THE ROLLOUT GATE

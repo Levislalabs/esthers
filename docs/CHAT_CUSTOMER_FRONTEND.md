@@ -185,6 +185,62 @@ human-readable sentence as a status protocol is brittle the first time somebody
 edits the wording, and it makes a display string load-bearing for a state
 decision. Not worth it.
 
+### Cache-safe module loading
+
+A browser caches a module by its **full URL**, and the ES module registry
+inside a page keys on the same thing. Two different builds served at one URL
+are therefore the same module to both, and a visitor who already has the old
+one keeps running it after a deployment. That is how a closed conversation
+came back looking live on the real site after the restore fix had shipped and
+`/api/chat/status` was answering `closed` correctly.
+
+**One version string, bumped by hand, in three files:**
+
+| file | where it appears |
+|---|---|
+| `assets/js/chat.js` | `var CHAT_CLIENT_VERSION = '…';` — the source of truth, and it is what the loader puts in `?v=` |
+| `assets/js/chat-customer.js` | `export const CHAT_CLIENT_VERSION = '…';` **and** the `?v=` in its `import … from './chat-app-check.js?v=…'` |
+| `assets/js/chat-app-check.js` | `export const CHAT_CLIENT_VERSION = '…';` |
+
+Bump all of them in the same commit as any change to the chat client. A test
+pins the four copies to each other, so a half-finished bump fails the suite.
+
+**Why the transitive import needs it too.** A query on a module's own URL does
+**not** reach the specifiers inside it — `'./chat-app-check.js'` resolves
+against the importer's path and the query is dropped. Measured in Chromium:
+under a long-lived cache, a versioned `chat-customer.js` loads NEW while its
+`chat-app-check.js` stays OLD. A new transport running against an old App
+Check module is a combination nobody has ever tested, and it is worse than
+either build on its own. A static specifier must be a literal, which is why
+the version is written out there rather than interpolated.
+
+**Why the version alone is not enough, and `vercel.json` also changed.** The
+version travels *inside* `chat.js`, which is a plain
+`<script src="/assets/js/chat.js">` in seven pages — no query can version the
+thing that carries the version. Held at the old build, the loader believes the
+old version and imports the old URL; measured, the page then runs stale code
+end to end. So the three chat scripts, and only those three, are now served:
+
+```
+Cache-Control: public, max-age=0, must-revalidate
+```
+
+They may be cached, but the browser must check before reusing them — a
+conditional request answered by a 304 in the ordinary case, and a fresh file
+the first time after a deploy. Scoped to three files on purpose: a site-wide
+no-cache would be a real cost for a problem only these have, and
+`/assets/img/` keeps its week-long cache untouched. This is also the safety
+net for a forgotten bump — revalidation still fetches the new file.
+
+**Not a gate.** `?v=` decides *which* build loads, never *whether* one does.
+It is a literal in source: not a date, not a clock, not a random number, and
+nothing a visitor can influence. `CHAT_PUBLIC_ENABLED` remains the only gate,
+and nothing in the three chat modules reads the page URL at all.
+
+The pinned gstatic SDK URLs are deliberately **not** cache-busted — they
+already carry an exact version (`12.4.0`) in the path, and a query would only
+defeat a cache that is doing its job.
+
 ### The restore sequence
 
 On a page load with a remembered `{uid, conversationId}`:
@@ -555,9 +611,22 @@ real App Check token is minted for the chat flow.
 ### Open review mode
 
 ```js
-const chat = await import('/assets/js/chat-customer.js');
+const chat = await import(
+  '/assets/js/chat-customer.js?v=' + CM.chat.clientVersion
+);
 const session = await chat.openChatForReview();
 ```
+
+**Always append the version.** A hand-typed
+`import('/assets/js/chat-customer.js')` is the one path that can quietly hand
+you yesterday's module: the browser caches a module by its full URL, and the
+ES module registry inside the page keys on the same thing, so if that exact
+URL has been imported before you get the instance you already had — no
+request, no warning. It has already caused one wasted debugging session, where
+a conversation the server correctly reported closed came back looking live
+because the page was still running the previous build. `CM.chat.clientVersion`
+is the version the *currently served* `chat.js` believes in, so this line
+always names the build that is actually deployed.
 
 The panel opens and the start form appears. If a conversation is already
 remembered for this tab, the transcript opens instead.
@@ -576,7 +645,7 @@ remembered for this tab, the transcript opens instead.
 ### Verify anonymous auth
 
 ```js
-const app = await (await import('/assets/js/chat-app-check.js')).getFirebaseApp();
+const app = await (await import('/assets/js/chat-app-check.js?v=' + CM.chat.clientVersion)).getFirebaseApp();
 const { getAuth } = await import('https://www.gstatic.com/firebasejs/12.4.0/firebase-auth.js');
 const u = getAuth(app).currentUser;
 u.uid;            // an anonymous uid
