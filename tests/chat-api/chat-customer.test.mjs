@@ -3974,7 +3974,9 @@ describe('the chat client is loaded by an explicit, source-controlled version', 
           file + ' revalidates before use');
       }
 
-      /* And the addition was ADDITIVE. Nothing else in the file moved. */
+      /* And every addition has been ADDITIVE. Nothing already in the file
+         has moved, and the list is pinned in order so the next module added
+         to the graph either gets a header or fails here. */
       assert.deepEqual(rules.map((r) => r.source), [
         '/(.*)',
         '/assets/img/(.*)',
@@ -3983,6 +3985,7 @@ describe('the chat client is loaded by an explicit, source-controlled version', 
         '/assets/js/chat-app-check.js',
         '/assets/js/chat-locations.js',
         '/assets/js/chat-staff.js',
+        '/assets/js/chat-staff-alerts.js',
         '/assets/css/chat-staff.css'
       ]);
 

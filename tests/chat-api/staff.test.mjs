@@ -117,13 +117,21 @@ describe('staff inbox', () => {
     await aConversation();
     const res = await call(conversations(), { method: 'GET', token: 'admin' });
     assert.deepEqual(Object.keys(res.payload.conversations[0]).sort(), [
+      /* Unread, added with staff notifications. `unread` is the SERVER'S
+         verdict rather than ingredients for the client to compute one from,
+         so two dashboards cannot disagree about whether anybody has looked.
+         attentionVersion travels because the client must acknowledge the
+         exact version it rendered, and because it is the dedupe identity for
+         alerts. */
+      'attentionVersion',
       'conversationId', 'createdAt', 'customerEmail', 'customerName',
+      'lastAttentionAt', 'lastAttentionType',
       /* Routing, added with two-shop support. The ID is what authorisation
          and reconciliation compare; the LABEL is derived from it by the
          server so no client has to know the words and no caller can supply
          them. Neither reveals anything about staff. */
       'lastMessageAt', 'locationId', 'locationLabel',
-      'messageCount', 'staffLastReadAt', 'status'
+      'messageCount', 'staffLastReadAt', 'status', 'unread'
     ]);
     assert.equal(res.payload.conversations[0].customerUid, undefined,
       'the customer uid must not be serialised');
@@ -133,6 +141,13 @@ describe('staff inbox', () => {
       assert.equal(res.payload.conversations[0][secret], undefined,
         secret + ' must not be serialised to a browser');
     }
+    /* staffReadVersion is NOT serialised. `unread` already answers the only
+       question anybody asks, and a field nobody needs cannot leak. */
+    assert.equal(res.payload.conversations[0].staffReadVersion, undefined);
+    assert.equal(res.payload.conversations[0].readVersion, undefined);
+    /* And NO MESSAGE TEXT. A notification says who is waiting and at which
+       shop; what they wrote stays in chatMessages until somebody opens it. */
+    assert.equal(res.payload.conversations[0].lastMessagePreview, undefined);
   });
 
   test('hard limit is enforced', async () => {

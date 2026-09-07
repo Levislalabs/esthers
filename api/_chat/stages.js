@@ -43,6 +43,19 @@ const STAGES = [
   'chat_start_transaction_failed',
   'chat_send_transaction_failed',
   'chat_close_transaction_failed',
+  /*
+   * chat_transfer_transaction_failed WAS MISSING until now, and its absence
+   * was silent: validStage() replaces anything it does not recognise with
+   * 'unknown_authenticated_error', so a failing transfer reported the least
+   * useful diagnostic available. The endpoint shipped with routing and has
+   * been asking for this token since; nothing was broken, but the one signal
+   * that would explain a transfer failure was being thrown away.
+   *
+   * The list is the reason a new route needs a line here. If you add a route
+   * with its own runStage() token, add it here in the same change.
+   */
+  'chat_transfer_transaction_failed',
+  'chat_read_transaction_failed',
   'firestore_operation_failed',
   'response_serialization_failed',
   /* nothing above matched */

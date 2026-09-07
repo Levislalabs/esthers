@@ -604,6 +604,79 @@ body.sc {
 
 .sc__dlg-choice-text { min-width: 0; }
 
+/* ------------------------------------------------- unread and alerts */
+
+/*
+ * "NEW", and it is meant to be impossible to miss.
+ *
+ * A filled orange pill with the word in it, not a coloured dot and not a
+ * tinted row: this is the thing somebody has to spot from across a shop, in
+ * daylight, at an angle, possibly colour blind. The row also gets a bar down
+ * its leading edge so the whole line reads as unfinished at a glance.
+ */
+.sc__new {
+  display: inline-block;
+  align-self: flex-start;
+  margin-bottom: 4px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--sc-orange);
+  color: #17120f;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.sc__row.is-unread {
+  border-left: 4px solid var(--sc-orange);
+  padding-left: 12px;
+  background: rgba(243, 108, 33, 0.07);
+}
+
+.sc__row.is-unread .sc__row-name { font-weight: 700; }
+
+/* ---- the alert controls in the top bar ---- */
+
+.sc__alerts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+/* On, and saying so. Outlined rather than filled - once alerts are running
+   this is a status first and a button second, and a permanently filled
+   primary button in the corner reads as something still to be done. */
+.sc__alerts-main.is-on {
+  border-color: var(--sc-orange);
+  color: var(--sc-orange);
+}
+
+.sc__alerts-main.is-on::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--sc-orange);
+  vertical-align: middle;
+}
+
+/* The one sentence that explains a degraded state - blocked pop-ups, a
+   browser with no Notification API, or sound muted. Hidden when there is
+   nothing to say. */
+.sc__alerts-note {
+  margin: 0;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--sc-line);
+  background: var(--sc-raised);
+  color: var(--sc-body-2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 /* ------------------------------------------------------------- phone */
 
 @media (max-width: 720px) {
@@ -625,6 +698,11 @@ body.sc {
      own line rather than squeezing the customer's name to nothing. */
   .sc__thread-head { flex-wrap: wrap; }
   .sc__loc--head { margin-left: 0; }
+
+  /* The alert controls take a full row of their own rather than crushing the
+     sign-out button off the edge. */
+  .sc__alerts { margin-left: 0; width: 100%; order: 3; }
+  .sc__alerts .sc__btn { flex: 1 1 auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -114,7 +114,7 @@ export const RECAPTCHA_ENTERPRISE_SITE_KEY = '6LcZfKotAAAAAG3nYWcAxT6P_nWyTRJp9X
  * moved and another did not, is the failure this catches. Nothing in this
  * module reads it.
  */
-export const CHAT_CLIENT_VERSION = '2026-09-06.1';
+export const CHAT_CLIENT_VERSION = '2026-09-06.2';
 
 /*
  * Where the Firebase Web SDK comes from.

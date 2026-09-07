@@ -139,6 +139,159 @@ than the line at the top of their panel.
 
 ---
 
+## Loud alerts: not missing a customer
+
+The shop is not sitting watching this page. Somebody is at a brake, or on the
+phone, or in another program — and a message that waits forty minutes is a
+customer who phoned somebody else. This is the part that shouts.
+
+### Turning it on
+
+Press **Enable loud alerts**, once, on each computer that should make a noise.
+
+You have to press it. Browsers refuse to let a page make a sound, or ask about
+desktop pop-ups, until somebody clicks something — there is no way to switch
+this on for you from here.
+
+When you press it:
+
+1. the sound is switched on for this page
+2. your browser asks whether Esther's may show desktop pop-ups — say **Allow**
+3. you hear the alert once, so you know what it sounds like and how loud it is
+
+The button then reads **Alerts ON**, and **Mute** and **Test alert** appear
+beside it.
+
+**You have to press it again after a reload.** The preference is remembered —
+the button will say it is on — but browsers require a fresh click per page load
+before a page may make a sound, and this one tells you so rather than pretending.
+
+### Mute and Test alert
+
+**Test alert** plays the sound and shows a pop-up. It touches nothing — no
+conversation is marked read, no customer is affected. Use it freely to check
+the volume.
+
+**Mute** silences the sound only. Unread badges, the pop-ups and the number in
+the browser tab all keep working. Press it again to unmute.
+
+### If your browser says no
+
+**Pop-ups blocked?** A line under the top bar says so. The sound, the unread
+badges and the tab count all still work — you just do not get the desktop
+notification. To change it, use your browser's site settings for esthers.ca.
+The page will not keep asking; a browser ignores a second request anyway.
+
+**No pop-up support at all?** Same thing: everything except the desktop pop-up
+still works, and the page says so.
+
+**No sound?** Check the computer's own volume, and whether the machine is in Do
+Not Disturb or focus mode. A web page cannot override either of those, and this
+one does not try.
+
+---
+
+## What you get when a customer writes
+
+- **A loud triple chime.**
+- **A desktop pop-up**, when your browser allows it, naming the shop and who
+  is waiting:
+
+      New customer message — Main Shop - 1st Avenue
+      John Smith is waiting for a reply.
+
+  A conversation handed over from the other shop says so instead, and does not
+  pretend to be a new message:
+
+      Conversation transferred — Specialty Shop - Keith Street
+      ABC Construction — this conversation was moved to your shop.
+
+  **The pop-up never shows what the customer wrote.** That is deliberate:
+  these appear on whatever screen the browser is on, and the shop monitors
+  face the counter. You get who is waiting and which shop — enough to decide
+  whether to walk over — and the message itself when you open the conversation.
+
+- **A big orange NEW on the conversation row**, which stays until somebody
+  opens it.
+- **A count in the browser tab**: `🔴 (2) Esther's Staff Chat`. That is the one
+  you see when the tab is a sliver behind three other windows.
+- **Unread counts beside the shop buttons**, e.g. *Main Shop - 1st Avenue (2)*.
+  That is two people **waiting**, not two conversations — a shop with forty
+  answered threads shows no number at all.
+
+### It keeps reminding you
+
+If nobody opens the conversation, the alert repeats about every **three
+minutes** for as long as it stays unread. It stops the moment somebody reads
+it — see below.
+
+You will not get an alert every fifteen seconds. One conversation, one message,
+one alert; then a reminder every three minutes until it is dealt with.
+
+---
+
+## "Read" means somebody actually opened it
+
+This is the whole point, so it is worth being exact.
+
+A conversation stops being unread when **an authorised staff member opens it
+and the transcript appears on their screen**, on a tab they are actually
+looking at.
+
+It does **not** count as read because:
+
+- it showed up in the list
+- the page checked for messages
+- a pop-up appeared
+- the tab was open in the background
+- somebody clicked a different conversation
+
+### One person looking is enough for the whole shop
+
+The unread state lives on the server, not in a browser tab. So if the counter
+computer and the office computer are both signed in:
+
+1. a customer writes — **both** start alerting
+2. somebody at the office opens it
+3. **the counter computer stops** on its next check, a few seconds later,
+   without anybody touching it
+
+That is what makes this workable with more than one screen in the building.
+
+### Transferring a conversation
+
+Moving a conversation to the other shop alerts the **destination** shop — they
+need to know work has arrived.
+
+The conversation closes on your screen when you move it, even if you can read
+both shops. That is deliberate: if it stayed open in front of you, your
+computer would mark it read and the other shop would never get their alert.
+Open it again if you need to keep working on it — you will not have lost
+anything.
+
+---
+
+## Alerts while you are working in another program
+
+**This is the main thing this feature is for**, and it comes with one honest
+limit.
+
+**It works while the staff chat tab is open and the browser is running.**
+Minimise the window, switch to another program, work in a different tab — the
+page keeps checking every thirty seconds and will chime and pop up at you.
+
+**It does NOT work if you close the tab, or quit the browser.** Nothing runs
+then. There is no way around that without a different kind of app, which is a
+possible later project (the technical name is Web Push).
+
+So: leave the staff chat tab open. That is the whole requirement.
+
+While the tab is in the background the page deliberately does less — it checks
+only for new open conversations and does not load any transcripts. If you turn
+alerts off, a background tab goes back to doing nothing at all.
+
+---
+
 ## How fresh is what I am looking at
 
 Every 15 seconds, while the tab is visible, the page asks the server for the
@@ -250,7 +403,8 @@ checks on every request.
 
 ## Rollout status
 
-- **The staff inbox: ready for review, not yet deployed.**
+- **Loud alerts and unread: ready for review, not yet deployed.**
+- **The staff inbox: deployed to production.**
 - **Public customer chat: still OFF.** Visitors get the existing
   under-construction chat panel. Both rollout gates in the customer code
   remain `false`, and no public page loads the real customer transport.

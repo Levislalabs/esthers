@@ -26,6 +26,7 @@ const crypto = require('crypto');
 /* Routing. The canonical shop ids, the missing-field fallback and the staff
    authorisation rules all live in one place - see locations.js. */
 const L = require('./locations.js');
+const A = require('./attention.js');
 
 const CONVERSATIONS = 'chatConversations';
 const MESSAGES = 'chatMessages';
@@ -139,6 +140,23 @@ function startRequestHash(input) {
   return crypto.createHash('sha256').update(canonical).digest('hex');
 }
 
+/*
+ * WHAT A CUSTOMER WROTE STAYS IN chatMessages.
+ *
+ * An earlier draft of the notification work copied the first hundred
+ * characters of each customer message onto the conversation document, so a
+ * desktop pop-up could quote it. That was removed deliberately and must not
+ * come back: a native notification lands on whatever screen the browser is
+ * on, and the shop's monitors are shared and face the counter. The
+ * requirement is to make a new message impossible to MISS, not to put its
+ * contents in front of whoever happens to be standing there before a staff
+ * member has decided to open the thread.
+ *
+ * The customer's name and the shop name are enough to act on, and both are
+ * already on the conversation. Message bodies live in chatMessages, behind
+ * the transcript endpoint, and are read when somebody opens the conversation.
+ */
+
 /* The only constructor for a message document. Four fields, no exceptions. */
 function buildMessage(conversationId, senderType, body, now) {
   return {
@@ -194,6 +212,22 @@ async function startConversation(db, deps, input) {
       lastMessageAt: now,
       messageCount: 1,
       closedAt: null,
+      /*
+       * UNREAD FROM THE INSTANT IT EXISTS: version 1, read 0.
+       *
+       * Written inside the same transaction as the conversation and its first
+       * message, so there is no separate "and now tell the shop" step that a
+       * later edit could forget or that a crash could skip. A conversation
+       * that exists and has never been looked at is exactly what unread
+       * means. See attention.js.
+       *
+       * The replay path returns from resolveExistingStart() before reaching
+       * here, so a retried start never raises attention a second time.
+       */
+      staffAttentionVersion: 1,
+      staffReadVersion: 0,
+      lastAttentionType: A.NEW_CONVERSATION,
+      lastAttentionAt: now,
       staffLastReadAt: null,
       customerLastReadAt: null,
       staffNotifiedAt: null,
@@ -326,11 +360,22 @@ async function sendCustomerMessage(db, deps, input) {
     }
 
     tx.set(msgRef, buildMessage(input.conversationId, 'customer', input.message, now));
-    tx.update(convRef, {
+    /*
+     * THE SHOP NEEDS TO SEE THIS ONE.
+     *
+     * Raised from the document read in THIS transaction, and only on the
+     * branch that actually stores a message - the duplicate branch above
+     * returns before it, so a retried send does not make the same message
+     * demand attention twice.
+     *
+     * staffReadVersion is untouched: whatever somebody has already
+     * acknowledged stays acknowledged, and this new version sits above it.
+     */
+    tx.update(convRef, Object.assign({
       updatedAt: now,
       lastMessageAt: now,
       messageCount: (typeof data.messageCount === 'number' ? data.messageCount : 0) + 1
-    });
+    }, A.raiseAttention(data, A.CUSTOMER_MESSAGE, now)));
     return { messageId: msgRef.id, duplicate: false };
   });
 
@@ -380,6 +425,13 @@ async function sendStaffMessage(db, deps, input) {
     if (existing.exists) return { messageId: msgRef.id, duplicate: true };
 
     tx.set(msgRef, buildMessage(input.conversationId, 'staff', input.message, now));
+    /*
+     * NO ATTENTION EVENT. Staff answering the shop's own phone is not
+     * something the shop needs to be told about, and raising a version here
+     * would make every reply light up every other computer in the building -
+     * including a reminder chime three minutes later. Deliberately absent,
+     * and there is a test that fails if somebody adds it.
+     */
     tx.update(convRef, {
       updatedAt: now,
       lastMessageAt: now,
@@ -447,7 +499,25 @@ function publicConversation(doc) {
     createdAt: toMillis(d.createdAt),
     lastMessageAt: toMillis(d.lastMessageAt),
     messageCount: typeof d.messageCount === 'number' ? d.messageCount : 0,
-    staffLastReadAt: toMillis(d.staffLastReadAt)
+    staffLastReadAt: toMillis(d.staffLastReadAt),
+    /*
+     * UNREAD, ANSWERED BY THE SERVER.
+     *
+     * The client is given the verdict, not the ingredients to compute it
+     * from: two dashboards must never disagree about whether somebody has
+     * looked at a conversation, and a client comparing formatted timestamps
+     * is how they would. attentionVersion travels because the client has to
+     * acknowledge A SPECIFIC VERSION - the one it rendered - and because it
+     * is the dedupe identity for alerts.
+     *
+     * staffReadVersion is deliberately NOT serialised. Nothing on a screen
+     * needs it, `unread` already answers the only question anybody asks, and
+     * a field nobody needs is a field that cannot leak.
+     */
+    unread: A.isUnread(d),
+    attentionVersion: A.attentionVersionOf(d),
+    lastAttentionType: A.attentionTypeOf(d),
+    lastAttentionAt: toMillis(d.lastAttentionAt)
   };
 }
 
@@ -739,14 +809,30 @@ async function transferConversation(db, deps, input) {
      * dashboard notices the move through locationId, which is part of its
      * reconciliation marker for exactly this reason.
      */
-    tx.update(ref, {
+    /*
+     * A HANDOFF IS SOMETHING THE DESTINATION SHOP HAS TO BE TOLD ABOUT.
+     *
+     * Keith Street has no other way to learn that 1st Avenue just sent them a
+     * curved-scupper job: no message was written, so lastMessageAt and
+     * messageCount do not move and nothing else on the document changes in a
+     * way their dashboard would notice as "somebody said something".
+     *
+     * Raised here rather than left to the client, and NOT auto-acknowledged
+     * for the person doing the transferring even when they can also read the
+     * destination - see the note on requestTransfer() in chat-staff.js. The
+     * destination team gets their alert.
+     *
+     * The same-shop no-op returns above without reaching this line, so
+     * double-clicking Move does not manufacture attention.
+     */
+    tx.update(ref, Object.assign({
       locationId: input.locationId,
       previousLocationId: from,
       lastTransferredAt: now,
       lastTransferredByStaffUid: input.actor.uid,
       transferCount: (typeof data.transferCount === 'number' ? data.transferCount : 0) + 1,
       updatedAt: now
-    });
+    }, A.raiseAttention(data, A.TRANSFER, now)));
 
     return {
       conversationId: ref.id,
@@ -757,8 +843,75 @@ async function transferConversation(db, deps, input) {
   });
 }
 
+/*
+ * Somebody actually looked at this conversation.
+ *
+ * The client sends THE VERSION IT RENDERED, not "now" and not "the latest".
+ * That single choice is what makes the whole thing race-safe: between the
+ * transcript being fetched and this call landing, the customer may well have
+ * sent another message, and acknowledging anything the client did not see
+ * would lose it silently. See the worked example at the top of attention.js.
+ *
+ * AUTHORISED AGAINST THE CURRENT STORED LOCATION, INSIDE THE TRANSACTION.
+ * A conversation can be transferred in the gap between opening it and
+ * acknowledging it. Main-only staff who had it open must not be able to clear
+ * Keith Street's unread flag with a stale id and a stale version - so the
+ * shop is re-read here, not taken from whatever the route decided a moment
+ * ago.
+ *
+ * IDEMPOTENT. Two computers acknowledging the same version, or the same
+ * computer acknowledging twice, both settle on the same number:
+ * resolveReadVersion() is a pure max/min with no accumulation in it.
+ */
+async function markConversationRead(db, deps, input) {
+  const now = deps.now();
+  const ref = db.collection(CONVERSATIONS).doc(input.conversationId);
+
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    /* Same answer as a conversation that never existed - see LocationError. */
+    if (!snap.exists) throw new LocationError();
+
+    const data = snap.data() || {};
+    if (!L.canAccessLocation(input.actor, L.resolveLocation(data))) {
+      throw new LocationError();
+    }
+
+    const before = A.readVersionOf(data);
+    const attention = A.attentionVersionOf(data);
+    const after = A.resolveReadVersion(data, input.attentionVersion);
+
+    /*
+     * NOTHING TO WRITE is the common case by a wide margin: a poll that
+     * re-renders a thread already acknowledged lands here every time. Writing
+     * anyway would cost a document write per poll per open dashboard, for no
+     * change at all.
+     */
+    if (after !== before) {
+      tx.update(ref, {
+        staffReadVersion: after,
+        /* The old timestamp field, kept and still maintained because it is
+           genuinely useful to a person reading a document by hand. It is no
+           longer the authority for anything, and it moves ONLY when the read
+           version genuinely advances. */
+        staffLastReadAt: now,
+        updatedAt: now
+      });
+    }
+
+    return {
+      conversationId: ref.id,
+      attentionVersion: attention,
+      readVersion: after,
+      unread: attention > after,
+      changed: after !== before
+    };
+  });
+}
+
 module.exports = {
   CONVERSATIONS, MESSAGES, MAX_TRANSCRIPT, MAX_INBOX,
+  markConversationRead,
   LocationError, loadConversationForStaff, transferConversation,
   START_ID_DOMAIN, START_HASH_DOMAIN,
   ServiceError, messageId, buildMessage, startConversationId, startRequestHash,
