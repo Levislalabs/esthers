@@ -363,6 +363,118 @@ racing another transfer cannot act on a location that has already moved.
 was said. The dashboard notices the move through `locationId`, which is in its
 reconciliation marker for exactly this reason.
 
+### POST /api/admin/chat/read — staff
+
+`{ "conversationId": "...", "attentionVersion": 7 }`
+
+→ `{ "ok": true, "conversationId": "...", "attentionVersion": 8,
+     "readVersion": 7, "unread": true }`
+
+"An authorised person actually looked at this conversation, at this version."
+
+**The version is the one the browser RENDERED, not "now" and not "the
+latest".** Between fetching a transcript and this call landing, the customer
+may well have written again; acknowledging "now" would swallow that message
+without anybody seeing it. See §5b.
+
+Location is re-checked against the CURRENT stored shop, inside the
+transaction — so a conversation transferred away in the gap cannot be marked
+read by the old shop with a stale id. Same 404 as an id that never existed.
+
+Spends the `staff_read` bucket (120/min), separate from `staff_write` on
+purpose: read acknowledgements are far more frequent than replies, and a busy
+morning of READING must never leave somebody unable to ANSWER.
+
+Idempotent: two computers acknowledging the same version settle on the same
+number.
+
+---
+
+## 5b. Unread: two counters, and why not a timestamp
+
+`api/_chat/attention.js` is the whole model. Four fields on the conversation:
+
+| field | written by |
+| --- | --- |
+| `staffAttentionVersion` | the server, when something happens staff must see |
+| `staffReadVersion` | only an explicit acknowledgement of an observed version |
+| `lastAttentionAt` | with each raise |
+| `lastAttentionType` | `new_conversation` \| `customer_message` \| `transfer` |
+
+```
+unread  <=>  staffAttentionVersion > staffReadVersion
+```
+
+### What raises it, and what deliberately does not
+
+| event | effect |
+| --- | --- |
+| conversation created | `1 / 0`, type `new_conversation` — unread from the instant it exists |
+| genuine customer message | `+1`, type `customer_message` |
+| **idempotent replay** of either | **nothing** — the duplicate branch returns first |
+| **staff reply** | **nothing** — the shop is not alerted by itself |
+| changed transfer | `+1`, type `transfer`, and NOT `messageCount` / `lastMessageAt` |
+| same-shop transfer (no-op) | **nothing** — no write at all |
+| close | **nothing** — a closed conversation leaves the open list, which is what stops it being monitored |
+
+### The race a timestamp loses
+
+```
+staffAttentionVersion = 7
+staff renders v7
+customer writes            -> server is now v8
+staff acknowledges 7
+```
+
+`resolveReadVersion()` is `max(existingRead, min(observed, currentAttention))`,
+so this ends at `read = 7`, `attention = 8` — **still unread**. Three promises
+in one line: never acknowledge more than was seen; never go backwards; pure, so
+it is testable without a database. A `staffLastReadAt >= lastMessageAt` design
+marks v8 read and the message is lost silently. There is a test for exactly
+this sequence.
+
+`staffLastReadAt` is KEPT and still written — it is useful to a person reading
+a document by hand — but it is no longer the authority for anything, and it
+moves only when the read version genuinely advances.
+
+### Legacy conversations
+
+Documents written before this phase have neither field. Both normalise to `0`,
+`0 > 0` is false, and **no historical conversation alerts anybody on deploy**.
+Nothing is backfilled. The next genuine customer message raises `0` to `1` and
+it behaves normally from then on.
+
+Anything that is not a clean non-negative integer — a string, a float, a
+negative, NaN, a value past the ceiling — also reads as `0`. A document nobody
+can explain should look READ rather than wake the shop up.
+
+### What the browser is told
+
+The staff conversation summary gains `unread`, `attentionVersion`,
+`lastAttentionType` and `lastAttentionAt`.
+
+**NO MESSAGE BODY IS COPIED ONTO THE CONVERSATION.** An earlier draft carried a
+100-character preview of the customer's last message so a desktop notification
+could quote it; it was removed. A native notification lands on whatever screen
+the browser is on, and a shop monitor faces the counter — the requirement is to
+make a new message impossible to *miss*, not to put its contents in front of
+whoever is standing there before a staff member has opened the thread. The
+customer's name and the shop name are enough to act on, and both were already
+on the conversation. Message bodies stay in `chatMessages`, behind
+`/api/admin/chat/messages`. Tests assert no such field is written on create or
+on send, and that none appears in any staff response.
+
+**`unread` is the server's verdict, not ingredients for the client to compute
+one from**: two dashboards must never disagree about whether anybody has
+looked. `staffReadVersion` is NOT serialised — nothing on a screen needs it.
+
+`GET /api/admin/chat/messages` returns the same summary, so the client knows
+which version it rendered. **It does not mark anything read**: fetching is not
+looking, and a GET that mutates state surprises everybody.
+
+The customer API is untouched — `/api/chat/status` still returns exactly
+`{ ok, conversationId, status, locationId }`.
+
 ---
 
 ## 5a. Routing: two shops, one allow-list
@@ -1078,6 +1190,14 @@ copy the three fields into the Vercel dashboard and delete the file.
   staff member who should see only one shop needs `locations: ['main']` (or
   `['specialty']`) added to their `staff/{uid}` document — **this phase changes
   no production staff document**. Deploy the composite index before doing it.
-- **Transfer notifications.** Nothing tells the destination shop that a
-  conversation has arrived. The dashboard notices within one 15-second inbox
-  poll; an email or a sound is a separate decision.
+- **Alerts after the browser is closed.** The staff dashboard chimes and pops
+  up while its tab is open and the browser is running — including in the
+  background. Nothing runs once the tab is closed or the browser quits, because
+  nothing here is a service worker. Web Push / PWA would change that and is a
+  separate phase.
+- **Email or SMS notification.** Not built. The only channels are the browser
+  tab, its sound, and its desktop notification.
+- **A per-staff-member read state.** `staffReadVersion` is one number for the
+  whole shop: once anybody authorised opens a conversation it is read for
+  everyone, which is the behaviour the shop asked for. "Who read it" would be a
+  different, larger model.

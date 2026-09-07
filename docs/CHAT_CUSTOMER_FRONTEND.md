@@ -237,7 +237,7 @@ one keeps running it after a deployment. That is how a closed conversation
 came back looking live on the real site after the restore fix had shipped and
 `/api/chat/status` was answering `closed` correctly.
 
-**One version string, bumped by hand, in four files:**
+**One version string, bumped by hand, in five files:**
 
 | file | where it appears |
 |---|---|
@@ -245,9 +245,11 @@ came back looking live on the real site after the restore fix had shipped and
 | `assets/js/chat-customer.js` | `export const CHAT_CLIENT_VERSION = '…';` **and** the `?v=` on **both** static imports: `./chat-app-check.js?v=…` and `./chat-locations.js?v=…` |
 | `assets/js/chat-app-check.js` | `export const CHAT_CLIENT_VERSION = '…';` |
 | `assets/js/chat-locations.js` | `export const CHAT_CLIENT_VERSION = '…';` |
+| `assets/js/chat-staff-alerts.js` | `export const CHAT_CLIENT_VERSION = '…';` |
 
-`assets/js/chat-staff.js` and `staff/chat/index.html` carry it too — the staff
-page versions its own `<script type="module">` and stylesheet directly.
+`assets/js/chat-staff.js` carries it in its declaration and in the `?v=` of
+**both** its static imports, and `staff/chat/index.html` versions its own
+`<script type="module">` and stylesheet directly.
 
 Bump all of them in the same commit as any change to the chat client. A test
 pins every copy to the others, so a half-finished bump fails the suite.
@@ -266,7 +268,7 @@ version travels *inside* `chat.js`, which is a plain
 `<script src="/assets/js/chat.js">` in seven pages — no query can version the
 thing that carries the version. Held at the old build, the loader believes the
 old version and imports the old URL; measured, the page then runs stale code
-end to end. So the four local chat modules, and only those, are now served:
+end to end. So the local chat modules, and only those, are now served:
 
 ```
 Cache-Control: public, max-age=0, must-revalidate

@@ -34,6 +34,17 @@ const OPTIONS = {
        conversation's OWN location before returning any message. */
     const result = await runStage('firestore_operation_failed',
       () => S.readTranscript(ctx.db, { conversationId, limit, actor: ctx.actor }));
+
+    /*
+     * THIS GET DOES NOT MARK ANYTHING READ, and must not start.
+     *
+     * The conversation it returns carries `attentionVersion` - the version of
+     * this transcript - so the client can acknowledge exactly what it
+     * rendered, afterwards, through POST /api/admin/chat/read. Fetching is
+     * not looking: a background tab, a prefetch, or a poll that nobody is
+     * watching all fetch, and none of them means a person read anything.
+     * There is a test that fails if a read acknowledgement appears here.
+     */
     return H.ok(ctx.res, result);
   }
 };

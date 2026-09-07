@@ -58,8 +58,19 @@ const RULES = {
   send_uid:    { limit: 20, windowMs:      60 * 1000 },
   /* customer message, per hashed IP */
   send_ip:     { limit: 60, windowMs:      60 * 1000 },
-  /* any staff mutation (reply or close), per staff uid */
+  /* any staff mutation (reply, close or transfer), per staff uid */
   staff_write: { limit: 60, windowMs:      60 * 1000 },
+  /*
+   * Marking a conversation read, per staff uid. A SEPARATE bucket on purpose.
+   *
+   * A read acknowledgement is a write, so it is metered - but it is issued
+   * automatically whenever a transcript renders, which happens far more often
+   * than anybody replies. Sharing staff_write would mean a busy morning of
+   * READING could leave somebody unable to ANSWER, which is precisely the
+   * wrong thing to run out of. Generous enough that ordinary use never
+   * touches it, tight enough that a script cannot hammer the endpoint.
+   */
+  staff_read:  { limit: 120, windowMs:     60 * 1000 },
   /*
    * A PROVEN REPLAY of a request that was already stored.
    *

@@ -61,7 +61,7 @@ import {
   getFirebaseApp,
   initAppCheck,
   authorizedFetch
-} from './chat-app-check.js?v=2026-09-06.1';
+} from './chat-app-check.js?v=2026-09-06.2';
 
 /*
  * The three shops, for display and for a client-side sanity check only.
@@ -75,7 +75,7 @@ import {
  * Same ?v= as the import above, and for the same measured reason: a query on
  * this module's own URL does not reach its specifiers.
  */
-import * as LOC from './chat-locations.js?v=2026-09-06.1';
+import * as LOC from './chat-locations.js?v=2026-09-06.2';
 
 /*
  * The chat client version. THE SAME STRING as CHAT_CLIENT_VERSION in
@@ -96,7 +96,7 @@ import * as LOC from './chat-locations.js?v=2026-09-06.1';
  * out rather than interpolated. That is the cost of the guarantee, and the
  * test is what keeps the copies honest.
  */
-export const CHAT_CLIENT_VERSION = '2026-09-06.1';
+export const CHAT_CLIENT_VERSION = '2026-09-06.2';
 
 /* -------------------------------------------------------------------------
  * THE ROLLOUT GATE

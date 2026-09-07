@@ -50,7 +50,7 @@ import {
   getFirebaseApp,
   initAppCheck,
   authorizedFetch
-} from './chat-app-check.js?v=2026-09-06.1';
+} from './chat-app-check.js?v=2026-09-06.2';
 
 /*
  * The three shops, for DISPLAY only.
@@ -63,13 +63,26 @@ import {
  * Same ?v= as the import above, for the same measured reason: a query on this
  * module's own URL does not reach its specifiers.
  */
-import * as LOC from './chat-locations.js?v=2026-09-06.1';
+import * as LOC from './chat-locations.js?v=2026-09-06.2';
+
+/*
+ * The noise: sound, desktop notifications, the tab-title count, reminders.
+ *
+ * Kept in its own module because it is the only part of this page that talks
+ * to the browser's media and notification machinery, and none of it should be
+ * tangled up with authorisation or API calls. It makes no request and holds
+ * no token: this file hands it conversations the SERVER has already
+ * authorised, and it turns them into sound and text.
+ *
+ * Same ?v= as the imports above, for the same measured reason.
+ */
+import { createAlerts, REMINDER_MS } from './chat-staff-alerts.js?v=2026-09-06.2';
 
 /* The chat client version. THE SAME STRING as CHAT_CLIENT_VERSION in
    chat.js, chat-customer.js and chat-app-check.js, and the same string as the
    ?v= in the import above and in staff/chat/index.html. One version for the
    whole local chat graph; a test pins every copy to the others. */
-export const CHAT_CLIENT_VERSION = '2026-09-06.1';
+export const CHAT_CLIENT_VERSION = '2026-09-06.2';
 
 /* Pinned by path, exactly as the customer transport loads it. No cache-busting
    query: gstatic already serves an exact version per URL. */
@@ -82,6 +95,7 @@ const API_MESSAGES = '/api/admin/chat/messages';
 const API_SEND = '/api/admin/chat/send';
 const API_CLOSE = '/api/admin/chat/close';
 const API_TRANSFER = '/api/admin/chat/transfer';
+const API_READ = '/api/admin/chat/read';
 
 /* Server-side caps, repeated here only so the client never asks for more than
    the server will give and get a 400 for its trouble. */
@@ -119,6 +133,25 @@ const MESSAGE_MAX = 2000;
  * move. See threadMarker and reconcileSelected() below.
  */
 const INBOX_POLL_MS = 15 * 1000;
+
+/*
+ * THE BACKGROUND CHECK, AND WHY IT EXISTS AT ALL.
+ *
+ * Until now this page deliberately did nothing while the tab was hidden -
+ * nobody is reading it, so why spend the requests. That is exactly wrong for
+ * a notification: the whole point is the tab being in the background while
+ * somebody works in another program.
+ *
+ * So when alerts are ON, a hidden tab keeps checking, at half the rate and
+ * with a much smaller appetite: the OPEN conversation list and nothing else.
+ * No transcripts, no closed conversations, no second timer - the same single
+ * interval simply skips every other tick while hidden.
+ *
+ * When alerts are OFF the old behaviour is untouched: a hidden tab makes no
+ * request at all.
+ */
+const HIDDEN_ATTENTION_POLL_MS = 30 * 1000;
+const HIDDEN_TICKS_PER_CHECK = HIDDEN_ATTENTION_POLL_MS / INBOX_POLL_MS;
 
 /*
  * Failure backoff. A poll that fails does not simply keep firing on schedule
@@ -352,6 +385,36 @@ export class StaffDashboard {
 
     this.transferring = false;
 
+    /*
+     * The alert engine. Created here rather than at module scope so a second
+     * dashboard in the same page - there is never one in production, but a
+     * test can make one - gets its own dedupe ledger and its own title state.
+     */
+    this.alerts = (this.deps.createAlerts || createAlerts)({ deps: this.deps.alertDeps });
+
+    /*
+     * THE AUTHORITATIVE OPEN LIST, which is NOT the same thing as the list on
+     * screen.
+     *
+     * Notifications must not depend on which filter somebody happens to be
+     * looking at: a person reviewing the Closed tab still needs to hear about
+     * a new customer. So the alert monitor is fed from this, refreshed
+     * separately whenever the rendered inbox is not already the open one.
+     */
+    this.openConversations = [];
+    this.attentionLoading = false;
+    this.attentionFailures = 0;
+    this.attentionFailedAt = 0;
+
+    /* Counts hidden poll ticks so the single interval can run the background
+       check at half rate. See HIDDEN_ATTENTION_POLL_MS. */
+    this.hiddenTicks = 0;
+
+    /* One read acknowledgement in flight at a time, and never a second for a
+       version this tab has already acknowledged. */
+    this.readAcking = false;
+    this.ackedVersions = new Map();
+
     /* One request of each kind in flight at a time. A poll tick that lands on
        top of a manual refresh is two requests for one answer. */
     this.inboxLoading = false;
@@ -452,6 +515,9 @@ export class StaffDashboard {
     callUi(this.ui, 'onFilter', (value) => this.setFilter(value));
     callUi(this.ui, 'onLocationFilter', (value) => this.setLocationFilter(value));
     callUi(this.ui, 'onTransfer', () => this.requestTransfer());
+    callUi(this.ui, 'onEnableAlerts', () => this.enableAlerts());
+    callUi(this.ui, 'onToggleMute', () => this.toggleMute());
+    callUi(this.ui, 'onTestAlert', () => this.testAlert());
     callUi(this.ui, 'onRefresh', () => this.refreshAll());
     callUi(this.ui, 'onSend', (fields) => this.send(fields));
     callUi(this.ui, 'onClose', () => this.requestClose());
@@ -586,6 +652,11 @@ export class StaffDashboard {
     this.staff = { email: user.email || null, uid: user.uid || null };
     this.applyInbox(payload);
     callUi(this.ui, 'setStaff', { email: this.staff.email });
+    /* Whatever this browser was set to last time. The preference survives a
+       reload; the audio unlock does NOT - browsers require a fresh gesture
+       per page load - so the control reflects "on, needs a click" honestly
+       rather than claiming a speaker it has not been given yet. */
+    callUi(this.ui, 'setAlertStatus', this.alerts.status());
     callUi(this.ui, 'setPhase', 'ready');
     this.watch();
     return true;
@@ -631,6 +702,20 @@ export class StaffDashboard {
     this.locations = [];
     this.locationFilter = null;
     this.transferring = false;
+    /*
+     * The title goes back to what it was, and the dedupe ledger is emptied.
+     * A phantom "(3)" left on a signed-out page is a lie about somebody
+     * else's customers, and a ledger carried across accounts would silence
+     * the next person's first alert.
+     */
+    this.openConversations = [];
+    this.attentionLoading = false;
+    this.attentionFailures = 0;
+    this.attentionFailedAt = 0;
+    this.hiddenTicks = 0;
+    this.readAcking = false;
+    this.ackedVersions = new Map();
+    this.alerts.reset();
     this.inboxFailures = 0;
     this.threadFailures = 0;
     this.inboxLoading = false;
@@ -640,6 +725,7 @@ export class StaffDashboard {
     callUi(this.ui, 'setStaff', null);
     callUi(this.ui, 'setLocationFilters', []);
     callUi(this.ui, 'setLocationFilter', null);
+    callUi(this.ui, 'setUnreadCounts', { total: 0, byLocation: {} });
     callUi(this.ui, 'renderInbox', []);
     callUi(this.ui, 'renderThread', null);
     callUi(this.ui, 'setSelected', null);
@@ -682,10 +768,34 @@ export class StaffDashboard {
 
     this.inboxTimer = this.deps.setInterval(() => {
       if (this.stopped || !this.staff) { this.stopWatch(); return; }
-      if (this.isHidden()) return;          /* nobody is looking */
-      /* The ONLY timer. The open thread rides on this one's answer - see
-         reconcileSelected(). */
-      this.loadInbox({ silent: true });
+
+      if (!this.isHidden()) {
+        this.hiddenTicks = 0;
+        /* STILL THE ONLY TIMER. The open thread rides on this one's answer -
+           see reconcileSelected() - and so does the alert monitor, from the
+           open list this fetches or from the small extra request below. */
+        this.loadInbox({ silent: true });
+        return;
+      }
+
+      /*
+       * HIDDEN. Somebody is working in another program, which is precisely
+       * when a waiting customer matters most - but only if they asked to be
+       * told. Alerts off and this returns immediately, exactly as this page
+       * behaved before notifications existed.
+       */
+      if (!this.alerts.status().enabled) return;
+
+      /* Half rate: the interval is 15s, the background check is 30s. One
+         timer, two cadences, nothing to leak. */
+      this.hiddenTicks += 1;
+      if (this.hiddenTicks < HIDDEN_TICKS_PER_CHECK) return;
+      this.hiddenTicks = 0;
+
+      /* THE OPEN LIST AND NOTHING ELSE. No transcript, no closed
+         conversations, no reconciliation - there is nothing on screen to
+         reconcile with. */
+      this.refreshAttention({ silent: true });
     }, INBOX_POLL_MS);
 
     const doc = this.deps.document();
@@ -693,6 +803,7 @@ export class StaffDashboard {
       this.onVisibility = () => {
         if (this.stopped || !this.staff) return;
         if (this.isHidden()) return;
+        this.hiddenTicks = 0;
         /* Back from a hidden tab: catch up at once rather than waiting out
            the remainder of an interval that did nothing while away. The
            transcript follows only if the summary moved while we were away. */
@@ -723,28 +834,41 @@ export class StaffDashboard {
   }
 
   /* A poll that keeps failing backs off; one that succeeds resets. */
+  /*
+   * Backoff, per kind of request.
+   *
+   * THREE KINDS NOW: 'inbox', 'thread' and 'attention' - the background
+   * open-list check. A chain of if/else read fine with two and would have
+   * quietly grown a bug with three, so the counters are addressed by name
+   * instead. Adding a fourth is one entry, not one more branch in three
+   * functions.
+   */
+  failureState(kind) {
+    if (kind === 'inbox') return ['inboxFailures', 'inboxFailedAt'];
+    if (kind === 'attention') return ['attentionFailures', 'attentionFailedAt'];
+    return ['threadFailures', 'threadFailedAt'];
+  }
+
   shouldSkip(kind) {
-    const failures = kind === 'inbox' ? this.inboxFailures : this.threadFailures;
+    const [countKey, atKey] = this.failureState(kind);
+    const failures = this[countKey];
     if (failures === 0) return false;
     const base = INBOX_POLL_MS;
     const wait = Math.min(base * Math.pow(2, failures), MAX_BACKOFF_MS);
-    const last = kind === 'inbox' ? this.inboxFailedAt : this.threadFailedAt;
+    const last = this[atKey];
     return typeof last === 'number' && (this.deps.now() - last) < wait;
   }
 
   noteFailure(kind) {
-    if (kind === 'inbox') {
-      this.inboxFailures += 1;
-      this.inboxFailedAt = this.deps.now();
-    } else {
-      this.threadFailures += 1;
-      this.threadFailedAt = this.deps.now();
-    }
+    const [countKey, atKey] = this.failureState(kind);
+    this[countKey] += 1;
+    this[atKey] = this.deps.now();
   }
 
   noteSuccess(kind) {
-    if (kind === 'inbox') { this.inboxFailures = 0; this.inboxFailedAt = null; }
-    else { this.threadFailures = 0; this.threadFailedAt = null; }
+    const [countKey, atKey] = this.failureState(kind);
+    this[countKey] = 0;
+    this[atKey] = null;
   }
 
   /* ------------------------------------------------------------ inbox */
@@ -785,6 +909,111 @@ export class StaffDashboard {
     }
   }
 
+  /* ------------------------------------------------------ attention */
+
+  /*
+   * The authoritative list of OPEN conversations this account may see.
+   *
+   * WHY IT IS NOT JUST THE INBOX. The rendered inbox follows whichever filter
+   * somebody picked; a person reviewing Closed still needs to hear about a
+   * new customer, and a hidden tab has no rendered inbox at all. So the alert
+   * monitor is fed from here.
+   *
+   * WHEN THE RENDERED LIST IS ALREADY THE OPEN ONE - the common case, because
+   * Open is the default filter - applyInbox() feeds the monitor directly and
+   * this makes no request. The extra fetch happens only while somebody is
+   * looking at Closed, or while the tab is hidden.
+   */
+  async refreshAttention(options) {
+    const opts = options || {};
+    if (this.stopped || !this.staff) return false;
+    if (this.attentionLoading) return false;        /* single flight */
+    if (opts.silent && this.shouldSkip('attention')) return false;
+
+    this.attentionLoading = true;
+    try {
+      const payload = await apiGet(this.deps,
+        API_CONVERSATIONS + '?status=open&limit=' + MAX_INBOX,
+        this.identity.user);
+      if (this.stopped) return false;
+      this.noteSuccess('attention');
+      this.applyAttention(payload);
+      return true;
+    } catch (err) {
+      if (this.stopped) return false;
+      this.noteFailure('attention');
+      /*
+       * A background failure says nothing to anybody: there is no screen to
+       * put it on, and the backoff above is what stops a dead network turning
+       * into a request storm. An expired session is the exception - that is
+       * handled centrally, and it clears the page.
+       */
+      return await this.reportFailure(err, { silent: true });
+    } finally {
+      this.attentionLoading = false;
+    }
+  }
+
+  /*
+   * Hand the open list to the alert engine and keep the copy the filters and
+   * counts are computed from.
+   *
+   * The engine decides what is worth a noise; this function decides nothing
+   * about authorisation, because the list already arrived authorised.
+   */
+  applyAttention(payload) {
+    const list = payload && Array.isArray(payload.conversations)
+      ? payload.conversations
+      : [];
+    this.openConversations = list.map(normaliseConversation).filter(Boolean);
+    this.alerts.observe(this.openConversations);
+    callUi(this.ui, 'setUnreadCounts', this.unreadCounts());
+    return true;
+  }
+
+  /*
+   * Unread counts per shop, plus a total, derived from the list already
+   * fetched - no extra query, and never a count of conversations that merely
+   * exist. A shop with four open threads and none unread shows nothing.
+   */
+  unreadCounts() {
+    const counts = { total: 0, byLocation: {} };
+    for (const c of this.openConversations) {
+      if (!c.unread) continue;
+      counts.total += 1;
+      counts.byLocation[c.locationId] = (counts.byLocation[c.locationId] || 0) + 1;
+    }
+    return counts;
+  }
+
+  /* ---- the alert controls ---- */
+
+  async enableAlerts() {
+    const status = await this.alerts.enable();
+    callUi(this.ui, 'setAlertStatus', status);
+    /* Turning alerts on in a hidden tab is not a normal path, but it costs
+       nothing to be correct about: start monitoring from the next tick. */
+    this.hiddenTicks = 0;
+    return status;
+  }
+
+  toggleMute() {
+    const status = this.alerts.setMuted(!this.alerts.status().muted);
+    callUi(this.ui, 'setAlertStatus', status);
+    return status;
+  }
+
+  /*
+   * Test alert. Touches no conversation and calls no API - see test() in
+   * chat-staff-alerts.js. Checking the volume must not mark a customer read
+   * or invent unread state.
+   */
+  testAlert() {
+    const result = this.alerts.test();
+    callUi(this.ui, 'setAlertStatus', result.status);
+    return result;
+  }
+
   applyInbox(payload) {
     const list = payload && Array.isArray(payload.conversations)
       ? payload.conversations
@@ -804,6 +1033,21 @@ export class StaffDashboard {
     callUi(this.ui, 'renderInbox', this.visibleConversations());
     callUi(this.ui, 'setSelected', this.selectedId);
     this.reconcileSelected();
+
+    /*
+     * FEED THE ALERT MONITOR, AND DO NOT SPEND A SECOND REQUEST TO DO IT.
+     *
+     * When the rendered filter is Open - the default, and what almost
+     * everybody is looking at - this list IS the authoritative open list, so
+     * the monitor is fed from it directly. Only when somebody is reviewing
+     * Closed does the monitor need its own small fetch, because alerts must
+     * not depend on which tab of the inbox happens to be showing.
+     */
+    if (this.filter === 'open') {
+      this.applyAttention(payload);
+    } else if (!this.isHidden()) {
+      this.refreshAttention({ silent: true });
+    }
   }
 
   /* ------------------------------------------------------------ shops */
@@ -1042,6 +1286,106 @@ export class StaffDashboard {
     this.threadMarker = conversation ? markerFor(conversation) : null;
 
     callUi(this.ui, 'renderThread', this.thread);
+
+    /*
+     * AND ONLY NOW - after it is on the screen - is it read.
+     *
+     * The order is the point. renderThread() is the moment a person could
+     * actually have seen the transcript; everything before it is a fetch, and
+     * a fetch is not somebody looking. acknowledgeRead() applies the rest of
+     * the conditions.
+     */
+    this.acknowledgeRead(conversation);
+  }
+
+  /*
+   * Tell the server somebody genuinely looked at this, at this version.
+   *
+   * FIVE CONDITIONS, AND EVERY ONE OF THEM HAS A FAILURE BEHIND IT:
+   *
+   *   the transcript rendered   a fetch is not a reading. This runs after
+   *                             renderThread(), never instead of it.
+   *   the tab is VISIBLE        a background tab that polled a transcript has
+   *                             shown nobody anything. This is the condition
+   *                             that stops a hidden window silently clearing
+   *                             the shop's unread flag.
+   *   still selected            the answer may have landed after somebody
+   *                             clicked a different row; acknowledging then
+   *                             would mark the WRONG conversation read.
+   *   we know the version       no version, nothing to acknowledge.
+   *   not already acknowledged  this tab does not re-post a version it has
+   *                             already settled, so a reconciliation re-read
+   *                             of an unchanged thread costs no request.
+   *
+   * THE VERSION IS THE ONE THAT WAS RENDERED, never "the latest". If the
+   * customer wrote again between the fetch and this call, that newer version
+   * is not acknowledged and the conversation stays unread - which is the
+   * entire reason this is a version and not a timestamp. See attention.js.
+   *
+   * A FAILURE IS SILENT. Nothing on screen depends on it, the next poll will
+   * try again, and a red banner because a read receipt did not land would be
+   * noise about something nobody asked for.
+   */
+  async acknowledgeRead(conversation) {
+    if (this.stopped || !this.staff || !conversation) return false;
+    const id = conversation.conversationId;
+    const version = conversation.attentionVersion;
+    if (!id || typeof version !== 'number' || version <= 0) return false;
+    if (id !== this.selectedId) return false;
+    if (this.isHidden()) return false;
+    if (this.readAcking) return false;
+    if (this.ackedVersions.get(id) === version) return false;
+
+    this.readAcking = true;
+    try {
+      await apiPost(this.deps, API_READ, {
+        conversationId: id,
+        attentionVersion: version
+      }, this.identity.user);
+      if (this.stopped) return false;
+      this.ackedVersions.set(id, version);
+      /*
+       * Reflect it locally at once rather than waiting up to fifteen seconds
+       * for the next poll: the row this person is looking at should stop
+       * saying NEW the moment they look at it. The SERVER is still the
+       * authority - the next poll overwrites this - but a badge that lingers
+       * on the thread somebody has open reads as broken.
+       */
+      this.markLocallyRead(id, version);
+      return true;
+    } catch (err) {
+      /* Deliberately quiet - see the note above. An expired session is the
+         one exception, and reportFailure() handles that centrally. */
+      if (this.stopped) return false;
+      const described = describeFailure(err);
+      if (described.kind === 'auth') await this.denyAccess(described.text);
+      return false;
+    } finally {
+      this.readAcking = false;
+    }
+  }
+
+  /* Optimistic local echo of a read that the server has just accepted. Both
+     lists, because either one may be what is on screen. */
+  markLocallyRead(conversationId, version) {
+    let touched = false;
+    for (const list of [this.conversations, this.openConversations]) {
+      for (const c of list) {
+        if (c.conversationId === conversationId && c.attentionVersion === version
+            && c.unread) {
+          c.unread = false;
+          touched = true;
+        }
+      }
+    }
+    if (!touched) return false;
+    callUi(this.ui, 'renderInbox', this.visibleConversations());
+    callUi(this.ui, 'setSelected', this.selectedId);
+    callUi(this.ui, 'setUnreadCounts', this.unreadCounts());
+    /* Drop it from the alert ledger too, so no reminder is owed for a thread
+       this person is looking at right now. */
+    this.alerts.observe(this.openConversations);
+    return true;
   }
 
   isClosed() {
@@ -1249,22 +1593,49 @@ export class StaffDashboard {
        */
       const landed = LOC.resolveLocation(payload && payload.locationId);
       const mine = this.locations.indexOf(landed) !== -1;
-      if (!mine) {
+      const changed = !payload || payload.changed !== false;
+
+      /*
+       * LET GO OF IT ON EVERY CHANGED TRANSFER - not only when it has moved
+       * out of reach.
+       *
+       * A handoff raises attention for the DESTINATION shop, and Keith Street
+       * has to get that alert. If a manager who can read both shops kept the
+       * thread selected, the very next poll would re-render it, the render
+       * would acknowledge the new version, and the destination's unread flag
+       * would be cleared by the person who just handed the work over -
+       * before anybody there had seen it.
+       *
+       * This is the smallest reliable fix: deselecting means nothing
+       * re-renders, so nothing acknowledges. Re-opening it is an intentional
+       * act, and an intentional act IS somebody looking - at which point
+       * marking it read is correct.
+       *
+       * The acknowledgement ledger is cleared for this conversation too, so a
+       * later genuine re-open is not mistaken for one this tab already
+       * settled.
+       */
+      if (changed) {
         this.selectedId = null;
         this.thread = null;
         this.threadMarker = null;
+        this.ackedVersions.delete(conversationId);
         callUi(this.ui, 'setSelected', null);
         callUi(this.ui, 'renderThread', null);
-        callUi(this.ui, 'setNotice',
-          'Moved to ' + LOC.labelFor(landed)
-            + '. It is no longer in your inbox.');
+        callUi(this.ui, 'setNotice', mine
+          ? 'Moved to ' + LOC.labelFor(landed)
+              + '. Open it again if you need to keep working on it.'
+          : 'Moved to ' + LOC.labelFor(landed)
+              + '. It is no longer in your inbox.');
         this.loadInbox({ silent: true });
         return true;
       }
 
-      callUi(this.ui, 'setNotice', 'Moved to ' + LOC.labelFor(landed) + '.');
-      this.noteSuccess('thread');
-      await this.loadThread(conversationId, { silent: true });
+      /* Already there: a safe no-op that wrote nothing and raised no
+         attention, so there is nothing to hand over and no reason to lose
+         the thread somebody is working in. */
+      callUi(this.ui, 'setNotice',
+        'It is already at ' + LOC.labelFor(landed) + '.');
       this.loadInbox({ silent: true });
       return true;
     } catch (err) {
@@ -1339,6 +1710,25 @@ function normaliseConversation(raw) {
     status: raw.status === 'closed' ? 'closed' : 'open',
     locationId: locationId,
     locationLabel: LOC.labelFor(locationId),
+    /*
+     * UNREAD IS THE SERVER'S VERDICT, taken as given.
+     *
+     * Not recomputed here from versions, deliberately: two dashboards
+     * comparing numbers themselves is how they end up disagreeing about
+     * whether anybody has looked at a conversation. attentionVersion is kept
+     * because the client has to acknowledge the exact version it renders, and
+     * because it is half the dedupe identity for alerts.
+     *
+     * lastAttentionType is normalised to the three the server can send, so an
+     * unexpected value picks the ordinary "new message" wording rather than
+     * reaching a screen.
+     */
+    unread: raw.unread === true,
+    attentionVersion: typeof raw.attentionVersion === 'number'
+      && raw.attentionVersion >= 0 ? raw.attentionVersion : 0,
+    lastAttentionType: ATTENTION_TYPES.indexOf(raw.lastAttentionType) !== -1
+      ? raw.lastAttentionType : null,
+    lastAttentionAt: millis(raw.lastAttentionAt),
     createdAt: millis(raw.createdAt),
     lastMessageAt: millis(raw.lastMessageAt),
     messageCount: typeof raw.messageCount === 'number' && raw.messageCount >= 0
@@ -1346,6 +1736,9 @@ function normaliseConversation(raw) {
       : 0
   };
 }
+
+/* The three the server may send. Anything else is not echoed. */
+const ATTENTION_TYPES = ['new_conversation', 'customer_message', 'transfer'];
 
 function normaliseMessage(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -1578,11 +1971,39 @@ export function buildUi(root) {
   bar.appendChild(el('span', { class: 'sc__brand', text: "Esther's Sheet Metal" }));
   bar.appendChild(el('span', { class: 'sc__brand-sub', text: 'Staff Chat' }));
   const who = el('span', { class: 'sc__who' });
+  /*
+   * THE ALERT CONTROLS.
+   *
+   * "Enable loud alerts" is a real button because it has to be: every browser
+   * requires a genuine user gesture before a page may make a sound, and
+   * before it may ask about desktop notifications. There is no way to turn
+   * this on for somebody, and a page that could would be a page nobody keeps
+   * open.
+   *
+   * Once on, the button becomes the status - "Alerts ON" - and Mute and Test
+   * appear beside it. Test is deliberately inert: it makes a noise and
+   * touches nothing.
+   */
+  const alertBox = el('div', { class: 'sc__alerts' });
+  const alertBtn = el('button', { class: 'sc__btn sc__btn--primary sc__alerts-main',
+    type: 'button', text: 'Enable loud alerts' });
+  const muteBtn = el('button', { class: 'sc__btn sc__btn--quiet', type: 'button',
+    text: 'Mute', hidden: 'hidden' });
+  const testBtn = el('button', { class: 'sc__btn sc__btn--quiet', type: 'button',
+    text: 'Test alert', hidden: 'hidden' });
+  const alertNote = el('p', { class: 'sc__alerts-note', role: 'status',
+    'aria-live': 'polite', hidden: 'hidden' });
+  alertBox.appendChild(alertBtn);
+  alertBox.appendChild(muteBtn);
+  alertBox.appendChild(testBtn);
+
   const signOutBtn = el('button', { class: 'sc__btn sc__btn--quiet', type: 'button',
     text: 'Sign out' });
+  bar.appendChild(alertBox);
   bar.appendChild(who);
   bar.appendChild(signOutBtn);
   appView.appendChild(bar);
+  appView.appendChild(alertNote);
 
   const notice = el('p', { class: 'sc__notice', role: 'status', 'aria-live': 'polite',
     hidden: 'hidden' });
@@ -1748,6 +2169,29 @@ export function buildUi(root) {
   let sendBusy = false;
   let pendingConfirm = null;
   let pendingTransfer = null;      /* run(locationId) once one is chosen */
+  let unreadCounts = { total: 0, byLocation: {} };
+  let locationChoices = [];
+
+  /*
+   * Re-label the shop chips with their unread counts.
+   *
+   * Rewritten from the stored labels rather than by appending to whatever the
+   * button currently says - appending is how "Main Shop (2) (3) (1)" happens.
+   * The count is in the accessible name too, so it is not a visual-only cue.
+   */
+  function paintChipCounts() {
+    const chips = locFilter.querySelectorAll('.sc__chip');
+    for (let i = 0; i < chips.length; i++) {
+      const id = chips[i].getAttribute('data-location');
+      const base = id
+        ? (locationChoices.find(function (c) { return c && c.id === id; }) || {}).label
+        : 'All shops';
+      const n = id ? (unreadCounts.byLocation[id] || 0) : (unreadCounts.total || 0);
+      chips[i].textContent = n > 0
+        ? String(base == null ? id : base) + ' (' + n + ')'
+        : String(base == null ? id : base);
+    }
+  }
   let xferInputs = [];
   let lastFocus = null;
 
@@ -1784,6 +2228,15 @@ export function buildUi(root) {
   });
   transferBtn.addEventListener('click', function () {
     if (typeof handlers.transfer === 'function') handlers.transfer();
+  });
+  alertBtn.addEventListener('click', function () {
+    if (typeof handlers.enableAlerts === 'function') handlers.enableAlerts();
+  });
+  muteBtn.addEventListener('click', function () {
+    if (typeof handlers.toggleMute === 'function') handlers.toggleMute();
+  });
+  testBtn.addEventListener('click', function () {
+    if (typeof handlers.testAlert === 'function') handlers.testAlert();
   });
   locAllBtn.addEventListener('click', function () {
     if (typeof handlers.locationFilter === 'function') handlers.locationFilter(null);
@@ -1927,6 +2380,7 @@ export function buildUi(root) {
      * stale-node bug.
      */
     setLocationFilters: function (list) {
+      locationChoices = Array.isArray(list) ? list : [];
       const items = Array.isArray(list) ? list : [];
       clear(locFilter);
       if (!items.length) {
@@ -1951,6 +2405,64 @@ export function buildUi(root) {
         locFilter.appendChild(chip);
       }
       locFilter.hidden = false;
+      paintChipCounts();
+    },
+
+    /*
+     * What the alert control says about itself.
+     *
+     * Four honest states rather than a checkbox that lies:
+     *   not enabled          the setup button, because a gesture is required
+     *   enabled, no audio    on, but this page load has not been clicked yet
+     *   enabled + denied     sound and badges work, desktop popups do not,
+     *                        and it says so rather than silently doing less
+     *   unsupported          the browser has no Notification API at all
+     *
+     * Never re-prompts after a denial: the browser would refuse anyway, and
+     * a button that appears to do nothing is worse than one that explains.
+     */
+    setAlertStatus: function (status) {
+      const st = status || {};
+      const on = st.enabled === true && st.audio === true;
+      alertBtn.textContent = on ? 'Alerts ON' : 'Enable loud alerts';
+      alertBtn.className = 'sc__btn sc__alerts-main '
+        + (on ? 'sc__btn--quiet is-on' : 'sc__btn--primary');
+      alertBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      muteBtn.hidden = !on;
+      testBtn.hidden = !on;
+      muteBtn.textContent = st.muted === true ? 'Unmute' : 'Mute';
+      muteBtn.setAttribute('aria-pressed', st.muted === true ? 'true' : 'false');
+
+      let note = '';
+      if (st.enabled === true && st.audio !== true) {
+        note = 'Alerts are on for this browser. Press the button once on this '
+          + 'page to switch the sound on.';
+      } else if (on && st.supported === false) {
+        note = 'This browser cannot show desktop pop-ups. The sound, the '
+          + 'unread badges and the tab title still work.';
+      } else if (on && st.permission === 'denied') {
+        note = 'Desktop pop-ups are blocked for this site in your browser '
+          + 'settings. The sound, the unread badges and the tab title still '
+          + 'work.';
+      } else if (on && st.muted === true) {
+        note = 'Sound is muted. Unread badges and the tab title still work.';
+      }
+      alertNote.textContent = note;
+      alertNote.hidden = note === '';
+    },
+
+    /*
+     * Unread counts beside the shop filters.
+     *
+     * A COUNT OF UNREAD, NOT A COUNT OF CONVERSATIONS. "Main Shop (2)" means
+     * two people are waiting, not that there are two threads - a shop with
+     * forty answered conversations shows nothing at all, which is the only
+     * reading that makes the number worth glancing at.
+     */
+    setUnreadCounts: function (counts) {
+      unreadCounts = (counts && typeof counts === 'object')
+        ? counts : { total: 0, byLocation: {} };
+      paintChipCounts();
     },
 
     setLocationFilter: function (id) {
@@ -1985,10 +2497,28 @@ export function buildUi(root) {
       for (const c of items) {
         const li = el('li', { class: 'sc__row-wrap' });
         const btn = el('button', {
-          class: 'sc__row', type: 'button',
+          class: 'sc__row' + (c.unread ? ' is-unread' : ''), type: 'button',
           'data-id': c.conversationId,
           'aria-pressed': c.conversationId === selectedId ? 'true' : 'false'
         });
+        /*
+         * THE WORD "NEW", not a coloured dot.
+         *
+         * This is the thing somebody has to spot from across a shop, in
+         * daylight, at an angle - so it is spelled out, in a filled pill, at
+         * the top of the row, and the row itself is marked too. Colour is
+         * decoration; the word is the signal, and it is in the button's
+         * accessible name because that is what a screen reader announces.
+         */
+        if (c.unread) {
+          btn.appendChild(el('span', { class: 'sc__new', text: 'NEW' }));
+          /* Said once more for a screen reader, which announces the button's
+             accessible name and would otherwise reach "NEW" only after the
+             customer's name. Visually it is not repeated - the pill is
+             already there and saying it twice is clutter. */
+          btn.setAttribute('aria-label',
+            'Unread. ' + (c.customerName || 'Someone'));
+        }
         /* text: - textContent underneath. A name of "<img onerror=…>" is a
            name, not markup. */
         btn.appendChild(el('span', { class: 'sc__row-name',
@@ -2192,7 +2722,10 @@ export function buildUi(root) {
     onClose: function (h) { handlers.close = h; },
     onBack: function (h) { handlers.back = h; },
     onLocationFilter: function (h) { handlers.locationFilter = h; },
-    onTransfer: function (h) { handlers.transfer = h; }
+    onTransfer: function (h) { handlers.transfer = h; },
+    onEnableAlerts: function (h) { handlers.enableAlerts = h; },
+    onToggleMute: function (h) { handlers.toggleMute = h; },
+    onTestAlert: function (h) { handlers.testAlert = h; }
   };
 }
 

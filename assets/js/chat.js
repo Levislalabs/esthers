@@ -111,7 +111,7 @@
 
      It does NOT gate anything. The gate is CHAT_PUBLIC_ENABLED above; this
      string only decides WHICH build loads, never WHETHER one does. -------- */
-  var CHAT_CLIENT_VERSION = '2026-09-06.1';
+  var CHAT_CLIENT_VERSION = '2026-09-06.2';
 
   /* Root-relative, like every other asset path in this file: the widget is
      on /services and /gallery too, and a bare path resolves against the

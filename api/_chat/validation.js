@@ -43,7 +43,23 @@ const FORBIDDEN_FIELDS = [
   'locationLabel', 'branch', 'branchName', 'assignedLocation', 'assignedStaff',
   'staffLocations', 'locations', 'previousLocationId', 'lastTransferredAt',
   'lastTransferredByStaffUid', 'transferCount', 'transferredBy',
-  'transferHistory', 'permissions'
+  'transferHistory', 'permissions',
+  /*
+   * UNREAD STATE IS THE SERVER'S.
+   *
+   * attentionVersion IS accepted on /api/admin/chat/read - that is the whole
+   * point of the endpoint: a staff member says which version they saw, and
+   * the server decides what that means. These are the fields around it. A
+   * body setting staffReadVersion directly would be marking itself read at
+   * any number it liked, and one setting staffAttentionVersion could silence
+   * a waiting customer or invent an alert for a conversation nobody wrote to.
+   *
+   * unread is here too: it is a DERIVED answer the server computes, and
+   * accepting one would let a caller assert a conclusion rather than the
+   * evidence for it.
+   */
+  'staffAttentionVersion', 'staffReadVersion', 'lastAttentionAt',
+  'lastAttentionType', 'unread', 'attentionCount', 'readVersion'
 ];
 
 class ValidationError extends Error {

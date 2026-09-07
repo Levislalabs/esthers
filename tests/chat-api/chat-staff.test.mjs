@@ -40,6 +40,7 @@ const WIDGET_PATH = ROOT + '/assets/js/chat.js';
 const PAGE_PATH = ROOT + '/staff/chat/index.html';
 const CSS_PATH = ROOT + '/assets/css/chat-staff.css';
 const LOCATIONS_PATH = ROOT + '/assets/js/chat-locations.js';
+const ALERTS_PATH = ROOT + '/assets/js/chat-staff-alerts.js';
 const STUB_PATH = ROOT + '/tests/chat-api/fixtures/firebase-staff-stub.mjs';
 
 const STAFF_SRC = readFileSync(STAFF_PATH, 'utf8');
@@ -55,6 +56,21 @@ const STUB_URL = pathToFileURL(STUB_PATH).href;
    Nothing to stub: the file imports nothing, and the labels it holds are
    exactly what these tests are checking reaches the screen. */
 const LOCATIONS_URL = pathToFileURL(LOCATIONS_PATH).href;
+
+/* The real alert engine, not a stub: its dedupe, cooldown and wording are
+   exactly what several tests below are checking. Every browser API it uses
+   is injectable, so it runs in Node unchanged. */
+const ALERTS_URL = pathToFileURL(ALERTS_PATH).href;
+
+/* The reminder cooldown, read from the module rather than restated, so a
+   change to it moves these tests with it instead of breaking them. */
+const REMINDER_WINDOW = (await import(ALERTS_URL)).REMINDER_MS;
+
+/* Read as CODE - comments blanked, string literals kept - for the same reason
+   every other source assertion in this file is: these modules explain
+   themselves at length and the prose names the very things they promise not
+   to do. */
+const ALERTS_CODE = codeAndStrings(readFileSync(ALERTS_PATH, 'utf8'));
 
 /* These files document themselves at length, and the prose names the very
    things the assertions promise are absent - "no innerHTML anywhere in this
@@ -80,6 +96,7 @@ async function load() {
     .replace(/const SDK_AUTH = [^;]+;/, `const SDK_AUTH = ${JSON.stringify(STUB_URL)};`)
     .replace(/from '\.\/chat-app-check\.js(\?[^']*)?'/, `from ${JSON.stringify(appCheckUrl)}`)
     .replace(/from '\.\/chat-locations\.js(\?[^']*)?'/, `from ${JSON.stringify(LOCATIONS_URL)}`)
+    .replace(/from '\.\/chat-staff-alerts\.js(\?[^']*)?'/, `from ${JSON.stringify(ALERTS_URL)}`)
     + `\n/* cache-bust ${salt} */\n`;
 
   const mod = await import(dataUrl(staffSrc));
@@ -142,6 +159,10 @@ function recordingUi() {
     ui.locationFilters = l;
     ui.locationFiltersHistory.push(l);
   };
+  ui.alertStatus = null;
+  ui.setAlertStatus = (st) => { ui.calls.push('setAlertStatus'); ui.alertStatus = st; };
+  ui.unreadCounts = null;
+  ui.setUnreadCounts = (c) => { ui.calls.push('setUnreadCounts'); ui.unreadCounts = c; };
   ui.setLocationFilter = (v) => {
     ui.calls.push('setLocationFilter');
     ui.locationFilter = v;
@@ -722,6 +743,7 @@ describe('the dashboard speaks the existing staff API exactly', () => {
       '/api/admin/chat/close',
       '/api/admin/chat/conversations',
       '/api/admin/chat/messages',
+      '/api/admin/chat/read',
       '/api/admin/chat/send',
       '/api/admin/chat/transfer'
     ]);
@@ -2126,7 +2148,7 @@ describe('the open transcript is re-read only when it actually changed', () => {
 
 describe('the whole local chat graph moved to one new version', () => {
   test('every local chat module and the staff page agree', () => {
-    const WANT = '2026-09-06.1';
+    const WANT = '2026-09-06.2';
     const files = {
       'assets/js/chat.js': [/var CHAT_CLIENT_VERSION = '([^']+)';/],
       'assets/js/chat-customer.js': [/export const CHAT_CLIENT_VERSION = '([^']+)';/,
@@ -2584,37 +2606,54 @@ describe('the dashboard shows which shop, and can hand a thread over', () => {
       }
     });
 
-  test('a manager keeps it, and the header follows', async () => {
-    const { mod } = await load();
-    let where = 'main';
-    const summary = () => Object.assign({}, CONV_A, { locationId: where });
-    const { ui, fetcher, session } = await signedIn(mod, {
-      responder: staffApi({
-        conversations: () => inboxWith([summary()], ['main', 'specialty', 'unassigned']),
-        messages: () => jsonResponse(200,
-          { ok: true, limit: 200, conversation: summary(), messages: [] }),
-        transfer: () => {
-          where = 'specialty';
-          return jsonResponse(200, { ok: true, conversationId: 'conv-a',
-            locationId: 'specialty', previousLocationId: 'main', changed: true });
-        }
-      })
-    });
-    try {
-      session.select('conv-a');
-      await tick();
-      session.requestTransfer();
-      await ui.lastTransfer('specialty');
-      await tick();
+  test('A MANAGER LETS GO OF IT TOO, so the destination keeps its alert',
+    async () => {
+      /*
+       * CHANGED DELIBERATELY WHEN NOTIFICATIONS SHIPPED.
+       *
+       * A handoff raises attention for the DESTINATION shop. If a manager who
+       * can read both shops kept the thread selected, the next poll would
+       * re-render it, the render would acknowledge the new version, and the
+       * destination's unread flag would be cleared by the very person who
+       * handed the work over - before anybody at Keith Street had seen it.
+       *
+       * Deselecting is the smallest reliable fix: nothing re-renders, so
+       * nothing acknowledges. Re-opening is an intentional act, and an
+       * intentional act IS somebody looking.
+       */
+      const { mod } = await load();
+      let where = 'main';
+      const summary = () => Object.assign({}, CONV_A, { locationId: where });
+      const { ui, fetcher, session } = await signedIn(mod, {
+        responder: staffApi({
+          conversations: () => inboxWith([summary()], ['main', 'specialty', 'unassigned']),
+          messages: () => jsonResponse(200,
+            { ok: true, limit: 200, conversation: summary(), messages: [] }),
+          transfer: () => {
+            where = 'specialty';
+            return jsonResponse(200, { ok: true, conversationId: 'conv-a',
+              locationId: 'specialty', previousLocationId: 'main', changed: true });
+          }
+        })
+      });
+      try {
+        session.select('conv-a');
+        await tick();
+        session.requestTransfer();
+        await ui.lastTransfer('specialty');
+        await tick();
 
-      assert.equal(session.selectedId, 'conv-a', 'still theirs to read');
-      assert.equal(ui.thread.conversation.locationLabel,
-        'Specialty Shop - Keith Street');
-      assert.equal(ui.notice, 'Moved to Specialty Shop - Keith Street.');
-    } finally {
-      fetcher.restore();
-    }
-  });
+        assert.equal(session.selectedId, null, 'let go of, even by a manager');
+        assert.equal(session.thread, null);
+        assert.equal(ui.thread, null);
+        /* And they are told it is still theirs to open - a manager losing the
+           thread with no explanation reads as an error. */
+        assert.equal(ui.notice, 'Moved to Specialty Shop - Keith Street. '
+          + 'Open it again if you need to keep working on it.');
+      } finally {
+        fetcher.restore();
+      }
+    });
 
   test('THE LABEL IN THE CONFIRMATION IS DERIVED, NOT ECHOED', async () => {
     const { mod } = await load();
@@ -2754,4 +2793,1146 @@ describe('the dashboard shows which shop, and can hand a thread over', () => {
       assert.equal(/innerHTML|outerHTML|insertAdjacentHTML|document\.write/
         .test(STAFF_CODE), false);
     });
+});
+
+/* ============================ 108-160. LOUD ALERTS AND UNREAD, ON THE PAGE */
+
+/*
+ * MAKING IT HARD TO MISS A CUSTOMER.
+ *
+ * The shop is not watching a browser tab. Somebody is at a brake, or on the
+ * phone, or in another program - and a message that waits forty minutes is a
+ * customer who phoned somebody else. These tests are about the noise, and
+ * about the one thing that must stop it: an authorised person actually
+ * opening the conversation.
+ *
+ * WHAT IS NOT TESTED HERE: whether a given account may see a given
+ * conversation. That is decided by the server and proven against the real
+ * emulator in tests/chat-api/unread.test.mjs. Everything below is what the
+ * page does with an answer it has already been given.
+ */
+describe('the shop is told, until somebody looks', () => {
+  const UNREAD = (over) => Object.assign({
+    conversationId: 'c-new', customerName: 'John Smith',
+    customerEmail: 'john@example.com', status: 'open',
+    locationId: 'main', locationLabel: 'Main Shop - 1st Avenue',
+    lastMessageAt: 5000, messageCount: 2,
+    unread: true, attentionVersion: 4, lastAttentionType: 'customer_message',
+    lastAttentionAt: 5000
+  }, over || {});
+
+  /*
+   * A fake browser: a clock we drive, storage we can inspect, a Notification
+   * constructor that records instead of popping, and an AudioContext that
+   * counts oscillators instead of making a noise. Every one of these is
+   * injected, because none of them can be driven honestly otherwise.
+   */
+  function fakeBrowser(over) {
+    const o = over || {};
+    const state = {
+      now: 1000000,
+      notifications: [],
+      requested: 0,
+      sounds: 0,
+      title: "Esther's Staff Chat",
+      store: new Map(),
+      audioFails: o.audioFails === true
+    };
+    function Notif(title, opts) {
+      state.notifications.push({ title: title, body: (opts || {}).body,
+        tag: (opts || {}).tag });
+    }
+    Notif.permission = o.permission || 'granted';
+    Notif.requestPermission = async () => {
+      state.requested += 1;
+      Notif.permission = o.grantOnRequest === false ? 'denied' : 'granted';
+      return Notif.permission;
+    };
+    state.Notif = Notif;
+
+    state.deps = {
+      now: () => state.now,
+      storage: () => (o.noStorage ? null : {
+        getItem: (k) => (state.store.has(k) ? state.store.get(k) : null),
+        setItem: (k, v) => { state.store.set(k, String(v)); },
+        removeItem: (k) => { state.store.delete(k); }
+      }),
+      document: () => ({
+        get title() { return state.title; },
+        set title(v) { state.title = v; }
+      }),
+      notificationApi: () => (o.noNotificationApi ? null : Notif),
+      audioContext: () => {
+        if (state.audioFails) return null;
+        return {
+          state: 'running',
+          currentTime: 0,
+          resume: () => {},
+          createOscillator: () => ({
+            type: '', frequency: { value: 0 },
+            connect: () => {}, start: () => { state.sounds += 1; }, stop: () => {}
+          }),
+          createGain: () => ({
+            gain: { setValueAtTime: () => {}, exponentialRampToValueAtTime: () => {} },
+            connect: () => {}
+          }),
+          destination: {}
+        };
+      }
+    };
+    /* Three oscillators per chime - see CHIME in chat-staff-alerts.js. */
+    state.chimes = () => state.sounds / 3;
+    return state;
+  }
+
+  async function alertsFor(browser) {
+    const { createAlerts } = await import(ALERTS_URL);
+    return createAlerts({ deps: browser.deps });
+  }
+
+  /* ---------------------------------------------------- the alert engine */
+
+  test('NO ALERT FOR A CONVERSATION THAT IS ALREADY READ', async () => {
+    const b = fakeBrowser();
+    const alerts = await alertsFor(b);
+    await alerts.enable();
+    b.sounds = 0; b.notifications.length = 0;
+
+    const out = alerts.observe([UNREAD({ unread: false })]);
+    assert.equal(out.unreadCount, 0);
+    assert.deepEqual(out.fired, []);
+    assert.equal(b.notifications.length, 0);
+    assert.equal(b.chimes(), 0);
+  });
+
+  test('ONE INITIAL ALERT PER conversationId + attentionVersion', async () => {
+    const b = fakeBrowser();
+    const alerts = await alertsFor(b);
+    await alerts.enable();
+    b.sounds = 0; b.notifications.length = 0;
+
+    /* The same poll answer, ten times over. */
+    for (let i = 0; i < 10; i += 1) alerts.observe([UNREAD()]);
+    assert.equal(b.notifications.length, 1, 'ten polls, one alert');
+    assert.equal(b.chimes(), 1);
+    assert.deepEqual(alerts._pending(), ['c-new:4']);
+  });
+
+  test('a NEW version is a new alert', async () => {
+    const b = fakeBrowser();
+    const alerts = await alertsFor(b);
+    await alerts.enable();
+    b.sounds = 0; b.notifications.length = 0;
+
+    alerts.observe([UNREAD({ attentionVersion: 4 })]);
+    alerts.observe([UNREAD({ attentionVersion: 4 })]);
+    assert.equal(b.notifications.length, 1);
+
+    /* The customer wrote again. */
+    alerts.observe([UNREAD({ attentionVersion: 5 })]);
+    assert.equal(b.notifications.length, 2, 'the second message is heard');
+    /* And the old key is gone, so it cannot remind about a version that is
+       no longer outstanding. */
+    assert.deepEqual(alerts._pending(), ['c-new:5']);
+  });
+
+  test('THE EXACT SHOP NAME IS IN EVERY NOTIFICATION', async () => {
+    const b = fakeBrowser();
+    const alerts = await alertsFor(b);
+    await alerts.enable();
+    b.notifications.length = 0;
+
+    alerts.observe([
+      UNREAD({ conversationId: 'a', locationId: 'main',
+        locationLabel: 'Main Shop - 1st Avenue' }),
+      UNREAD({ conversationId: 'b', locationId: 'specialty',
+        locationLabel: 'Specialty Shop - Keith Street',
+        customerName: 'ABC Construction' }),
+      UNREAD({ conversationId: 'c', locationId: 'unassigned',
+        locationLabel: 'Not Sure / Unassigned', customerName: 'Pat' })
+    ]);
+
+    assert.equal(b.notifications[0].title,
+      'New customer message — Main Shop - 1st Avenue');
+    assert.equal(b.notifications[0].body, 'John Smith is waiting for a reply.');
+    assert.equal(b.notifications[1].title,
+      'New customer message — Specialty Shop - Keith Street');
+    assert.equal(b.notifications[1].body,
+      'ABC Construction is waiting for a reply.');
+    assert.equal(b.notifications[2].title,
+      'New customer message — Not Sure / Unassigned');
+    assert.equal(b.notifications[2].body, 'Pat is waiting for a reply.');
+  });
+
+  test('NO CUSTOMER MESSAGE TEXT IS EVER IN A NOTIFICATION', async () => {
+    /*
+     * A native notification lands on whatever screen the browser is on, and a
+     * shop monitor faces the counter. Making a message impossible to MISS
+     * does not require putting its contents in front of whoever is standing
+     * there before a staff member has opened the thread.
+     *
+     * The engine is handed a conversation carrying every field-name a message
+     * body might arrive under. None of them reaches a notification.
+     */
+    const b = fakeBrowser();
+    const alerts = await alertsFor(b);
+    await alerts.enable();
+    b.notifications.length = 0;
+
+    const secret = 'THE-QUOTE-IS-FOUR-THOUSAND-DOLLARS';
+    alerts.observe([UNREAD({
+      lastMessagePreview: secret, messagePreview: secret, preview: secret,
+      lastMessageBody: secret, lastMessageText: secret, snippet: secret,
+      body: secret, message: secret,
+      customerEmail: 'john@example.com'
+    })]);
+
+    const n = b.notifications[0];
+    const whole = JSON.stringify(n);
+    assert.equal(whole.indexOf(secret), -1, 'message text reached a notification');
+    assert.equal(whole.indexOf('@example.com'), -1, 'the email leaked');
+    assert.equal(n.body, 'John Smith is waiting for a reply.');
+  });
+
+  test('A CONVERSATION WITH NO NAME STILL SAYS SOMEBODY IS WAITING',
+    async () => {
+      const b = fakeBrowser();
+      const alerts = await alertsFor(b);
+      await alerts.enable();
+      for (const nameless of [undefined, null, '', '   ', 42]) {
+        b.notifications.length = 0;
+        alerts.observe([UNREAD({ conversationId: 'n' + String(nameless),
+          customerName: nameless })]);
+        assert.equal(b.notifications[0].body,
+          'A customer is waiting for a reply.', JSON.stringify(nameless));
+      }
+    });
+
+  test('A TRANSFER IS NOT ANNOUNCED AS A NEW MESSAGE', async () => {
+    /* Sending somebody looking for words the customer never wrote is worse
+       than not telling them at all. */
+    const b = fakeBrowser();
+    const alerts = await alertsFor(b);
+    await alerts.enable();
+    b.notifications.length = 0;
+
+    alerts.observe([UNREAD({ lastAttentionType: 'transfer',
+      locationLabel: 'Specialty Shop - Keith Street',
+      customerName: 'ABC Construction' })]);
+    assert.equal(b.notifications[0].title,
+      'Conversation transferred — Specialty Shop - Keith Street');
+    assert.equal(b.notifications[0].body,
+      'ABC Construction — this conversation was moved to your shop.');
+    assert.equal(b.notifications[0].body.indexOf('waiting for a reply'), -1,
+      'a handoff is not described as a new message');
+  });
+
+  test('one notification per conversation, replaced rather than stacked',
+    async () => {
+      const b = fakeBrowser();
+      const alerts = await alertsFor(b);
+      await alerts.enable();
+      b.notifications.length = 0;
+      alerts.observe([UNREAD()]);
+      assert.equal(b.notifications[0].tag, 'esthers-chat-c-new',
+        'tagged by conversation, so a second replaces the first');
+    });
+
+  test('HOSTILE CUSTOMER TEXT CANNOT INJECT ANYTHING', async () => {
+    const b = fakeBrowser();
+    const alerts = await alertsFor(b);
+    await alerts.enable();
+    b.notifications.length = 0;
+
+    alerts.observe([UNREAD({
+      customerName: '<img src=x onerror="alert(1)">\nsecond\x07line'
+    })]);
+    const n = b.notifications[0];
+    /* It survives as TEXT - the Notification API renders a body as text, not
+       markup, and every other destination is textContent. What is stripped is
+       the control characters and the newline, which would only make a
+       notification unreadable. */
+    assert.equal(n.body,
+      '<img src=x onerror="alert(1)"> second line is waiting for a reply.');
+    assert.equal(n.body.indexOf('\n'), -1, 'flattened');
+    assert.equal(n.body.indexOf('\x07'), -1, 'no terminal bell');
+    assert.ok(n.body.length < 400, 'and bounded');
+  });
+
+  test('AN OVERSIZED OR HOSTILE SHOP LABEL IS BOUNDED TOO', async () => {
+    /*
+     * The label reaching this module is derived by chat-staff.js from the
+     * location id, so in production it is one of exactly three strings. That
+     * is a promise made in another file, and this is the seatbelt: even
+     * handed something arbitrary, a notification title stays a readable line
+     * rather than four kilobytes with a newline in it.
+     */
+    const b = fakeBrowser();
+    const alerts = await alertsFor(b);
+    await alerts.enable();
+    b.notifications.length = 0;
+
+    alerts.observe([UNREAD({
+      locationLabel: 'X'.repeat(4000) + '\nsecond\x07line' })]);
+    const t = b.notifications[0].title;
+    assert.ok(t.length < 200, 'bounded: ' + t.length);
+    assert.equal(t.indexOf('\n'), -1, 'flattened');
+    assert.equal(t.indexOf('\x07'), -1, 'no terminal bell');
+    assert.match(t, /^New customer message — X+$/);
+  });
+
+  test('a very long name or message cannot make a notification unreadable',
+    async () => {
+      const b = fakeBrowser();
+      const alerts = await alertsFor(b);
+      await alerts.enable();
+      b.notifications.length = 0;
+      alerts.observe([UNREAD({ customerName: 'N'.repeat(4000) })]);
+      assert.ok(b.notifications[0].body.length <= 260);
+    });
+
+  /* ------------------------------------------------------- the reminders */
+
+  test('NO REMINDER BEFORE THE COOLDOWN', async () => {
+    const b = fakeBrowser();
+    const alerts = await alertsFor(b);
+    await alerts.enable();
+    b.notifications.length = 0;
+
+    alerts.observe([UNREAD()]);
+    assert.equal(b.notifications.length, 1, 'the initial alert');
+
+    /* Every fifteen seconds for just under three minutes. */
+    for (let t = 15000; t < REMINDER_WINDOW; t += 15000) {
+      b.now += 15000;
+      alerts.observe([UNREAD()]);
+    }
+    assert.equal(b.notifications.length, 1, 'and not one more');
+  });
+
+  test('A REMINDER AFTER THE COOLDOWN, AND THEN AGAIN', async () => {
+    const b = fakeBrowser();
+    const alerts = await alertsFor(b);
+    await alerts.enable();
+    b.notifications.length = 0;
+
+    alerts.observe([UNREAD()]);
+    b.now += REMINDER_WINDOW;
+    const out = alerts.observe([UNREAD()]);
+    assert.equal(out.fired.length, 1);
+    assert.equal(out.fired[0].kind, 'reminder');
+    assert.equal(b.notifications.length, 2);
+
+    /* And it keeps going while it stays unread. */
+    b.now += REMINDER_WINDOW;
+    alerts.observe([UNREAD()]);
+    assert.equal(b.notifications.length, 3);
+  });
+
+  test('THE REMINDER STOPS THE MOMENT THE SERVER SAYS SOMEBODY LOOKED',
+    async () => {
+      /*
+       * The core promise. Another computer marked it read; this browser's
+       * next poll returns unread=false; the reminder stops here without this
+       * machine doing anything at all.
+       */
+      const b = fakeBrowser();
+      const alerts = await alertsFor(b);
+      await alerts.enable();
+      b.notifications.length = 0;
+
+      alerts.observe([UNREAD()]);
+      assert.deepEqual(alerts._pending(), ['c-new:4']);
+
+      /* Somebody in the office opened it. */
+      alerts.observe([UNREAD({ unread: false })]);
+      assert.deepEqual(alerts._pending(), [], 'nothing is owed any more');
+
+      b.now += REMINDER_WINDOW * 3;
+      alerts.observe([UNREAD({ unread: false })]);
+      assert.equal(b.notifications.length, 1, 'the initial one, and no more');
+    });
+
+  test('a closed conversation never alerts or reminds', async () => {
+    const b = fakeBrowser();
+    const alerts = await alertsFor(b);
+    await alerts.enable();
+    b.notifications.length = 0;
+    const out = alerts.observe([UNREAD({ status: 'closed' })]);
+    assert.equal(out.unreadCount, 0);
+    assert.equal(b.notifications.length, 0);
+  });
+
+  /* -------------------------------------------------------- mute, prefs */
+
+  test('MUTED SILENCES THE SOUND, NOT THE UNREAD STATE', async () => {
+    const b = fakeBrowser();
+    const alerts = await alertsFor(b);
+    await alerts.enable();
+    alerts.setMuted(true);
+    b.sounds = 0; b.notifications.length = 0;
+
+    const out = alerts.observe([UNREAD()]);
+    assert.equal(b.chimes(), 0, 'no sound');
+    assert.equal(b.notifications.length, 1, 'but the popup still appears');
+    assert.equal(out.unreadCount, 1, 'and the count is unchanged');
+    assert.equal(b.title, "\u{1F534} (1) Esther's Staff Chat", 'and so is the title');
+  });
+
+  test('ONLY TWO HARMLESS BOOLEANS ARE STORED', async () => {
+    const b = fakeBrowser();
+    const alerts = await alertsFor(b);
+    await alerts.enable();
+    alerts.setMuted(true);
+    alerts.observe([UNREAD()]);
+
+    assert.deepEqual(Array.from(b.store.keys()), ['esthers.staff.alerts'],
+      'one namespaced key, and only one');
+    const stored = JSON.parse(b.store.get('esthers.staff.alerts'));
+    assert.deepEqual(Object.keys(stored).sort(), ['alertsEnabled', 'muted']);
+    assert.equal(stored.alertsEnabled, true);
+    assert.equal(stored.muted, true);
+
+    /* Nothing that could be a credential, an identity, or a customer. */
+    const dump = JSON.stringify(Array.from(b.store.entries()));
+    for (const secret of ['token', 'Bearer', 'password', 'uid', 'John Smith',
+                          'chimney', 'appcheck', 'AppCheck', '@example',
+                          'waiting for a reply']) {
+      assert.equal(dump.indexOf(secret), -1, secret + ' was persisted');
+    }
+  });
+
+  test('the preference survives a reload; the audio unlock does not', async () => {
+    const b = fakeBrowser();
+    const first = await alertsFor(b);
+    await first.enable();
+    assert.equal(first.status().audio, true);
+
+    /* A new page load, same storage. */
+    const second = await alertsFor(b);
+    assert.equal(second.status().enabled, true, 'the preference is remembered');
+    assert.equal(second.status().audio, false,
+      'but a browser requires a fresh gesture per page load, and we say so');
+  });
+
+  test('unreadable stored preferences fall back to quiet', async () => {
+    const b = fakeBrowser();
+    b.store.set('esthers.staff.alerts', 'not json at all');
+    const alerts = await alertsFor(b);
+    assert.equal(alerts.status().enabled, false);
+    assert.equal(alerts.status().muted, false);
+  });
+
+  test('blocked storage does not break anything', async () => {
+    const b = fakeBrowser({ noStorage: true });
+    const alerts = await alertsFor(b);
+    await alerts.enable();
+    b.notifications.length = 0;
+    alerts.observe([UNREAD()]);
+    assert.equal(b.notifications.length, 1, 'alerts still work');
+  });
+
+  /* ------------------------------------------------- permission fallback */
+
+  test('PERMISSION DENIED KEEPS THE SOUND, THE BADGE AND THE TITLE', async () => {
+    const b = fakeBrowser({ permission: 'denied' });
+    const alerts = await alertsFor(b);
+    await alerts.enable();
+    b.sounds = 0; b.notifications.length = 0;
+
+    const out = alerts.observe([UNREAD()]);
+    assert.equal(b.notifications.length, 0, 'no desktop popup, as expected');
+    assert.equal(b.chimes(), 1, 'but the sound still plays');
+    assert.equal(out.unreadCount, 1);
+    assert.equal(b.title, "\u{1F534} (1) Esther's Staff Chat");
+    assert.equal(alerts.status().permission, 'denied');
+  });
+
+  test('a denial is not re-prompted', async () => {
+    const b = fakeBrowser({ permission: 'denied' });
+    const alerts = await alertsFor(b);
+    await alerts.enable();
+    await alerts.enable();
+    await alerts.enable();
+    assert.equal(b.requested, 0, 'the browser would refuse anyway');
+  });
+
+  test('NO NOTIFICATION API AT ALL DEGRADES SAFELY', async () => {
+    const b = fakeBrowser({ noNotificationApi: true });
+    const alerts = await alertsFor(b);
+    const st = await alerts.enable();
+    assert.equal(st.supported, false);
+    assert.equal(st.permission, 'unsupported');
+
+    b.sounds = 0;
+    const out = alerts.observe([UNREAD()]);
+    assert.equal(b.chimes(), 1, 'sound still works');
+    assert.equal(out.unreadCount, 1);
+    assert.equal(b.title, "\u{1F534} (1) Esther's Staff Chat");
+  });
+
+  test('no audio device degrades safely too', async () => {
+    const b = fakeBrowser({ audioFails: true });
+    const alerts = await alertsFor(b);
+    const st = await alerts.enable();
+    assert.equal(st.audio, false);
+    b.notifications.length = 0;
+    alerts.observe([UNREAD()]);
+    assert.equal(b.notifications.length, 1, 'the popup still appears');
+  });
+
+  /* ------------------------------------------------------------- title */
+
+  test('THE TAB TITLE CARRIES THE UNREAD COUNT, AND GIVES IT BACK', async () => {
+    const b = fakeBrowser();
+    const alerts = await alertsFor(b);
+    await alerts.enable();
+
+    alerts.observe([UNREAD({ conversationId: 'a' }), UNREAD({ conversationId: 'b' })]);
+    assert.equal(b.title, "\u{1F534} (2) Esther's Staff Chat");
+
+    alerts.observe([UNREAD({ conversationId: 'a' })]);
+    assert.equal(b.title, "\u{1F534} (1) Esther's Staff Chat");
+
+    alerts.observe([]);
+    assert.equal(b.title, "Esther's Staff Chat", 'restored exactly');
+  });
+
+  test('reset puts the title back, so a signed-out page tells no tales',
+    async () => {
+      const b = fakeBrowser();
+      const alerts = await alertsFor(b);
+      await alerts.enable();
+      alerts.observe([UNREAD()]);
+      assert.match(b.title, /^\u{1F534} \(1\)/u);
+      alerts.reset();
+      assert.equal(b.title, "Esther's Staff Chat");
+      assert.deepEqual(alerts._pending(), []);
+    });
+});
+
+/* ================= 161-190. WHAT COUNTS AS READING, AND WHEN WE POLL */
+
+/*
+ * "READ" MEANS SOMEBODY ACTUALLY OPENED IT.
+ *
+ * Not that it appeared in a list. Not that a poll returned it. Not that a
+ * notification popped. Not that a background tab fetched something. A person
+ * looked at a transcript, on a screen that was in front of them.
+ *
+ * Every test below is one of the ways that could go wrong, and each of them
+ * would silently lose a customer: the shop would stop being reminded about a
+ * message nobody has read.
+ */
+describe('reading is looking, and nothing else', () => {
+  const CONV_UNREAD = Object.assign({}, CONV_A, {
+    unread: true, attentionVersion: 4, lastAttentionType: 'customer_message',
+    lastAttentionAt: 5000
+  });
+
+  const openInbox = (list, locations) => jsonResponse(200, {
+    ok: true, status: 'open', limit: 50,
+    conversations: list,
+    locations: locations || ['main', 'specialty', 'unassigned']
+  });
+
+  /* Records every read acknowledgement, so a test can assert on exactly what
+     was acknowledged and how often - or that nothing was. */
+  function world(over) {
+    const o = over || {};
+    const w = {
+      conversation: o.conversation || CONV_UNREAD,
+      reads: [],
+      messageCalls: 0,
+      inboxCalls: 0,
+      attentionCalls: 0
+    };
+    w.responder = (n, input, init) => {
+      const url = String(input);
+      if (url.indexOf('/api/admin/chat/conversations') === 0) {
+        w.inboxCalls += 1;
+        if (url.indexOf('status=open') !== -1) w.attentionCalls += 1;
+        const closed = url.indexOf('status=closed') !== -1;
+        return openInbox(closed ? [] : [w.conversation]);
+      }
+      if (url.indexOf('/api/admin/chat/messages') === 0) {
+        w.messageCalls += 1;
+        if (o.threadFails) return jsonResponse(500, { ok: false, code: 'server_error' });
+        return jsonResponse(200, { ok: true, limit: 200,
+          conversation: w.conversation, messages: [] });
+      }
+      if (url.indexOf('/api/admin/chat/read') === 0) {
+        w.reads.push(JSON.parse(init.body));
+        return jsonResponse(200, { ok: true, conversationId: 'conv-a',
+          attentionVersion: w.conversation.attentionVersion,
+          readVersion: w.conversation.attentionVersion, unread: false });
+      }
+      if (url.indexOf('/api/admin/chat/transfer') === 0) {
+        return jsonResponse(200, { ok: true, conversationId: 'conv-a',
+          locationId: 'specialty', previousLocationId: 'main', changed: true });
+      }
+      return jsonResponse(500, { ok: false, code: 'unexpected_call' });
+    };
+    return w;
+  }
+
+  /* --------------------------------------------- what does NOT mark read */
+
+  test('APPEARING IN THE INBOX IS NOT READING IT', async () => {
+    const { mod } = await load();
+    const w = world();
+    const { ui, fetcher, clock } = await signedIn(mod, { responder: w.responder });
+    try {
+      /* Several polls. The row is there, unread, the whole time. */
+      clock.fireAll(); await tick();
+      clock.fireAll(); await tick();
+      assert.equal(w.reads.length, 0, 'nothing was acknowledged');
+      assert.equal(ui.inbox[0].unread, true, 'and it still says so');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('A HIDDEN TAB NEVER MARKS ANYTHING READ', async () => {
+    /*
+     * The one that would quietly break the whole feature: a background tab
+     * that fetched a transcript and acknowledged it would clear the shop's
+     * unread flag having shown nobody anything.
+     */
+    const { mod } = await load();
+    const w = world();
+    const { fetcher, clock, session } = await signedIn(mod, { responder: w.responder });
+    try {
+      session.select('conv-a');
+      await tick();
+      assert.equal(w.reads.length, 1, 'visible: acknowledged once');
+
+      clock.hide();
+      w.conversation = Object.assign({}, CONV_UNREAD, { attentionVersion: 5 });
+      /* Force a transcript render while hidden - the path a reconciliation
+         would take if visibility were not checked. */
+      await session.loadThread('conv-a', { silent: true });
+      await tick();
+      assert.equal(w.reads.length, 1, 'hidden: NOT acknowledged');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('A FAILED TRANSCRIPT REQUEST NEVER MARKS READ', async () => {
+    const { mod } = await load();
+    const w = world({ threadFails: true });
+    const { fetcher, session } = await signedIn(mod, { responder: w.responder });
+    try {
+      session.select('conv-a');
+      await tick();
+      assert.ok(w.messageCalls >= 1, 'it really did try');
+      assert.equal(w.reads.length, 0, 'and acknowledged nothing');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('CHANGING SELECTION BEFORE THE ANSWER LANDS MARKS NOTHING', async () => {
+    /*
+     * Acknowledging here would mark the WRONG conversation read - the one the
+     * person clicked away from, which they may never have seen.
+     */
+    const { mod } = await load();
+    const w = world();
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    let gated = false;
+    const { fetcher, session } = await signedIn(mod, {
+      responder: async (n, input, init) => {
+        if (String(input).indexOf('/api/admin/chat/messages') === 0 && gated) {
+          await gate;
+        }
+        return w.responder(n, input, init);
+      }
+    });
+    try {
+      gated = true;
+      session.select('conv-a');
+      await tick(1);
+      /* The person clicks away while the transcript is still in flight. */
+      session.select(null);
+      release();
+      await tick();
+      assert.equal(w.reads.length, 0, 'the one they left is not marked read');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('THE SELECTION CHECK IN acknowledgeRead HOLDS BY ITSELF', async () => {
+    /*
+     * loadThread() already discards a response that lands after the selection
+     * moved, so through the ordinary path this second check never fires -
+     * which means deleting it is invisible end to end. Mutation testing said
+     * so. It is the copy that matters: it is what stands between a late
+     * answer and the WRONG conversation being marked read.
+     */
+    const { mod } = await load();
+    const w = world();
+    const { fetcher, session } = await signedIn(mod, { responder: w.responder });
+    try {
+      session.select('conv-a');
+      await tick();
+      const before = w.reads.length;
+
+      /* Hand it a transcript for a conversation that is NOT selected. */
+      session.selectedId = 'somebody-else';
+      await session.acknowledgeRead({ conversationId: 'conv-a',
+        attentionVersion: 9 });
+      assert.equal(w.reads.length, before, 'refused, on its own');
+
+      /* And it accepts the selected one, so the refusal above is the check
+         and not a function that refuses everything. */
+      session.selectedId = 'conv-a';
+      await session.acknowledgeRead({ conversationId: 'conv-a',
+        attentionVersion: 9 });
+      assert.equal(w.reads.length, before + 1);
+      assert.equal(w.reads[before].attentionVersion, 9);
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  /* ------------------------------------------------ what DOES mark read */
+
+  test('A VISIBLE RENDER MARKS EXACTLY THE VERSION IT RENDERED', async () => {
+    const { mod } = await load();
+    const w = world();
+    const { ui, fetcher, session } = await signedIn(mod, { responder: w.responder });
+    try {
+      session.select('conv-a');
+      await tick();
+      assert.equal(w.reads.length, 1);
+      assert.deepEqual(w.reads[0],
+        { conversationId: 'conv-a', attentionVersion: 4 },
+        'exactly two fields, and the version that was on screen');
+      /* And the row stops shouting immediately, rather than after a poll. */
+      assert.equal(ui.inbox[0].unread, false);
+      assert.equal(session.unreadCounts().total, 0);
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('the same version is not acknowledged twice by one tab', async () => {
+    const { mod } = await load();
+    const w = world();
+    const { fetcher, clock, session } = await signedIn(mod, { responder: w.responder });
+    try {
+      session.select('conv-a');
+      await tick();
+      assert.equal(w.reads.length, 1);
+
+      /* Several reconciliation re-reads of an unchanged thread. */
+      for (let i = 0; i < 3; i += 1) {
+        await session.loadThread('conv-a', { silent: true });
+        await tick();
+      }
+      assert.equal(w.reads.length, 1, 'one request, not four');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('a NEWER version IS acknowledged when it is rendered', async () => {
+    const { mod } = await load();
+    const w = world();
+    const { fetcher, session } = await signedIn(mod, { responder: w.responder });
+    try {
+      session.select('conv-a');
+      await tick();
+      w.conversation = Object.assign({}, CONV_UNREAD, { attentionVersion: 5 });
+      await session.loadThread('conv-a', {});
+      await tick();
+      assert.equal(w.reads.length, 2);
+      assert.equal(w.reads[1].attentionVersion, 5);
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('a failing read acknowledgement is silent and does not retry-storm',
+    async () => {
+      const { mod } = await load();
+      const w = world();
+      const { ui, fetcher, clock, session } = await signedIn(mod, {
+        responder: (n, input, init) => {
+          if (String(input).indexOf('/api/admin/chat/read') === 0) {
+            w.reads.push(JSON.parse(init.body));
+            return new TypeError('network');
+          }
+          return w.responder(n, input, init);
+        }
+      });
+      try {
+        session.select('conv-a');
+        await tick();
+        const after = w.reads.length;
+        assert.equal(after, 1);
+        /* Nothing on screen depends on it, so nothing is said about it. */
+        assert.equal(ui.notice, null);
+        assert.equal(ui.retry, null);
+        /* And it does not hammer: the next poll re-renders nothing new. */
+        clock.fireAll(); await tick();
+        clock.fireAll(); await tick();
+        assert.ok(w.reads.length <= after + 1, 'no storm');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  /* -------------------------------------------------- transfer handover */
+
+  test('THE PERSON WHO TRANSFERS DOES NOT ACKNOWLEDGE THE DESTINATION',
+    async () => {
+      /*
+       * A handoff raises attention for the DESTINATION shop. If the thread
+       * stayed selected, the next poll would re-render it and the render
+       * would acknowledge the new version - clearing Keith Street's unread
+       * flag before anybody there had seen it. Deselecting is what stops it.
+       */
+      const { mod } = await load();
+      const w = world();
+      const { ui, fetcher, clock, session } = await signedIn(mod, {
+        responder: w.responder });
+      try {
+        session.select('conv-a');
+        await tick();
+        const before = w.reads.length;
+
+        session.requestTransfer();
+        await ui.lastTransfer('specialty');
+        await tick();
+
+        assert.equal(session.selectedId, null, 'let go of');
+        assert.equal(ui.thread, null, 'and the transcript is off the screen');
+
+        /* The destination's new attention arrives on the next poll. */
+        w.conversation = Object.assign({}, CONV_UNREAD,
+          { attentionVersion: 5, lastAttentionType: 'transfer',
+            locationId: 'specialty',
+            locationLabel: 'Specialty Shop - Keith Street' });
+        clock.fireAll(); await tick();
+        clock.fireAll(); await tick();
+
+        assert.equal(w.reads.length, before,
+          'the transferring computer acknowledged nothing further');
+        assert.equal(ui.inbox[0].unread, true, 'Keith Street still has it');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('a thread moved out of reach is cleared from the screen', async () => {
+    const { mod } = await load();
+    const w = world();
+    const { ui, fetcher, session } = await signedIn(mod, {
+      responder: (n, input, init) => {
+        const url = String(input);
+        if (url.indexOf('/api/admin/chat/conversations') === 0) {
+          return jsonResponse(200, { ok: true, status: 'open', limit: 50,
+            conversations: [w.conversation], locations: ['main'] });
+        }
+        return w.responder(n, input, init);
+      }
+    });
+    try {
+      session.select('conv-a');
+      await tick();
+      session.requestTransfer();
+      await ui.lastTransfer('specialty');
+      await tick();
+      assert.equal(session.selectedId, null);
+      assert.equal(ui.thread, null);
+      assert.equal(ui.notice, 'Moved to Specialty Shop - Keith Street. '
+        + 'It is no longer in your inbox.');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  /* --------------------------------------------------- another computer */
+
+  test("ANOTHER COMPUTER'S READ CLEARS THIS ONE ON THE NEXT POLL", async () => {
+    const { mod } = await load();
+    const w = world();
+    const { ui, fetcher, clock, session } = await signedIn(mod, {
+      responder: w.responder });
+    try {
+      clock.fireAll(); await tick();
+      assert.equal(ui.inbox[0].unread, true);
+      assert.equal(session.unreadCounts().total, 1);
+
+      /* The office computer opened it. Nothing happens on THIS machine. */
+      w.conversation = Object.assign({}, CONV_UNREAD, { unread: false });
+      clock.fireAll(); await tick();
+
+      assert.equal(ui.inbox[0].unread, false, 'the badge goes');
+      assert.equal(session.unreadCounts().total, 0, 'and so does the count');
+      assert.equal(w.reads.length, 0, 'without this machine acknowledging anything');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  /* ------------------------------------------------ the polling contract */
+
+  test('A HIDDEN TAB WITH ALERTS ON CHECKS THE OPEN LIST, AND NOTHING ELSE',
+    async () => {
+      const { mod } = await load();
+      const w = world();
+      const { fetcher, clock, session } = await signedIn(mod, {
+        responder: w.responder });
+      try {
+        await session.enableAlerts();
+        session.select('conv-a');
+        await tick();
+        const msgs = w.messageCalls;
+
+        clock.hide();
+        /* Half rate: two 15-second ticks per background check. */
+        clock.fireAll(); await tick();
+        const afterOne = w.attentionCalls;
+        clock.fireAll(); await tick();
+        assert.equal(w.attentionCalls, afterOne + 1, '30 seconds, one check');
+
+        clock.fireAll(); await tick();
+        clock.fireAll(); await tick();
+        assert.equal(w.attentionCalls, afterOne + 2, 'and one more');
+
+        assert.equal(w.messageCalls, msgs,
+          'NO TRANSCRIPT WAS FETCHED WHILE HIDDEN');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('A HIDDEN TAB WITH ALERTS OFF STILL DOES NOTHING AT ALL', async () => {
+    /* The behaviour this page had before notifications existed, preserved
+       exactly for anybody who does not want them. */
+    const { mod } = await load();
+    const w = world();
+    const { fetcher, clock } = await signedIn(mod, { responder: w.responder });
+    try {
+      const before = w.inboxCalls;
+      clock.hide();
+      for (let i = 0; i < 6; i += 1) { clock.fireAll(); await tick(); }
+      assert.equal(w.inboxCalls, before, 'not one request');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('THE CLOSED VIEW STILL HEARS ABOUT A NEW OPEN CONVERSATION', async () => {
+    /*
+     * Alerts must not depend on which tab of the inbox happens to be
+     * rendered. Somebody reviewing Closed still needs to hear a customer.
+     *
+     * The customer arrives AFTER the switch to Closed, so a stale copy of the
+     * open list from before the switch cannot make this pass - the monitor
+     * has to actually go and look while the rendered list is the closed one.
+     */
+    const { mod } = await load();
+    let open = [];
+    const w = world();
+    const { ui, fetcher, clock, session } = await signedIn(mod, {
+      responder: (n, input, init) => {
+        const url = String(input);
+        if (url.indexOf('/api/admin/chat/conversations') === 0) {
+          const closed = url.indexOf('status=closed') !== -1;
+          if (!closed) w.attentionCalls += 1;
+          return openInbox(closed ? [] : open);
+        }
+        return w.responder(n, input, init);
+      }
+    });
+    try {
+      session.setFilter('closed');
+      await tick();
+      assert.deepEqual(ui.inbox, [], 'the closed list is empty');
+      assert.equal(session.unreadCounts().total, 0, 'and nobody is waiting yet');
+
+      /* NOW a customer writes, while Closed is what is on screen. */
+      open = [CONV_UNREAD];
+      clock.fireAll(); await tick();
+
+      /* The rendered list is still the closed one... */
+      assert.deepEqual(ui.inbox, [], 'still showing Closed');
+      /* ...but the monitor went and looked, and knows somebody is waiting. */
+      assert.equal(session.openConversations.length, 1);
+      assert.equal(session.unreadCounts().total, 1);
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('NO OVERLAPPING BACKGROUND CHECKS', async () => {
+    const { mod } = await load();
+    const w = world();
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    let gated = false;
+    const { fetcher, clock, session } = await signedIn(mod, {
+      responder: async (n, input, init) => {
+        if (String(input).indexOf('status=open') !== -1 && gated) await gate;
+        return w.responder(n, input, init);
+      }
+    });
+    try {
+      await session.enableAlerts();
+      clock.hide();
+      gated = true;
+
+      clock.fireAll(); await tick(1);
+      clock.fireAll(); await tick(1);      /* starts one, which blocks */
+      const inFlight = w.attentionCalls;
+      for (let i = 0; i < 6; i += 1) { clock.fireAll(); await tick(1); }
+      assert.equal(w.attentionCalls, inFlight, 'many ticks, one request');
+
+      release();
+      await tick();
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('A DEAD NETWORK BACKS OFF RATHER THAN STORMING', async () => {
+    const { mod } = await load();
+    let calls = 0;
+    let dead = false;
+    const { fetcher, clock, session } = await signedIn(mod, {
+      responder: (n, input) => {
+        if (String(input).indexOf('status=open') !== -1) {
+          calls += 1;
+          /* The network dies only once the tab is in the background, so the
+             dashboard is genuinely signed in and polling first. */
+          if (dead) return new TypeError('network');
+        }
+        return jsonResponse(200, { ok: true, status: 'open', limit: 50,
+          conversations: [], locations: ['main'] });
+      }
+    });
+    try {
+      await session.enableAlerts();
+      clock.hide();
+      dead = true;
+      const before = calls;
+      /* Twenty ticks - five minutes of wall clock - against a dead network. */
+      for (let i = 0; i < 20; i += 1) { clock.fireAll(); await tick(1); }
+      const attempts = calls - before;
+      assert.ok(attempts > 0, 'it did try');
+      assert.ok(attempts <= 4, 'but backed off rather than storming: ' + attempts);
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  /* ------------------------------------------------------- the test alert */
+
+  test('THE TEST ALERT TOUCHES NO CONVERSATION AND CALLS NO API', async () => {
+    const { mod } = await load();
+    const w = world();
+    const { ui, fetcher, session } = await signedIn(mod, { responder: w.responder });
+    try {
+      await session.enableAlerts();
+      const before = fetcher.seen.length;
+      /* There is one genuinely unread conversation in this world already.
+         The point is that the test alert does not CHANGE that - it neither
+         invents unread state nor clears any. */
+      const unreadBefore = session.unreadCounts().total;
+      assert.equal(unreadBefore, 1, 'a real customer is waiting');
+
+      session.testAlert();
+
+      const extra = fetcher.seen.slice(before).map((r) => String(r.input));
+      assert.equal(fetcher.seen.length, before,
+        'NO request of any kind, saw: ' + JSON.stringify(extra));
+      assert.equal(w.reads.length, 0, 'and nothing was marked read');
+      assert.equal(session.unreadCounts().total, unreadBefore,
+        'no unread invented, and none cleared');
+      assert.equal(session.selectedId, null);
+      assert.equal(ui.thread, null);
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('signing out puts the title back and forgets the counts', async () => {
+    const { mod } = await load();
+    const w = world();
+    const { ui, fetcher, clock, session } = await signedIn(mod, {
+      responder: w.responder });
+    try {
+      clock.fireAll(); await tick();
+      assert.equal(session.unreadCounts().total, 1);
+
+      await session.signOut();
+      await tick();
+      assert.equal(session.unreadCounts().total, 0);
+      assert.equal(session.openConversations.length, 0);
+      assert.deepEqual(ui.unreadCounts, { total: 0, byLocation: {} });
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  /* ------------------------------------------------------------- source */
+
+  test('the dashboard still has ZERO direct Firestore access', () => {
+    /* Notifications added a module, not a door. */
+    for (const forbidden of ['getFirestore', 'onSnapshot', 'collection(',
+                             'doc(', 'getDocs', 'getDoc', 'setDoc', 'addDoc',
+                             'updateDoc', 'deleteDoc', 'firebase-firestore']) {
+      assert.equal(STAFF_CODE.indexOf(forbidden), -1,
+        'chat-staff.js reaches for ' + forbidden);
+      assert.equal(ALERTS_CODE.indexOf(forbidden), -1,
+        'chat-staff-alerts.js reaches for ' + forbidden);
+    }
+  });
+
+  test('THE ALERT MODULE MAKES NO REQUESTS AND HOLDS NO CREDENTIAL', () => {
+    /*
+     * It is handed conversations the server already authorised and turns them
+     * into sound and text. If it could fetch, it would be a second, untested
+     * path to customer data.
+     */
+    for (const forbidden of ['fetch(', 'XMLHttpRequest', 'authorizedFetch',
+                             'getIdToken', 'Authorization', 'AppCheck',
+                             '/api/']) {
+      assert.equal(ALERTS_CODE.indexOf(forbidden), -1,
+        'chat-staff-alerts.js reaches for ' + forbidden);
+    }
+    /* And no field that could carry a message body is read at all. */
+    for (const f of ['lastMessagePreview', 'messagePreview', 'lastMessageBody',
+                     'lastMessageText', 'snippet', 'excerpt']) {
+      assert.equal(ALERTS_CODE.indexOf(f), -1,
+        'chat-staff-alerts.js reads ' + f);
+    }
+    /* And it writes exactly one namespaced preference key. */
+    const keys = ALERTS_CODE.match(/setItem\(([^,]+),/g) || [];
+    assert.equal(keys.length, 1, 'one setItem, and only one');
+    assert.match(ALERTS_CODE, /const PREF_KEY = 'esthers\.staff\.alerts';/);
+  });
+
+  test('no innerHTML anywhere, in either module', () => {
+    for (const src of [STAFF_CODE, ALERTS_CODE]) {
+      assert.equal(/innerHTML|outerHTML|insertAdjacentHTML|document\.write/
+        .test(src), false);
+    }
+  });
+
+  test('the poll intervals are what the design says they are', () => {
+    assert.match(STAFF_CODE, /const INBOX_POLL_MS = 15 \* 1000;/);
+    assert.match(STAFF_CODE, /const HIDDEN_ATTENTION_POLL_MS = 30 \* 1000;/);
+    /* Still ONE timer. The background check rides the same interval at half
+       rate rather than arming a second one. */
+    assert.equal((STAFF_CODE.match(/deps\.setInterval/g) || []).length, 1);
+    assert.equal(/THREAD_POLL_MS|threadTimer/.test(STAFF_CODE), false);
+  });
 });
