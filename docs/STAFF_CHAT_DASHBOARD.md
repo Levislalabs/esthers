@@ -189,6 +189,16 @@ still works, and the page says so.
 Not Disturb or focus mode. A web page cannot override either of those, and this
 one does not try.
 
+**Sound but no pop-up on Windows?** The browser can be allowed to show
+notifications while *Windows itself* is still blocking them, and the two
+settings live in different places. Check:
+
+> **Windows Settings -> System -> Notifications -> Google Chrome -> On**
+
+Until that is on, you get the chime and the unread badges and no desktop
+banner, because the chime is made by the page and the banner is made by
+Windows.
+
 ---
 
 ## What you get when a customer writes
@@ -227,6 +237,11 @@ it — see below.
 
 You will not get an alert every fifteen seconds. One conversation, one message,
 one alert; then a reminder every three minutes until it is dealt with.
+
+Each of those is a **new** desktop banner, not a quiet edit of the one before
+it. The same is true when the same customer writes a second time in a
+conversation that is already unread, and when a conversation is transferred to
+your shop: if it is worth telling you about, it raises its own banner.
 
 ---
 

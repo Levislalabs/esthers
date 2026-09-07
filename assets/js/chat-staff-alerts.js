@@ -33,7 +33,7 @@
 
 /* The chat client version. THE SAME STRING as CHAT_CLIENT_VERSION in chat.js,
    chat-customer.js, chat-staff.js, chat-app-check.js and chat-locations.js. */
-export const CHAT_CLIENT_VERSION = '2026-09-06.2';
+export const CHAT_CLIENT_VERSION = '2026-09-07.1';
 
 /*
  * How long an unread conversation waits before it says something again.
@@ -195,8 +195,22 @@ export function createAlerts(options) {
    * the moment the customer writes again it becomes version 8, a different
    * key, and a new alert. Deduping by conversation alone would silence the
    * second message; deduping by timestamp would fire on clock jitter.
+   *
+   * The value is { at, reminders }: when we last made a noise, and how many
+   * reminders this key has had. The count is what gives each reminder its own
+   * platform identity - see the tag section below. It is NOT a new structure:
+   * this map is pruned on every observe() down to the conversations that are
+   * unread right now, so it is bounded by the shop's open work, exactly as it
+   * was when the value was a bare number.
    */
   let alerted = new Map();
+
+  /*
+   * A single integer, for the identities that must never repeat. Bounded on
+   * purpose: it wraps, and the clock in uniqueTag() is what keeps a wrapped
+   * value from colliding with anything still on screen.
+   */
+  let identitySequence = 0;
 
   let enabled = false;
   let muted = false;
@@ -296,21 +310,86 @@ export function createAlerts(options) {
 
   /* ---- desktop notification ---- */
 
-  function popup(conversation) {
+  /*
+   * THE PLATFORM IDENTITY, WHICH IS NOT THE APPLICATION DEDUPE KEY.
+   *
+   * These used to be the same string, and that WAS the production bug.
+   *
+   * A notification carries a `tag`, and the platform treats two notifications
+   * with the same tag as the same notification: the second REPLACES the first
+   * in place. With renotify false - the default, and what this file used to
+   * send explicitly - that replacement is SILENT. No new banner, no re-alert,
+   * nothing. On Windows the first Chrome notification of a given tag raised a
+   * banner and every later one quietly rewrote an Action Center entry that
+   * nobody was looking at. The chime still played, because the chime is Web
+   * Audio in this file and owes the notification nothing - which is exactly
+   * why the symptom was "sound but no banner".
+   *
+   * The old tag was the conversation id alone, so it collapsed precisely the
+   * three cases that matter most:
+   *
+   *     Test alert pressed twice        same id 'test'
+   *     attentionVersion 4 -> 5         same conversation
+   *     a three-minute reminder         same conversation, same version
+   *
+   * So the two concepts are now separate and must stay separate:
+   *
+   *     WHETHER to alert    the dedupe ledger, on conversationId +
+   *                         attentionVersion. Unchanged. Ten polls of one
+   *                         version are still one event.
+   *
+   *     WHAT IDENTITY to    here. Every distinct alert event gets a distinct
+   *     hand the platform   tag, so the platform has nothing to collapse.
+   *
+   * Version in the tag is what lets version 5 be a new banner rather than a
+   * silent rewrite of version 4; the reminder sequence is what lets the
+   * 3-minute nudge be a new banner rather than a silent rewrite of itself.
+   */
+  const TAG_PREFIX = 'esthers-chat:';
+
+  function initialTag(conversation) {
+    return TAG_PREFIX + String(conversation.conversationId)
+      + ':v' + String(conversation.attentionVersion);
+  }
+
+  function reminderTag(conversation, sequence) {
+    return initialTag(conversation) + ':r' + String(sequence);
+  }
+
+  /*
+   * An identity that never repeats, for the two cases that must ALWAYS be a
+   * fresh banner: the Test alert button, and the defensive fallback below.
+   *
+   * The counter separates two of these inside the same millisecond; the clock
+   * separates two counters across the wrap. One integer of state, not a
+   * structure - nothing here grows with use.
+   */
+  function uniqueTag(kind) {
+    identitySequence = (identitySequence + 1) % 1000000;
+    return TAG_PREFIX + kind + ':' + String(deps.now())
+      + '-' + String(identitySequence);
+  }
+
+  function popup(conversation, tag) {
     const N = deps.notificationApi();
     if (!N || N.permission !== 'granted') return false;
     const said = describeAlert(conversation);
     try {
       /*
-       * tag = the conversation id, so a second alert about the SAME
-       * conversation replaces the first rather than stacking six of them
-       * down the corner of the screen. Somebody coming back to their desk
-       * should see what is waiting, not a history of it.
+       * renotify true is the belt to the distinct tag's braces: if two events
+       * ever did share a tag, the platform re-alerts instead of swallowing
+       * the second one.
+       *
+       * It is not free. Chromium throws TypeError for renotify WITHOUT a tag
+       * - measured in a real Chromium build, not assumed - so the tag here is
+       * never allowed to be empty. Every call site passes one; the fallback
+       * covers a caller that somehow did not, because a missing argument must
+       * not turn a waiting customer into an exception.
        */
       new N(said.title, {
         body: said.body,
-        tag: 'esthers-chat-' + String(conversation.conversationId || ''),
-        renotify: false
+        tag: (typeof tag === 'string' && tag !== '') ? tag : uniqueTag('unknown'),
+        renotify: true
       });
       return true;
     } catch (err) {
@@ -389,13 +468,20 @@ export function createAlerts(options) {
     test: function () {
       unlockAudio();
       const played = sound();
+      /*
+       * A FRESH IDENTITY EVERY PRESS. The whole point of the button is that
+       * somebody presses it and sees what will happen later, so five presses
+       * must be five banners - never one banner and four silent rewrites of
+       * it, which is what a fixed tag gave before.
+       */
+      const tag = uniqueTag('test');
       const shown = popup({
         conversationId: 'test',
         customerName: 'Test alert',
         locationLabel: "Esther's Sheet Metal",
         lastAttentionType: 'customer_message'
-      });
-      return { played: played, shown: shown, status: status() };
+      }, tag);
+      return { played: played, shown: shown, tag: tag, status: status() };
     },
 
     /*
@@ -427,14 +513,23 @@ export function createAlerts(options) {
         const key = c.conversationId + ':' + String(c.attentionVersion);
         seen.add(key);
 
-        const last = alerted.get(key);
-        if (last === undefined) {
+        const entry = alerted.get(key);
+        let tag;
+        if (entry === undefined) {
           /* First time this exact version has been seen by this browser. */
-          alerted.set(key, now);
-          fired.push({ kind: 'initial', conversationId: c.conversationId, key: key });
-        } else if (now - last >= REMINDER_MS) {
-          alerted.set(key, now);
-          fired.push({ kind: 'reminder', conversationId: c.conversationId, key: key });
+          alerted.set(key, { at: now, reminders: 0 });
+          tag = initialTag(c);
+          fired.push({ kind: 'initial', conversationId: c.conversationId,
+                       key: key, tag: tag });
+        } else if (now - entry.at >= REMINDER_MS) {
+          /* The cooldown is unchanged; only the identity is new. Counting the
+             reminders is what makes the second nudge a second banner rather
+             than a silent rewrite of the first. */
+          entry.at = now;
+          entry.reminders += 1;
+          tag = reminderTag(c, entry.reminders);
+          fired.push({ kind: 'reminder', conversationId: c.conversationId,
+                       key: key, tag: tag });
         } else {
           /* Still unread, still inside the cooldown. Say nothing - this is
              the branch that runs on almost every poll. */
@@ -443,7 +538,7 @@ export function createAlerts(options) {
 
         if (enabled) {
           sound();
-          popup(c);
+          popup(c, tag);
         }
       }
 

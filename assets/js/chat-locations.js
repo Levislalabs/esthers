@@ -22,7 +22,7 @@
 
 /* The chat client version. THE SAME STRING as CHAT_CLIENT_VERSION in chat.js,
    chat-customer.js, chat-staff.js and chat-app-check.js. */
-export const CHAT_CLIENT_VERSION = '2026-09-06.2';
+export const CHAT_CLIENT_VERSION = '2026-09-07.1';
 
 export const MAIN = 'main';
 export const SPECIALTY = 'specialty';
