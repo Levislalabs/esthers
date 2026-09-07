@@ -42,7 +42,9 @@ const staffSend = () => handlerFor(STAFF_SEND, TOKENS);
 
 const startBody = (over = {}) => Object.assign({
   name: 'Jordan Ellis', email: 'jordan@example.test',
-  message: 'Do you make louvered chimney caps?', clientMessageId: uuid()
+  message: 'Do you make louvered chimney caps?', clientMessageId: uuid(),
+  /* Routing is required on start now - see api/_chat/locations.js. */
+  locationId: 'main'
 }, over);
 
 const countConversations = async () =>

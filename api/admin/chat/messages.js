@@ -30,8 +30,10 @@ const OPTIONS = {
       }
     }
 
+    /* The actor travels with the read so readTranscript() can authorise the
+       conversation's OWN location before returning any message. */
     const result = await runStage('firestore_operation_failed',
-      () => S.readTranscript(ctx.db, { conversationId, limit }));
+      () => S.readTranscript(ctx.db, { conversationId, limit, actor: ctx.actor }));
     return H.ok(ctx.res, result);
   }
 };

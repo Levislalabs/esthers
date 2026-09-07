@@ -205,12 +205,29 @@ Opens a conversation and writes its first message, in one transaction.
 { "name": "Jordan Ellis",
   "email": "jordan@example.com",
   "message": "Do you make custom flashing?",
-  "clientMessageId": "3f1c...-uuid-v4" }
+  "clientMessageId": "3f1c...-uuid-v4",
+  "locationId": "main" }
 ```
 
-→ `{ "ok": true, "conversationId": "...", "messageId": "...", "status": "open" }`
+→ `{ "ok": true, "conversationId": "...", "messageId": "...",
+     "status": "open", "locationId": "main" }`
 
-Nothing else is returned. No `customerUid`, no email echo, no timestamps.
+Nothing else is returned. No `customerUid`, no email echo, no timestamps, and
+no routing audit field.
+
+**`locationId` is required and is checked against the server's own
+allow-list** — `main`, `specialty`, `unassigned`, matched exactly, with no
+trimming and no case folding. A missing or unrecognised value is
+`400 invalid_location`. See §5a.
+
+The echoed `locationId` is read from the stored document, not from the
+request. A retry that lands on a conversation staff have since moved answers
+with where it **is**, so the panel's "Sending to:" line cannot go stale.
+
+`locationId` is deliberately **not** part of `startRequestHash()`. Including it
+would make a conversation started before this deploy fail an honest retry with
+`idempotency_conflict`, because its stored hash was computed without the
+field.
 
 ### GET /api/chat/status — customer
 
@@ -219,10 +236,19 @@ GET /api/chat/status?conversationId=...
 Authorization: Bearer <Firebase ID token>
 X-Firebase-AppCheck: <App Check token>
 ```
-→ `{ "ok": true, "conversationId": "...", "status": "open" | "closed" }`
+→ `{ "ok": true, "conversationId": "...", "status": "open" | "closed",
+     "locationId": "main" | "specialty" | "unassigned" }`
 
-Three keys, and that is the entire response. No `customerUid`, no name, no
+Four keys, and that is the entire response. No `customerUid`, no name, no
 email, no timestamps, no counts, no staff fields.
+
+`locationId` is here so the panel can keep telling the customer which shop
+they are writing to across a reload — and so a **transfer reaches them at
+all**: moving a conversation writes no message, so their `chatMessages`
+listener sees nothing. This poll is the only channel. The friendly **label is
+not sent**; the client derives it, which keeps renaming a shop a copy edit
+rather than a data migration. No `previousLocationId`, no `lastTransferredAt`,
+no `lastTransferredByStaffUid`: who moved it, and when, is staff business.
 
 **Why it exists.** Closing a conversation writes only to the conversation
 document, and no browser may read that collection — so a close is invisible to
@@ -260,11 +286,23 @@ Requires that the caller owns the conversation and that it is `open`.
 `?status=open|closed` (default `open`), `?limit=1..50` (default 50).
 Served by the deployed `(status ASC, lastMessageAt DESC)` composite index.
 
-→ `{ "ok": true, "conversations": [...], "status": "open", "limit": 50 }`
+→ `{ "ok": true, "conversations": [...], "status": "open", "limit": 50,
+     "locations": ["main", "specialty", "unassigned"] }`
 
 Each entry is an explicit allow-list: `conversationId`, `customerName`,
-`customerEmail`, `status`, `createdAt`, `lastMessageAt`, `messageCount`,
-`staffLastReadAt`. **`customerUid` is never serialised.**
+`customerEmail`, `status`, `locationId`, `locationLabel`, `createdAt`,
+`lastMessageAt`, `messageCount`, `staffLastReadAt`. **`customerUid` is never
+serialised, and neither is any routing audit field.**
+
+`locations` echoes the shops **this account** is authorised for, so the
+dashboard can draw exactly the filters it is entitled to instead of guessing
+from a role.
+
+**There is no location query parameter, deliberately.** The list is already
+restricted server-side to `locations`; a parameter would be one more request
+shape in which a browser could ask about a shop it is not entitled to. The
+manager's shop filter on the dashboard is a **view** over rows that have
+already arrived. See §5a for the consequence that has for `limit`.
 
 ### GET /api/admin/chat/messages — staff
 
@@ -289,6 +327,139 @@ server; a request that supplies it is rejected outright.
 
 Idempotent: closing an already-closed thread succeeds and does **not** rewrite
 `closedAt`. Nothing is deleted.
+
+### POST /api/admin/chat/transfer — staff
+
+`{ "conversationId": "...", "locationId": "specialty" }`
+
+→ `{ "ok": true, "conversationId": "...", "locationId": "specialty",
+     "locationLabel": "Specialty Shop - Keith Street",
+     "previousLocationId": "main",
+     "previousLocationLabel": "Main Shop - 1st Avenue", "changed": true }`
+
+Hands a misrouted conversation to the other shop. **The conversationId does
+not change and no message is copied** — the customer keeps writing into the
+same thread with the whole transcript intact.
+
+**Source authorisation, not destination authorisation.** The caller must be
+authorised for the shop the conversation is at *now*; the destination need not
+be one of theirs. Main-only staff who find a Keith Street job in their inbox
+must be able to send it to Keith Street, and requiring destination access would
+mean only a manager could ever fix a misroute. It is not a way in: the moment
+the id changes, their ordinary read rules apply again and the conversation is
+gone from their inbox.
+
+One transaction re-reads the document and re-checks the source, so a transfer
+racing another transfer cannot act on a location that has already moved.
+
+- `409 conversation_closed` — a closed conversation does not change shop.
+- `changed: false` — already there. A safe no-op: no write, no audit entry, no
+  `transferCount` bump.
+- Every audit field is server-owned. A body carrying `previousLocationId`,
+  `lastTransferredAt`, `lastTransferredByStaffUid`, `transferCount`,
+  `transferredBy` or `transferHistory` is `400 forbidden_field`.
+
+`lastMessageAt` and `messageCount` are deliberately **not** touched: nothing
+was said. The dashboard notices the move through `locationId`, which is in its
+reconciliation marker for exactly this reason.
+
+---
+
+## 5a. Routing: two shops, one allow-list
+
+`api/_chat/locations.js` is the only definition of what a shop is on the
+server. It imports nothing from `assets/` and nothing a browser can reach, and
+a test asserts that absence.
+
+| id | label |
+| --- | --- |
+| `main` | `Main Shop - 1st Avenue` |
+| `specialty` | `Specialty Shop - Keith Street` |
+| `unassigned` | `Not Sure / Unassigned` |
+
+The labels are deliberately specific and are pinned by test on both sides.
+"Main Branch" and "Specialty Shop" were rejected: a customer skim-reading two
+vague labels sends the curved scupper to the wrong shop, and so does a staff
+member glancing at an inbox row.
+
+**Missing routing is `unassigned`, never `main`.** Conversations written before
+this phase have no `locationId` field at all. They are read as `unassigned`
+everywhere, and **nothing backfills them** — see §14 for the migration that is
+recommended but not written.
+
+**The label is never stored.** It is derived from the id wherever a person has
+to read it, so rewording a shop name is a copy edit rather than a migration.
+
+### Which shops a staff account may see
+
+Read from the `staff/{uid}` document by `staffLocations()`, in this order:
+
+1. `locations` is an **array** → exactly its valid entries, deduplicated. An
+   **empty array is an assignment of nothing**, not a reason to fall back.
+2. `locations` is present but not an array → `[]`. Not an assignment, and not
+   an excuse.
+3. `locations` is **absent** → every shop, but only for a role on
+   `ALL_LOCATION_ROLES` (today: `admin`). A role nobody has invented yet fails
+   closed.
+
+Rule 3 is the rollout shape: both production staff documents are
+`{ isActive: true, role: 'admin' }` with no `locations` field, so nothing
+changes for them on deploy. `ALL_LOCATION_ROLES` is separate from
+`ALLOWED_STAFF_ROLES` on purpose — "may use the dashboard" and "may see every
+shop" are different questions and a future role must not answer both by
+accident.
+
+### The two query shapes, and why
+
+Firestore indexes fields that **exist**. A document written before routing has
+no `locationId`, so no positive filter on that field can ever match it —
+`== 'unassigned'` misses it and so does `in [...]`. So:
+
+- The authorised set **includes `unassigned`** → query by status only, then
+  drop unauthorised rows in the server. Legacy documents come back, which is
+  the point.
+- The authorised set **excludes `unassigned`** → add
+  `where('locationId', 'in', allowed)`, which uses the composite index below.
+
+The server-side drop is not decoration: for an account authorised for, say,
+`['main', 'unassigned']` it is the only thing standing between them and the
+other shop's inbox. There is a test for exactly that shape.
+
+**The consequence for `limit`.** In the first shape the 50-row cap is applied
+before the drop, so a very busy unassigned-inclusive inbox could return fewer
+than 50 rows. At Esther's volume this is theoretical; the honest fix is the
+backfill in §14, after which every set can use a positive filter.
+
+### Cross-shop refusals are not an oracle
+
+A staff member asking about a conversation at the other shop gets **the same
+status, code and sentence** as one asking about an id that never existed:
+`404 conversation_not_found` / `That conversation no longer exists.` The two
+share one constant (`STAFF_NOT_FOUND`) so they cannot drift apart in a later
+edit. A near-miss — "not available" against "no longer exists" — reads as
+identical to a person and is a perfect oracle to a script.
+
+### Every gate is made twice
+
+Each staff route that touches one conversation authorises it at the door in
+`loadConversationForStaff()` **and again inside the transaction that writes**.
+A transfer can land in the gap between the two, and "I had it open a second
+ago" is not authorisation. Both copies have their own tests, because through
+the HTTP handlers either one alone produces the same 404.
+
+### The composite index
+
+```json
+{ "collectionGroup": "chatConversations", "queryScope": "COLLECTION",
+  "fields": [ { "fieldPath": "status", "order": "ASCENDING" },
+              { "fieldPath": "locationId", "order": "ASCENDING" },
+              { "fieldPath": "lastMessageAt", "order": "DESCENDING" } ] }
+```
+
+Added to `firestore.indexes.json` and **not deployed**. Deploy it with
+`firebase deploy --only firestore:indexes` before the first single-shop staff
+account is created; until then every account takes the unassigned-inclusive
+path, which uses the existing `(status, lastMessageAt)` index.
 
 ---
 
@@ -316,14 +487,25 @@ server-only collection, not on the message.
 ### Conversation fields
 
 `customerUid` (from the verified token, never the body), `customerName`,
-`customerEmail`, `status`, `createdAt`, `updatedAt`, `lastMessageAt`,
-`messageCount`, `closedAt`, `staffLastReadAt`, `customerLastReadAt`,
-`staffNotifiedAt`, `startRequestHash`.
+`customerEmail`, `status`, `locationId`, `createdAt`, `updatedAt`,
+`lastMessageAt`, `messageCount`, `closedAt`, `staffLastReadAt`,
+`customerLastReadAt`, `staffNotifiedAt`, `startRequestHash`.
+
+Written **only by a transfer**, and absent until one happens:
+`previousLocationId`, `lastTransferredAt`, `lastTransferredByStaffUid`,
+`transferCount`.
+
+The audit is deliberately **not an array**. A per-transfer history would grow
+without bound inside a document read on every inbox poll; the most recent
+transfer is what anybody actually asks about. A full history, if it is ever
+wanted, belongs in its own collection.
 
 A conversation document is server-private — the deployed rules let a customer
 read their own, but nothing here is secret from its own owner, and
-`publicConversation()` serialises an explicit allow-list that excludes both
-`customerUid` and `startRequestHash`.
+`publicConversation()` serialises an explicit allow-list that excludes
+`customerUid`, `startRequestHash` and every routing audit field. `locationId`
+is serialised; `locationLabel` is **derived** at serialisation time and never
+stored.
 
 ---
 
@@ -881,3 +1063,21 @@ copy the three fields into the Vercel dashboard and delete the file.
   consecutive windows and asserts a single document remains.
 - **Read receipts.** `staffLastReadAt` and `customerLastReadAt` exist on the
   conversation and are never written by this API.
+- **The routing backfill.** Conversations written before §5a have no
+  `locationId` and are read as `unassigned`. Nothing writes one, deliberately:
+  a production backfill was out of scope for this phase. It is **recommended**
+  — a one-off script setting `locationId: 'unassigned'` on every
+  `chatConversations` document that lacks the field. Two things get simpler
+  once it has run: every authorised set can use a positive `in` filter (so the
+  50-row cap is applied after filtering rather than before, closing the gap
+  noted in §5a), and the two query shapes in `listConversations()` collapse
+  into one. Nothing is *broken* without it.
+- **The `locations` assignment on production staff documents.** Both accounts
+  are `{ isActive: true, role: 'admin' }` with no `locations` field, which
+  rule 3 of §5a reads as every shop. That is the intended rollout state. A
+  staff member who should see only one shop needs `locations: ['main']` (or
+  `['specialty']`) added to their `staff/{uid}` document — **this phase changes
+  no production staff document**. Deploy the composite index before doing it.
+- **Transfer notifications.** Nothing tells the destination shop that a
+  conversation has arrived. The dashboard notices within one 15-second inbox
+  poll; an email or a sound is a separate decision.

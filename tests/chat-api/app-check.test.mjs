@@ -42,7 +42,8 @@ const goodBody = () => ({
   name: 'Test Person',
   email: 'person@example.test',
   message: 'Do you make curved flashing?',
-  clientMessageId: uuid()
+  clientMessageId: uuid(),
+  locationId: 'main'
 });
 
 /* Enforced customer route. */

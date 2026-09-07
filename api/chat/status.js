@@ -69,11 +69,24 @@ const OPTIONS = {
         customerUid: ctx.actor.uid      /* verified token, never the query */
       }));
 
-    /* An explicit allow-list, and it is the whole response. No customerUid, no
-       email, no name, no timestamps, no counts, no staff fields. */
+    /*
+     * An explicit allow-list, and it is the whole response. No customerUid, no
+     * email, no name, no timestamps, no counts, no staff fields.
+     *
+     * locationId is on it deliberately. The panel tells the customer which
+     * shop they are writing to, and that confirmation has to survive a reload
+     * and follow a transfer - otherwise a conversation moved to Keith Street
+     * still says "Main Shop" until the tab is closed. It is the customer's own
+     * conversation and they chose the destination themselves, so it tells them
+     * nothing they did not already know. The friendly LABEL is not sent: the
+     * client derives it, which keeps a shop rename a one-file change instead
+     * of a data migration. No previousLocationId, no lastTransferredAt, no
+     * lastTransferredByStaffUid - who moved it, and when, is staff business.
+     */
     return H.ok(ctx.res, {
       conversationId: result.conversationId,
-      status: result.status
+      status: result.status,
+      locationId: result.locationId
     });
   }
 };

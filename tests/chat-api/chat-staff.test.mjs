@@ -39,6 +39,7 @@ const CUSTOMER_PATH = ROOT + '/assets/js/chat-customer.js';
 const WIDGET_PATH = ROOT + '/assets/js/chat.js';
 const PAGE_PATH = ROOT + '/staff/chat/index.html';
 const CSS_PATH = ROOT + '/assets/css/chat-staff.css';
+const LOCATIONS_PATH = ROOT + '/assets/js/chat-locations.js';
 const STUB_PATH = ROOT + '/tests/chat-api/fixtures/firebase-staff-stub.mjs';
 
 const STAFF_SRC = readFileSync(STAFF_PATH, 'utf8');
@@ -49,6 +50,11 @@ const PAGE_SRC = readFileSync(PAGE_PATH, 'utf8');
 const CSS_SRC = readFileSync(CSS_PATH, 'utf8');
 
 const STUB_URL = pathToFileURL(STUB_PATH).href;
+
+/* The real shop definitions - see the same note in chat-customer.test.mjs.
+   Nothing to stub: the file imports nothing, and the labels it holds are
+   exactly what these tests are checking reaches the screen. */
+const LOCATIONS_URL = pathToFileURL(LOCATIONS_PATH).href;
 
 /* These files document themselves at length, and the prose names the very
    things the assertions promise are absent - "no innerHTML anywhere in this
@@ -73,6 +79,7 @@ async function load() {
   const staffSrc = STAFF_SRC
     .replace(/const SDK_AUTH = [^;]+;/, `const SDK_AUTH = ${JSON.stringify(STUB_URL)};`)
     .replace(/from '\.\/chat-app-check\.js(\?[^']*)?'/, `from ${JSON.stringify(appCheckUrl)}`)
+    .replace(/from '\.\/chat-locations\.js(\?[^']*)?'/, `from ${JSON.stringify(LOCATIONS_URL)}`)
     + `\n/* cache-bust ${salt} */\n`;
 
   const mod = await import(dataUrl(staffSrc));
@@ -103,6 +110,10 @@ function recordingUi() {
     sendBusy: null, closeBusy: null,
     composerCleared: 0,
     confirmRequests: 0, lastConfirm: null,
+    locationFilters: null, locationFiltersHistory: [],
+    locationFilter: null, locationFilterHistory: [],
+    transferBusy: null,
+    transferRequests: 0, lastTransferOptions: null, lastTransfer: null,
     handlers: {}
   };
   ui.setPhase = (p) => { ui.calls.push('setPhase:' + p); ui.phase = p; ui.phases.push(p); };
@@ -126,6 +137,23 @@ function recordingUi() {
     ui.confirmRequests += 1;
     ui.lastConfirm = run;
   };
+  ui.setLocationFilters = (l) => {
+    ui.calls.push('setLocationFilters');
+    ui.locationFilters = l;
+    ui.locationFiltersHistory.push(l);
+  };
+  ui.setLocationFilter = (v) => {
+    ui.calls.push('setLocationFilter');
+    ui.locationFilter = v;
+    ui.locationFilterHistory.push(v);
+  };
+  ui.setTransferBusy = (f) => { ui.calls.push('setTransferBusy'); ui.transferBusy = f; };
+  ui.confirmTransfer = (options, run) => {
+    ui.calls.push('confirmTransfer');
+    ui.transferRequests += 1;
+    ui.lastTransferOptions = options;
+    ui.lastTransfer = run;
+  };
   ui.onSignIn = (h) => { ui.handlers.signIn = h; };
   ui.onSignOut = (h) => { ui.handlers.signOut = h; };
   ui.onSelect = (h) => { ui.handlers.select = h; };
@@ -134,6 +162,8 @@ function recordingUi() {
   ui.onSend = (h) => { ui.handlers.send = h; };
   ui.onClose = (h) => { ui.handlers.close = h; };
   ui.onBack = (h) => { ui.handlers.back = h; };
+  ui.onLocationFilter = (h) => { ui.handlers.locationFilter = h; };
+  ui.onTransfer = (h) => { ui.handlers.transfer = h; };
   return ui;
 }
 
@@ -196,17 +226,26 @@ function tick(times = 4) {
   return p;
 }
 
+/* One at each shop, so the ordinary rendering paths in this suite carry a
+   real destination rather than only the legacy no-locationId case - which
+   has its own tests. locationLabel is sent by the API and deliberately
+   ignored by the client, which is also asserted below. */
 const CONV_A = {
   conversationId: 'conv-a', customerName: 'Dana Fraser',
   customerEmail: 'dana@example.com', status: 'open',
+  locationId: 'main', locationLabel: 'Main Shop - 1st Avenue',
   createdAt: 1000, lastMessageAt: 5000, messageCount: 3, staffLastReadAt: null
 };
 const CONV_B = {
   conversationId: 'conv-b', customerName: 'Sam Okafor',
   customerEmail: 'sam@example.com', status: 'open',
+  locationId: 'specialty', locationLabel: 'Specialty Shop - Keith Street',
   createdAt: 900, lastMessageAt: 4000, messageCount: 1, staffLastReadAt: null
 };
-const INBOX_OK = { ok: true, conversations: [CONV_A, CONV_B], status: 'open', limit: 50 };
+/* A manager: authorised for all three, which is what makes the filter chips
+   appear at all. Single-shop accounts get their own tests. */
+const INBOX_OK = { ok: true, conversations: [CONV_A, CONV_B], status: 'open',
+  limit: 50, locations: ['main', 'specialty', 'unassigned'] };
 const THREAD_OK = {
   ok: true,
   conversation: CONV_A,
@@ -236,6 +275,13 @@ function staffApi(overrides) {
     if (input.indexOf('/api/admin/chat/close') === 0) {
       return o.close ? o.close(n, input) : jsonResponse(200,
         { ok: true, conversationId: 'conv-a', status: 'closed' });
+    }
+    if (input.indexOf('/api/admin/chat/transfer') === 0) {
+      return o.transfer ? o.transfer(n, input) : jsonResponse(200,
+        { ok: true, conversationId: 'conv-a', locationId: 'specialty',
+          locationLabel: 'Specialty Shop - Keith Street',
+          previousLocationId: 'main',
+          previousLocationLabel: 'Main Shop - 1st Avenue', changed: true });
     }
     return jsonResponse(500, { ok: false, code: 'unexpected_call' });
   };
@@ -676,7 +722,8 @@ describe('the dashboard speaks the existing staff API exactly', () => {
       '/api/admin/chat/close',
       '/api/admin/chat/conversations',
       '/api/admin/chat/messages',
-      '/api/admin/chat/send'
+      '/api/admin/chat/send',
+      '/api/admin/chat/transfer'
     ]);
   });
 });
@@ -1880,7 +1927,8 @@ describe('the open transcript is re-read only when it actually changed', () => {
       session.select('conv-a');
       await tick();
       assert.deepEqual(session.threadMarker, {
-        conversationId: 'conv-a', lastMessageAt: 5000, messageCount: 30, status: 'open'
+        conversationId: 'conv-a', lastMessageAt: 5000, messageCount: 30,
+        status: 'open', locationId: 'main'
       });
       assert.equal(typeof session.threadMarker.lastMessageAt, 'number');
       assert.equal(typeof session.threadMarker.messageCount, 'number');
@@ -2078,7 +2126,7 @@ describe('the open transcript is re-read only when it actually changed', () => {
 
 describe('the whole local chat graph moved to one new version', () => {
   test('every local chat module and the staff page agree', () => {
-    const WANT = '2026-09-05.2';
+    const WANT = '2026-09-06.1';
     const files = {
       'assets/js/chat.js': [/var CHAT_CLIENT_VERSION = '([^']+)';/],
       'assets/js/chat-customer.js': [/export const CHAT_CLIENT_VERSION = '([^']+)';/,
@@ -2122,5 +2170,588 @@ describe('the whole local chat graph moved to one new version', () => {
           assert.equal(/\?v=/.test(u), false, file + ': no ?v= on ' + u);
         }
       }
+    });
+});
+
+/* ==================================== 83-100. TWO SHOPS, FROM THE STAFF SIDE */
+
+/*
+ * ROUTING AND HANDOVER ON THE DASHBOARD.
+ *
+ * Three things have to be true at once: a staff member can see which shop
+ * every conversation belongs to, a manager watching both can narrow the view
+ * without that narrowing being mistaken for a permission, and a misrouted
+ * conversation can be handed over - keeping its id and its transcript - even
+ * to a shop the person handing it over cannot read.
+ *
+ * WHAT IS NOT TESTED HERE, BECAUSE IT IS NOT HERE: which shops this account
+ * may see. That is decided by api/_chat/locations.js and proven against the
+ * real emulator in tests/chat-api/locations.test.mjs. Everything below is
+ * about what the page does with the answer.
+ */
+describe('the dashboard shows which shop, and can hand a thread over', () => {
+  const inboxWith = (conversations, locations) => jsonResponse(200, {
+    ok: true, status: 'open', limit: 50,
+    conversations: conversations,
+    locations: locations
+  });
+
+  /* ------------------------------------------------------ what is shown */
+
+  test('EVERY ROW CARRIES ITS SHOP, as a derived label', async () => {
+    const { mod } = await load();
+    const { ui, fetcher } = await signedIn(mod);
+    try {
+      const rows = Object.fromEntries(ui.inbox.map((c) => [c.conversationId, c]));
+      assert.equal(rows['conv-a'].locationId, 'main');
+      assert.equal(rows['conv-a'].locationLabel, 'Main Shop - 1st Avenue');
+      assert.equal(rows['conv-b'].locationId, 'specialty');
+      assert.equal(rows['conv-b'].locationLabel, 'Specialty Shop - Keith Street');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('THE LABEL IS DERIVED, NOT TAKEN FROM THE RESPONSE', async () => {
+    /*
+     * The API sends locationLabel and this page ignores it. The id is one of
+     * three known strings; the label is a sentence that goes on a monitor.
+     * Deriving it means the only location text this build can display is one
+     * of its own three.
+     */
+    const { mod } = await load();
+    const { ui, fetcher } = await signedIn(mod, {
+      responder: staffApi({
+        conversations: () => inboxWith([
+          Object.assign({}, CONV_A, {
+            locationId: 'main',
+            locationLabel: '<img src=x onerror="alert(1)">'
+          })
+        ], ['main'])
+      })
+    });
+    try {
+      assert.equal(ui.inbox[0].locationLabel, 'Main Shop - 1st Avenue');
+      assert.equal(JSON.stringify(ui.inbox).indexOf('onerror'), -1);
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('A CONVERSATION FROM BEFORE ROUTING READS AS UNASSIGNED, never main',
+    async () => {
+      const { mod } = await load();
+      const legacy = Object.assign({}, CONV_A);
+      delete legacy.locationId;
+      delete legacy.locationLabel;
+      const { ui, fetcher } = await signedIn(mod, {
+        responder: staffApi({ conversations: () => inboxWith([legacy], ['main']) })
+      });
+      try {
+        assert.equal(ui.inbox[0].locationId, 'unassigned');
+        assert.equal(ui.inbox[0].locationLabel, 'Not Sure / Unassigned');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('an id this build does not know is never echoed', async () => {
+    const { mod } = await load();
+    const { ui, fetcher } = await signedIn(mod, {
+      responder: staffApi({
+        conversations: () => inboxWith([
+          Object.assign({}, CONV_A, { locationId: 'third-shop-<script>' })
+        ], ['main'])
+      })
+    });
+    try {
+      assert.equal(ui.inbox[0].locationId, 'unassigned');
+      assert.equal(ui.inbox[0].locationLabel, 'Not Sure / Unassigned');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  /* ------------------------------------------------------- the chips */
+
+  test('A MANAGER GETS CHIPS; A SINGLE-SHOP ACCOUNT GETS NONE', async () => {
+    for (const [locations, expected] of [
+      [['main', 'specialty', 'unassigned'], 3],
+      [['main'], 0],
+      [['specialty'], 0],
+      [[], 0],
+      [undefined, 0]
+    ]) {
+      const { mod } = await load();
+      const { ui, fetcher } = await signedIn(mod, {
+        responder: staffApi({ conversations: () => inboxWith([CONV_A], locations) })
+      });
+      try {
+        const drawn = ui.locationFilters || [];
+        assert.equal(drawn.length, expected,
+          JSON.stringify(locations) + ' -> ' + expected + ' chips');
+        if (expected) {
+          assert.deepEqual(drawn.map((c) => c.label), [
+            'Main Shop - 1st Avenue',
+            'Specialty Shop - Keith Street',
+            'Not Sure / Unassigned'
+          ], 'the full labels, in the canonical order');
+        }
+      } finally {
+        fetcher.restore();
+      }
+    }
+  });
+
+  test('the chips come from the SERVER answer, not from a role or an email',
+    async () => {
+      const { mod } = await load();
+      const { ui, fetcher } = await signedIn(mod, {
+        responder: staffApi({
+          conversations: () => inboxWith([CONV_A, CONV_B], ['main', 'specialty'])
+        })
+      });
+      try {
+        assert.deepEqual((ui.locationFilters || []).map((c) => c.id),
+          ['main', 'specialty'], 'exactly what was authorised');
+        /*
+         * And nothing in this file decides it. No email is treated as
+         * privileged, and no role is mapped to a set of shops - the answer
+         * is read straight out of the response the server sent.
+         */
+        assert.match(STAFF_CODE,
+          /applyLocations\(payload && payload\.locations\)/);
+        assert.equal(/manager@esthers|@esthers\.ca/.test(STAFF_CODE), false,
+          'no address is treated as privileged');
+        assert.equal(/\.role\b|'admin'|"admin"/.test(STAFF_CODE), false,
+          'no role is mapped to a set of shops');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('FILTERING IS A VIEW, NOT A REQUEST', async () => {
+    const { mod } = await load();
+    const { ui, fetcher, session } = await signedIn(mod);
+    try {
+      const before = fetcher.seen.length;
+      assert.equal(session.setLocationFilter('specialty'), true);
+      assert.equal(fetcher.seen.length, before,
+        'the rows are already here and already authorised');
+      assert.deepEqual(ui.inbox.map((c) => c.conversationId), ['conv-b']);
+      assert.equal(ui.locationFilter, 'specialty');
+
+      /* Back to everything. */
+      session.setLocationFilter(null);
+      assert.deepEqual(ui.inbox.map((c) => c.conversationId).sort(),
+        ['conv-a', 'conv-b']);
+      assert.equal(fetcher.seen.length, before, 'still no request');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('a filter for a shop this account cannot see is refused', async () => {
+    const { mod } = await load();
+    const { ui, fetcher, session } = await signedIn(mod, {
+      responder: staffApi({ conversations: () => inboxWith([CONV_A], ['main']) })
+    });
+    try {
+      assert.equal(session.setLocationFilter('specialty'), false);
+      assert.equal(session.locationFilter, null);
+      assert.deepEqual(ui.inbox.map((c) => c.conversationId), ['conv-a'],
+        'and nothing was hidden by the attempt');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('THE FILTER NEVER HIDES A ROW FROM THE CHANGE DETECTOR', async () => {
+    /*
+     * The trap this avoids. If the filter narrowed session.conversations
+     * rather than only the render, a conversation the manager had merely
+     * filtered out would look ABSENT to reconcileSelected() - which treats
+     * absence as a change - and its transcript would be re-read on every
+     * fifteen-second tick, forever.
+     */
+    const { mod } = await load();
+    const { ui, fetcher, clock, session } = await signedIn(mod);
+    try {
+      session.select('conv-a');
+      await tick();
+      session.setLocationFilter('specialty');       /* hides conv-a */
+      assert.deepEqual(ui.inbox.map((c) => c.conversationId), ['conv-b']);
+      assert.equal(session.conversations.length, 2,
+        'the authorised list is intact underneath');
+
+      const reads = fetcher.seen.filter(
+        (r) => String(r.input).indexOf('/api/admin/chat/messages') !== -1).length;
+      clock.fireAll(); await tick();
+      clock.fireAll(); await tick();
+      const after = fetcher.seen.filter(
+        (r) => String(r.input).indexOf('/api/admin/chat/messages') !== -1).length;
+      assert.equal(after, reads, 'two ticks, no transcript re-read');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('signing out takes the chips and the filter with them', async () => {
+    const { mod } = await load();
+    const { ui, fetcher, session } = await signedIn(mod);
+    try {
+      session.setLocationFilter('main');
+      await session.signOut();
+      await tick();
+      assert.deepEqual(ui.locationFilters, [],
+        'which shops the last person handled is not for the next one to read');
+      assert.equal(ui.locationFilter, null);
+      assert.equal(session.locations.length, 0);
+      assert.equal(session.locationFilter, null);
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  /* --------------------------------------------------- the marker */
+
+  test('LOCATIONID IS IN THE RECONCILIATION MARKER', async () => {
+    const { mod } = await load();
+    const { fetcher, session } = await signedIn(mod);
+    try {
+      session.select('conv-a');
+      await tick();
+      assert.equal(session.threadMarker.locationId, 'main');
+      /* Four fields, and a change in any one of them is a change. */
+      assert.deepEqual(Object.keys(session.threadMarker).sort(),
+        ['conversationId', 'lastMessageAt', 'locationId', 'messageCount', 'status']);
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('A TRANSFER IS INVISIBLE WITHOUT IT, and visible with it', async () => {
+    /*
+     * A transfer writes locationId and the audit stamps, and deliberately
+     * touches neither lastMessageAt nor messageCount - nothing was said. A
+     * marker of those two alone would leave the old shop's copy of the header
+     * on screen, and a reply typed into a thread this account no longer holds.
+     */
+    const { mod } = await load();
+    let where = 'main';
+    const summary = () => Object.assign({}, CONV_A, { locationId: where });
+    const { fetcher, clock, session } = await signedIn(mod, {
+      responder: staffApi({
+        conversations: () => inboxWith([summary()], ['main', 'specialty', 'unassigned']),
+        messages: () => jsonResponse(200,
+          { ok: true, limit: 200, conversation: summary(), messages: [] })
+      })
+    });
+    try {
+      session.select('conv-a');
+      await tick();
+      const reads = () => fetcher.seen.filter(
+        (r) => String(r.input).indexOf('/api/admin/chat/messages') !== -1).length;
+      const before = reads();
+
+      /* Nothing moved: no re-read. */
+      clock.fireAll(); await tick();
+      assert.equal(reads(), before, 'an unchanged conversation is not re-read');
+
+      /* Somebody else moved it. lastMessageAt and messageCount are the same. */
+      where = 'specialty';
+      clock.fireAll(); await tick();
+      assert.equal(reads(), before + 1, 'the move was noticed');
+      assert.equal(session.threadMarker.locationId, 'specialty');
+      assert.equal(session.thread.conversation.locationLabel,
+        'Specialty Shop - Keith Street');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  /* ------------------------------------------------------ handing over */
+
+  test('THE DESTINATIONS OFFERED ARE THE OTHER TWO SHOPS - not the ones this '
+    + 'account can read', async () => {
+      /*
+       * Main-only staff who find a Keith Street job in their inbox must be
+       * able to send it to Keith Street. Requiring destination access would
+       * mean only a manager could ever fix a misroute, which is the opposite
+       * of the point. The server agrees: it authorises the SOURCE.
+       */
+      const { mod } = await load();
+      const { ui, fetcher, session } = await signedIn(mod, {
+        responder: staffApi({ conversations: () => inboxWith([CONV_A], ['main']) })
+      });
+      try {
+        session.select('conv-a');
+        await tick();
+        assert.equal(session.requestTransfer(), true);
+        assert.equal(ui.transferRequests, 1);
+        assert.deepEqual(ui.lastTransferOptions.map((o) => o.id),
+          ['specialty', 'unassigned'], 'everywhere but where it already is');
+        assert.deepEqual(ui.lastTransferOptions.map((o) => o.label),
+          ['Specialty Shop - Keith Street', 'Not Sure / Unassigned']);
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('the request is exactly conversationId and locationId', async () => {
+    const { mod } = await load();
+    const { ui, fetcher, session } = await signedIn(mod);
+    try {
+      session.select('conv-a');
+      await tick();
+      session.requestTransfer();
+      await ui.lastTransfer('specialty');
+      await tick();
+
+      const call = fetcher.seen.find(
+        (r) => String(r.input).indexOf('/api/admin/chat/transfer') !== -1);
+      assert.ok(call, 'it was sent');
+      assert.equal(call.init.method, 'POST');
+      const body = JSON.parse(call.init.body);
+      /* No previousLocationId, no transferredBy, no staff uid: every audit
+         field is the server's to write, and requireNoPrivilegedFields()
+         refuses a body that tries. */
+      assert.deepEqual(Object.keys(body).sort(), ['conversationId', 'locationId']);
+      assert.equal(body.conversationId, 'conv-a');
+      assert.equal(body.locationId, 'specialty');
+      /* Both credentials, in their own channels, like every other staff
+         request. */
+      const h = call.init.headers;
+      const auth = h.get ? h.get('authorization') : h['Authorization'];
+      const ac = h.get ? h.get('x-firebase-appcheck') : h['X-Firebase-AppCheck'];
+      assert.match(String(auth), /^Bearer /);
+      assert.ok(ac, 'the App Check token is attached');
+      assert.equal(String(ac).indexOf('Bearer'), -1, 'and not swapped');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('A DESTINATION THIS BUILD DOES NOT KNOW IS NOT SENT', async () => {
+    const { mod } = await load();
+    const { fetcher, session } = await signedIn(mod);
+    try {
+      session.select('conv-a');
+      await tick();
+      const before = fetcher.seen.length;
+      for (const bad of ['MAIN', ' main', 'shop-3', '', null, undefined, 7, {}]) {
+        assert.equal(await session.transfer(bad), false, JSON.stringify(bad));
+      }
+      assert.equal(fetcher.seen.length, before, 'nothing left the browser');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('MOVING IT OUT OF REACH LETS GO OF IT, AND SAYS WHERE IT WENT',
+    async () => {
+      /*
+       * The normal case for single-shop staff. Reading the transcript again
+       * would be a 404 dressed up as an error, and a row vanishing with no
+       * explanation is how people conclude they deleted something.
+       */
+      const { mod } = await load();
+      const { ui, fetcher, session } = await signedIn(mod, {
+        responder: staffApi({ conversations: () => inboxWith([CONV_A], ['main']) })
+      });
+      try {
+        session.select('conv-a');
+        await tick();
+        session.requestTransfer();
+        await ui.lastTransfer('specialty');
+        await tick();
+
+        assert.equal(session.selectedId, null, 'let go of deliberately');
+        assert.equal(session.thread, null);
+        assert.equal(session.threadMarker, null);
+        assert.equal(ui.selected, null);
+        assert.equal(ui.thread, null);
+        assert.equal(ui.notice,
+          'Moved to Specialty Shop - Keith Street. It is no longer in your inbox.');
+        /* No transcript read after the move: it would only 404. */
+        const readsAfter = fetcher.seen.slice(
+          fetcher.seen.findIndex(
+            (r) => String(r.input).indexOf('/transfer') !== -1))
+          .filter((r) => String(r.input).indexOf('/api/admin/chat/messages') !== -1);
+        assert.equal(readsAfter.length, 0);
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('a manager keeps it, and the header follows', async () => {
+    const { mod } = await load();
+    let where = 'main';
+    const summary = () => Object.assign({}, CONV_A, { locationId: where });
+    const { ui, fetcher, session } = await signedIn(mod, {
+      responder: staffApi({
+        conversations: () => inboxWith([summary()], ['main', 'specialty', 'unassigned']),
+        messages: () => jsonResponse(200,
+          { ok: true, limit: 200, conversation: summary(), messages: [] }),
+        transfer: () => {
+          where = 'specialty';
+          return jsonResponse(200, { ok: true, conversationId: 'conv-a',
+            locationId: 'specialty', previousLocationId: 'main', changed: true });
+        }
+      })
+    });
+    try {
+      session.select('conv-a');
+      await tick();
+      session.requestTransfer();
+      await ui.lastTransfer('specialty');
+      await tick();
+
+      assert.equal(session.selectedId, 'conv-a', 'still theirs to read');
+      assert.equal(ui.thread.conversation.locationLabel,
+        'Specialty Shop - Keith Street');
+      assert.equal(ui.notice, 'Moved to Specialty Shop - Keith Street.');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('THE LABEL IN THE CONFIRMATION IS DERIVED, NOT ECHOED', async () => {
+    const { mod } = await load();
+    const { ui, fetcher, session } = await signedIn(mod, {
+      responder: staffApi({
+        conversations: () => inboxWith([CONV_A], ['main']),
+        transfer: () => jsonResponse(200, { ok: true, conversationId: 'conv-a',
+          locationId: 'specialty',
+          locationLabel: '<script>alert(1)</script>', changed: true })
+      })
+    });
+    try {
+      session.select('conv-a');
+      await tick();
+      session.requestTransfer();
+      await ui.lastTransfer('specialty');
+      await tick();
+      assert.equal(ui.notice,
+        'Moved to Specialty Shop - Keith Street. It is no longer in your inbox.');
+      assert.equal(JSON.stringify(ui.notices).indexOf('script'), -1);
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('a closed conversation is not offered a move', async () => {
+    const { mod } = await load();
+    const closed = Object.assign({}, CONV_A, { status: 'closed' });
+    const { ui, fetcher, session } = await signedIn(mod, {
+      responder: staffApi({
+        conversations: () => inboxWith([closed], ['main', 'specialty', 'unassigned']),
+        messages: () => jsonResponse(200,
+          { ok: true, limit: 200, conversation: closed, messages: [] })
+      })
+    });
+    try {
+      session.setFilter('closed');
+      await tick();
+      session.select('conv-a');
+      await tick();
+      assert.equal(session.isClosed(), true);
+      assert.equal(session.requestTransfer(), false,
+        'the server refuses it with conversation_closed; do not ask');
+      assert.equal(ui.transferRequests, 0);
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('ONE MOVE AT A TIME, and a failure goes and looks', async () => {
+    const { mod } = await load();
+    const { ui, fetcher, session } = await signedIn(mod, {
+      responder: staffApi({
+        transfer: () => jsonResponse(409, { ok: false,
+          code: 'conversation_closed', error: 'closed' })
+      })
+    });
+    try {
+      session.select('conv-a');
+      await tick();
+      const before = fetcher.seen.filter(
+        (r) => String(r.input).indexOf('/transfer') !== -1).length;
+
+      const a = session.transfer('specialty');
+      const b = session.transfer('unassigned');   /* refused: one in flight */
+      await Promise.all([a, b]);
+      await tick();
+
+      const after = fetcher.seen.filter(
+        (r) => String(r.input).indexOf('/transfer') !== -1).length;
+      assert.equal(after, before + 1, 'a double-click is one request');
+      assert.equal(ui.notice, 'That conversation has been closed.');
+      assert.equal(ui.transferBusy, false, 'and the button came back');
+      /* NO AUTOMATIC RETRY. An ambiguous failure may already have moved it. */
+      assert.equal(ui.retry, null);
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('a revoked session mid-move clears the screen rather than warning',
+    async () => {
+      const { mod } = await load();
+      const { ui, fetcher, session } = await signedIn(mod, {
+        responder: staffApi({
+          transfer: () => jsonResponse(403, { ok: false, code: 'not_staff',
+            error: 'no' })
+        })
+      });
+      try {
+        session.select('conv-a');
+        await tick();
+        await session.transfer('specialty');
+        await tick();
+        assert.equal(ui.phase, 'signed-out');
+        assert.equal(ui.thread, null);
+        assert.equal(ui.inbox.length, 0);
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  /* ----------------------------------------------------- the source */
+
+  test('FOUND IN THE BROWSER: no empty shop pill before a thread is chosen',
+    () => {
+      /*
+       * .sc__loc is a bordered pill. Built without the hidden attribute it
+       * rendered as a stray empty capsule beside "No conversation selected"
+       * on first paint, before renderThread() had ever run. Caught in a
+       * screenshot, not by reading this.
+       */
+      assert.match(STAFF_CODE,
+        /const threadLoc = el\('span', \{ class: 'sc__loc sc__loc--head', text: '',\s*hidden: 'hidden' \}\)/);
+    });
+
+  test('the dashboard still has ZERO direct Firestore access', () => {
+    /* Routing added an endpoint, not a door. */
+    for (const forbidden of ['getFirestore', 'onSnapshot', 'collection(',
+                             'doc(', 'firebase-firestore']) {
+      assert.equal(STAFF_CODE.indexOf(forbidden), -1,
+        'chat-staff.js reaches for ' + forbidden);
+    }
+  });
+
+  test('no shop name is written into the dashboard', () => {
+    for (const literal of ['Main Shop', 'Keith Street', 'First Ave',
+                           'Specialty Shop', 'Not Sure']) {
+      assert.equal(STAFF_CODE.indexOf(literal), -1,
+        'chat-staff.js hard-codes ' + literal);
+    }
+    assert.match(STAFF_CODE, /from '\.\/chat-locations\.js\?v=/);
+  });
+
+  test('still no innerHTML, and the badge is textContent like everything else',
+    () => {
+      assert.equal(/innerHTML|outerHTML|insertAdjacentHTML|document\.write/
+        .test(STAFF_CODE), false);
     });
 });

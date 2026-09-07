@@ -45,7 +45,7 @@ beforeEach(async () => {
 async function aConversation() {
   const res = await call(customerStart(), { token: 'cust', body: {
     name: 'Jordan Ellis', email: 'jordan@example.test',
-    message: 'First question', clientMessageId: uuid() } });
+    message: 'First question', clientMessageId: uuid(), locationId: 'main' } });
   assert.equal(res.statusCode, 200, JSON.stringify(res.payload));
   return res.payload.conversationId;
 }
@@ -118,10 +118,21 @@ describe('staff inbox', () => {
     const res = await call(conversations(), { method: 'GET', token: 'admin' });
     assert.deepEqual(Object.keys(res.payload.conversations[0]).sort(), [
       'conversationId', 'createdAt', 'customerEmail', 'customerName',
-      'lastMessageAt', 'messageCount', 'staffLastReadAt', 'status'
+      /* Routing, added with two-shop support. The ID is what authorisation
+         and reconciliation compare; the LABEL is derived from it by the
+         server so no client has to know the words and no caller can supply
+         them. Neither reveals anything about staff. */
+      'lastMessageAt', 'locationId', 'locationLabel',
+      'messageCount', 'staffLastReadAt', 'status'
     ]);
     assert.equal(res.payload.conversations[0].customerUid, undefined,
       'the customer uid must not be serialised');
+    /* The audit trail is server-owned and stays on the document. */
+    for (const secret of ['previousLocationId', 'lastTransferredAt',
+                          'lastTransferredByStaffUid', 'transferCount']) {
+      assert.equal(res.payload.conversations[0][secret], undefined,
+        secret + ' must not be serialised to a browser');
+    }
   });
 
   test('hard limit is enforced', async () => {

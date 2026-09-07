@@ -54,7 +54,8 @@ const send = (opts) => handlerFor(SEND, TOKENS, opts);
 
 const startBody = () => ({
   name: 'Riley Chen', email: 'riley@example.test',
-  message: 'Do you fabricate custom flashing?', clientMessageId: uuid()
+  message: 'Do you fabricate custom flashing?', clientMessageId: uuid(),
+  locationId: 'main'
 });
 
 async function openConversation(token) {

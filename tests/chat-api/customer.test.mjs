@@ -25,7 +25,9 @@ const send = () => handlerFor(SEND, TOKENS);
 
 const goodStart = (over = {}) => Object.assign({
   name: 'Jordan Ellis', email: 'jordan@example.test',
-  message: 'Do you make louvered chimney caps?', clientMessageId: uuid()
+  message: 'Do you make louvered chimney caps?', clientMessageId: uuid(),
+  /* Routing is required on start now - see api/_chat/locations.js. */
+  locationId: 'main'
 }, over);
 
 before(async () => { await wipe(); });
@@ -125,8 +127,19 @@ describe('chat/start', () => {
 
   test('the response returns only the allow-listed fields', async () => {
     const res = await call(start(), { token: 'tokA', body: goodStart() });
+    /* locationId joined this list with routing: the panel says which shop the
+       message went to, and that line is drawn from the server's answer rather
+       than from what the browser thinks it sent. Still an exact list - the
+       next accidental field fails here. */
     assert.deepEqual(Object.keys(res.payload).sort(),
-      ['conversationId', 'messageId', 'ok', 'status']);
+      ['conversationId', 'locationId', 'messageId', 'ok', 'status']);
+    assert.equal(res.payload.locationId, 'main');
+    /* And no audit field rode along with it. */
+    for (const secret of ['locationLabel', 'previousLocationId',
+                          'lastTransferredAt', 'lastTransferredByStaffUid',
+                          'transferCount', 'customerUid', 'customerEmail']) {
+      assert.equal(res.payload[secret], undefined, secret + ' leaked');
+    }
   });
 
   test('invalid name rejected', async () => {

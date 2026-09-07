@@ -491,6 +491,119 @@ body.sc {
 
 .sc__dlg-row { display: flex; gap: 10px; justify-content: flex-end; }
 
+/* ------------------------------------------------------- shop routing */
+
+/*
+ * The shop filter, on its own row below the inbox head.
+ *
+ * Not in the head: three labels as specific as "Specialty Shop - Keith
+ * Street" do not fit beside Open / Closed / Refresh at any width worth
+ * designing for, and shortening them to fit is exactly the ambiguity these
+ * labels exist to prevent. Drawn only for an account that can see more than
+ * one shop - see setLocationFilters().
+ */
+.sc__filter--loc {
+  margin-left: 0;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--sc-line);
+}
+
+/*
+ * WHICH SHOP, as words.
+ *
+ * Every one of these carries the full label, so the colour is decoration and
+ * nothing depends on telling two tints apart - which matters on a shop
+ * monitor at an angle, in daylight, to somebody who is colour blind, or all
+ * three at once.
+ */
+.sc__loc {
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border: 1px solid var(--sc-line);
+  color: var(--sc-body-2);
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sc__loc--main {
+  color: #8fc7ff;
+  border-color: rgba(143, 199, 255, 0.42);
+}
+
+.sc__loc--specialty {
+  color: #ffc46b;
+  border-color: rgba(255, 196, 107, 0.42);
+}
+
+/* Dashed, because it is not a destination anybody chose - it is the absence
+   of one, and it should look unfinished until somebody routes it. */
+.sc__loc--unassigned {
+  color: var(--sc-faint);
+  border-style: dashed;
+}
+
+/* In the thread header it sits beside the customer's name, so it takes the
+   space it needs and pushes the status pill along. */
+.sc__loc--head {
+  flex: none;
+  margin-left: 12px;
+  font-size: 12px;
+  padding: 3px 10px;
+}
+
+/* ---- the move dialog ---- */
+
+.sc__dlg-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 18px;
+}
+
+/* The whole row is the label, so the target is the row and not the 16px
+   circle in it. Same reason as the customer's shop cards. */
+.sc__dlg-choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border-radius: var(--sc-bev-s);
+  border: 1px solid var(--sc-line);
+  background: var(--sc-raised);
+  color: var(--sc-body);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.sc__dlg-choice:hover { background: var(--sc-hover); }
+
+.sc__dlg-radio {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  accent-color: var(--sc-orange);
+  cursor: pointer;
+}
+
+.sc__dlg-choice:has(.sc__dlg-radio:focus-visible) {
+  outline: 2px solid var(--sc-orange);
+  outline-offset: 2px;
+}
+
+.sc__dlg-choice:has(.sc__dlg-radio:checked) {
+  border-color: var(--sc-orange);
+  background: var(--sc-elevated);
+}
+
+.sc__dlg-choice-text { min-width: 0; }
+
 /* ------------------------------------------------------------- phone */
 
 @media (max-width: 720px) {
@@ -507,6 +620,11 @@ body.sc {
   .sc__msg { max-width: 92%; }
   .sc__who { max-width: 28vw; }
   .sc__bar { flex-wrap: wrap; }
+
+  /* The thread head runs out of room first: the shop label drops onto its
+     own line rather than squeezing the customer's name to nothing. */
+  .sc__thread-head { flex-wrap: wrap; }
+  .sc__loc--head { margin-left: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {

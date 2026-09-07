@@ -36,6 +36,7 @@ import { codeOnly, codeAndStrings } from './fixtures/source-view.mjs';
 const CUSTOMER_PATH = '/home/user/esthers/assets/js/chat-customer.js';
 const APP_CHECK_PATH = '/home/user/esthers/assets/js/chat-app-check.js';
 const WIDGET_PATH = '/home/user/esthers/assets/js/chat.js';
+const LOCATIONS_PATH = '/home/user/esthers/assets/js/chat-locations.js';
 const STUB_PATH = '/home/user/esthers/tests/chat-api/fixtures/firebase-sdk-full-stub.mjs';
 
 const CUSTOMER_SRC = readFileSync(CUSTOMER_PATH, 'utf8');
@@ -43,6 +44,17 @@ const APP_CHECK_SRC = readFileSync(APP_CHECK_PATH, 'utf8');
 const WIDGET_SRC = readFileSync(WIDGET_PATH, 'utf8');
 
 const STUB_URL = pathToFileURL(STUB_PATH).href;
+
+/*
+ * The REAL shop definitions, not a stub.
+ *
+ * chat-locations.js imports nothing and touches no SDK, so there is nothing
+ * to stand in for - and the point of several tests below is that the labels
+ * the panel shows are the labels that file actually holds. A data: URL cannot
+ * resolve './chat-locations.js', so the specifier is rewritten to this file
+ * URL the same way the App Check one is.
+ */
+const LOCATIONS_URL = pathToFileURL(LOCATIONS_PATH).href;
 
 /*
  * These files document themselves at length, and the prose names the very
@@ -79,6 +91,7 @@ async function load() {
        versioning block below - so the query has to be tolerated here or the
        rewrite silently misses and the import fails on a data: URL. */
     .replace(/from '\.\/chat-app-check\.js(\?[^']*)?'/, `from ${JSON.stringify(appCheckUrl)}`)
+    .replace(/from '\.\/chat-locations\.js(\?[^']*)?'/, `from ${JSON.stringify(LOCATIONS_URL)}`)
     + `\n/* cache-bust ${salt} */\n`;
 
   const mod = await import(dataUrl(customerSrc));
@@ -123,6 +136,17 @@ function recordingUi() {
   ui.closedHistory = [];
   ui.setClosed = (f) => { ui.calls.push('setClosed'); ui.closed = f; ui.closedHistory.push(f); };
   ui.setRetry = (h) => { ui.calls.push('setRetry'); ui.retry = h; };
+  /* Routing. destinationHistory is kept because "it moved" is a sequence,
+     not a final value - a transfer has to be visible as a change. */
+  ui.locations = null;
+  ui.setLocations = (list) => { ui.calls.push('setLocations'); ui.locations = list; };
+  ui.destination = null;
+  ui.destinationHistory = [];
+  ui.setDestination = (t) => {
+    ui.calls.push('setDestination');
+    ui.destination = t;
+    ui.destinationHistory.push(t);
+  };
   ui.onStart = (h) => { ui.startHandler = h; };
   ui.onSend = (h) => { ui.sendHandler = h; };
   return ui;
@@ -347,7 +371,7 @@ describe('initialisation order', () => {
         ui, openPanel: () => {},
         deps: Object.assign({ storage: () => storage }, fakeClock().deps)
       });
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hello' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hello', locationId: 'main' });
       await tick();
 
       const at = (name) => stub.order.indexOf(name);
@@ -429,7 +453,7 @@ describe('credentials on the wire', () => {
     stub.setSignedInUser({ uid: 'u1', getIdToken: async () => 'id-token-xyz' });
     const { ui, fetcher } = await connectedSession(mod);
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       const req = fetcher.seen[0];
       assert.equal(req.input, '/api/chat/start');
       assert.equal(req.init.method, 'POST');
@@ -450,7 +474,7 @@ describe('credentials on the wire', () => {
       responder: () => { call += 1; return jsonResponse(200, call === 1 ? OK_START : OK_SEND); }
     });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await ui.sendHandler({ message: 'and another thing' });
       const req = fetcher.seen[1];
       assert.equal(req.input, '/api/chat/send');
@@ -467,7 +491,7 @@ describe('credentials on the wire', () => {
     stub.setSignedInUser({ uid: 'u1', getIdToken: async () => 'ID-TOKEN-VALUE' });
     const { ui, fetcher } = await connectedSession(mod);
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       const auth = fetcher.seen[0].init.headers.get('Authorization');
       assert.equal(auth.includes('APPCHECK-TOKEN-VALUE'), false,
         'these are different credentials proving different things');
@@ -483,7 +507,7 @@ describe('credentials on the wire', () => {
     stub.setSignedInUser({ uid: 'u1', getIdToken: async () => 'ID-TOKEN-VALUE' });
     const { ui, fetcher } = await connectedSession(mod);
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       const ac = fetcher.seen[0].init.headers.get('X-Firebase-AppCheck');
       assert.equal(ac.includes('ID-TOKEN-VALUE'), false);
       assert.equal(ac, 'APPCHECK-TOKEN-VALUE');
@@ -507,7 +531,7 @@ describe('credentials on the wire', () => {
         responder: () => { call += 1; return jsonResponse(200, call === 1 ? OK_START : OK_SEND); }
       });
       try {
-        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
         await ui.sendHandler({ message: 'more' });
         assert.equal(fetcher.seen.length, 2);
         for (const req of fetcher.seen) {
@@ -529,15 +553,18 @@ describe('credentials on the wire', () => {
       responder: () => { call += 1; return jsonResponse(200, call === 1 ? OK_START : OK_SEND); }
     });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await ui.sendHandler({ message: 'more' });
 
       const start = JSON.parse(fetcher.seen[0].init.body);
+      /* locationId joined the start schema with routing, and nothing else
+         did: still no customerUid, no locationLabel, no audit field. */
       assert.deepEqual(Object.keys(start).sort(),
-        ['clientMessageId', 'email', 'message', 'name']);
+        ['clientMessageId', 'email', 'locationId', 'message', 'name']);
       assert.equal(start.name, 'Jo');
       assert.equal(start.email, 'jo@example.com');
       assert.equal(start.message, 'hi');
+      assert.equal(start.locationId, 'main');
 
       const send = JSON.parse(fetcher.seen[1].init.body);
       assert.deepEqual(Object.keys(send).sort(),
@@ -556,7 +583,7 @@ describe('credentials on the wire', () => {
     const { mod } = await load();
     const { ui, fetcher } = await connectedSession(mod);
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       const body = JSON.parse(fetcher.seen[0].init.body);
       assert.match(body.clientMessageId, SERVER_UUID_RE);
     } finally {
@@ -596,7 +623,7 @@ describe('the realtime listener', () => {
       const { mod, stub } = await load();
       const { ui, fetcher } = await connectedSession(mod);
       try {
-        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
         await tick();
 
         assert.equal(stub.calls.onSnapshot.length, 1, 'exactly one listener');
@@ -686,7 +713,7 @@ describe('the realtime listener', () => {
     const { mod, stub } = await load();
     const { ui, session, fetcher } = await connectedSession(mod);
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       assert.equal(stub.liveListenerCount(), 1);
       session.stop();
@@ -701,7 +728,7 @@ describe('the realtime listener', () => {
     const { mod, stub } = await load();
     const { ui, fetcher } = await connectedSession(mod);
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       assert.equal(mod.disconnect(), true);
       assert.equal(stub.liveListenerCount(), 0);
@@ -715,7 +742,7 @@ describe('the realtime listener', () => {
     const { mod, stub } = await load();
     const { ui, session, fetcher } = await connectedSession(mod);
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       session.openTranscript();
       session.openTranscript();
@@ -733,7 +760,7 @@ describe('the realtime listener', () => {
     const { mod, stub } = await load();
     const { ui, fetcher } = await connectedSession(mod);
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       const ui2 = recordingUi();
       await mod.openChatForReview({
@@ -752,7 +779,7 @@ describe('the realtime listener', () => {
     const { mod, stub } = await load();
     const { ui, session, fetcher } = await connectedSession(mod);
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       stub.setUnsubscribeThrows();
       session.stop();          /* must not throw */
@@ -806,7 +833,7 @@ describe('regressions', () => {
       responder: () => { call += 1; return jsonResponse(200, call === 1 ? OK_START : OK_SEND); }
     });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       assert.equal(stub.liveListenerCount(), 1);
 
@@ -836,7 +863,7 @@ describe('regressions', () => {
     const { mod, stub } = await load();
     const { ui, fetcher } = await connectedSession(mod);
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       for (let i = 0; i < 4; i++) {
         mod.suspend();
@@ -857,7 +884,7 @@ describe('regressions', () => {
 
       const { ui, session, fetcher } = await connectedSession(mod);
       try {
-        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
         await tick();
         session.stop();
         assert.equal(mod.suspend(), false, 'a stopped session stays stopped');
@@ -887,7 +914,7 @@ describe('regressions', () => {
       }
     });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await ui.sendHandler({ message: 'did this arrive?' });
       assert.equal(typeof ui.retry, 'function');
 
@@ -911,7 +938,7 @@ describe('regressions', () => {
       responder: () => { call += 1; return jsonResponse(200, call === 1 ? OK_START : OK_SEND); }
     });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await ui.sendHandler({ message: 'one' });
       await ui.sendHandler({ message: 'two' });
       const a = JSON.parse(fetcher.seen[1].init.body).clientMessageId;
@@ -946,7 +973,7 @@ describe('regressions', () => {
       }
     });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await ui.sendHandler({ message: 'boom' });
 
       assert.equal(session.sending, false, 'the busy flag was released');
@@ -979,7 +1006,7 @@ describe('regressions', () => {
     });
     try {
       session = mod.activeSession();
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       session.stopped = false;
       await ui.sendHandler({ message: 'racing the teardown' });
       assert.equal(session.sending, false);
@@ -1122,7 +1149,7 @@ describe('regressions', () => {
         }
       });
       try {
-        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
         assert.equal(typeof ui.retry, 'function', 'a retry is offered');
 
         const first = JSON.parse(fetcher.seen[0].init.body);
@@ -1167,7 +1194,7 @@ describe('regressions', () => {
       }
     });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await ui.sendHandler({ message: 'the one that matters' });
 
       const body = JSON.parse(fetcher.seen[1].init.body);
@@ -1200,7 +1227,7 @@ describe('regressions', () => {
       const { mod, stub } = await load();
       const { ui, fetcher } = await connectedSession(mod);
       try {
-        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
         await tick();
 
         assert.equal(stub.calls.query.length, 1);
@@ -1249,7 +1276,7 @@ describe('regressions', () => {
         return realSetTimeout(fn, 0, ...rest);
       };
       try {
-        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
         await tick();
         const before = fetcher.seen.length;
 
@@ -1319,7 +1346,7 @@ describe('regressions', () => {
     const { mod, stub } = await load();
     const { ui, fetcher } = await connectedSession(mod);
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       assert.equal(mod._internals.TRANSCRIPT_ORDER, 'desc');
       assert.deepEqual(stub.calls.orderBy[0], { field: 'createdAt', direction: 'desc' });
@@ -1332,7 +1359,7 @@ describe('regressions', () => {
     const { mod, stub } = await load();
     const { ui, fetcher } = await connectedSession(mod);
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       assert.deepEqual(stub.calls.where[0],
         { field: 'conversationId', op: '==', value: 'conv-1' });
@@ -1350,7 +1377,7 @@ describe('regressions', () => {
     const { mod, stub } = await load();
     const { ui, fetcher } = await connectedSession(mod);
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       const cs = stub.calls.query[0].constraints;
       assert.equal(cs.length, 3);
@@ -1391,7 +1418,7 @@ describe('regressions', () => {
       const { mod, stub } = await load();
       const { ui, fetcher } = await connectedSession(mod);
       try {
-        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
         await tick();
         /* Exactly as Firestore delivers a descending query. */
         stub.emitSnapshot([
@@ -1417,7 +1444,7 @@ describe('regressions', () => {
       const { mod, stub } = await load();
       const { ui, fetcher } = await connectedSession(mod);
       try {
-        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
         await tick();
 
         /* 201 messages exist; the descending limit(200) yields #201..#2. */
@@ -1462,7 +1489,7 @@ describe('regressions', () => {
       const { mod, stub } = await load();
       const { ui, fetcher } = await connectedSession(mod);
       try {
-        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
         await tick();
 
         const desc = (from, to) => {
@@ -1497,7 +1524,7 @@ describe('regressions', () => {
     const { mod, stub } = await load();
     const { ui, fetcher } = await connectedSession(mod);
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       const batch = [];
       for (let n = 200; n >= 1; n--) {
@@ -1524,7 +1551,7 @@ describe('regressions', () => {
       const { mod, stub } = await load();
       const { ui, session, fetcher } = await connectedSession(mod);
       try {
-        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
         await tick();
         stub.emitSnapshot([
           { id: 'm1', data: { body: 'a', senderType: 'staff', createdAt: 1 } }
@@ -1827,7 +1854,7 @@ describe('noticing a staff-side close without sending', () => {
     const responder = openThenClosed();
     const { ui, session, fetcher } = await connectedSession(mod, { clock, responder });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       assert.equal(session.closed, false);
       assert.equal(clock.liveTimers(), 1, 'the watch is running');
@@ -1853,7 +1880,7 @@ describe('noticing a staff-side close without sending', () => {
     const responder = openThenClosed();
     const { ui, session, fetcher } = await connectedSession(mod, { clock, responder });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       assert.equal(clock.visibilityListeners(), 1);
 
@@ -1873,7 +1900,7 @@ describe('noticing a staff-side close without sending', () => {
     const clock = fakeClock();
     const { ui, fetcher } = await connectedSession(mod, { clock, responder: openThenClosed() });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       const before = fetcher.seen.length;
       clock.doc.visibilityState = 'hidden';
@@ -1891,7 +1918,7 @@ describe('noticing a staff-side close without sending', () => {
     const responder = openThenClosed();
     const { ui, fetcher } = await connectedSession(mod, { clock, responder });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       responder.close();
       clock.fireInterval();
@@ -1938,7 +1965,7 @@ describe('noticing a staff-side close without sending', () => {
       }
     });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       assert.equal(clock.liveTimers(), 1, 'the watch is running on an open thread');
       assert.equal(clock.visibilityListeners(), 1);
@@ -1964,7 +1991,7 @@ describe('noticing a staff-side close without sending', () => {
         clock, responder: openThenClosed()
       });
       try {
-        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
         await tick();
         assert.equal(clock.liveTimers(), 1, teardown + ': running first');
 
@@ -1986,7 +2013,7 @@ describe('noticing a staff-side close without sending', () => {
     const responder = openThenClosed();
     const { ui, session, fetcher } = await connectedSession(mod, { clock, responder });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
 
       mod.suspend();
@@ -2010,7 +2037,7 @@ describe('noticing a staff-side close without sending', () => {
       clock, responder: openThenClosed()
     });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       for (let i = 0; i < 5; i++) session.watchStatus();
       assert.equal(clock.liveTimers(), 1, 'one timer, always');
@@ -2041,7 +2068,7 @@ describe('noticing a staff-side close without sending', () => {
       }
     });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       const before = fetcher.seen.length;
 
@@ -2064,7 +2091,7 @@ describe('noticing a staff-side close without sending', () => {
     const clock = fakeClock();
     const { ui, fetcher } = await connectedSession(mod, { clock, responder: openThenClosed() });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       assert.equal(mod._internals.STATUS_POLL_MS, 60000);
       assert.equal(clock.intervalMs(), 60000);
@@ -2082,7 +2109,7 @@ describe('noticing a staff-side close without sending', () => {
       clock, responder: openThenClosed()
     });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       await session.refreshStatus({});
 
@@ -2107,7 +2134,7 @@ describe('noticing a staff-side close without sending', () => {
       clock, responder: openThenClosed()
     });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       await session.refreshStatus({});
       const req = fetcher.seen.filter(
@@ -2166,7 +2193,7 @@ describe('the closed state is explained exactly once', () => {
       }
     });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await ui.sendHandler({ message: 'anyone there?' });
       await tick();
 
@@ -2189,7 +2216,7 @@ describe('the closed state is explained exactly once', () => {
           : jsonResponse(200, OK_START)
     });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       await session.refreshStatus({});
       await session.refreshStatus({});
@@ -2220,7 +2247,7 @@ describe('the closed state is explained exactly once', () => {
       }
     });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await ui.sendHandler({ message: 'this one is refused' });
       await tick();
       const bodies = (ui.messages || []).map((m) => m.body);
@@ -2383,7 +2410,7 @@ describe('the transcript', () => {
     const { mod, stub } = await load();
     const { ui, fetcher } = await connectedSession(mod);
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       stub.emitSnapshot([]);
       assert.deepEqual(ui.messages, []);
@@ -2446,7 +2473,7 @@ describe('failures', () => {
       }
     });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await ui.sendHandler({ message: 'anyone there?' });
       assert.equal(ui.closed, true);
       assert.equal(ui.composerEnabled, false);
@@ -2471,7 +2498,7 @@ describe('failures', () => {
         }
       });
       try {
-        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
         await ui.sendHandler({ message: 'one' });
         const before = fetcher.seen.length;
         await ui.sendHandler({ message: 'two' });
@@ -2492,7 +2519,7 @@ describe('failures', () => {
       }
     });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       await ui.sendHandler({ message: 'x' });
       stub.emitSnapshot([
@@ -2515,7 +2542,7 @@ describe('failures', () => {
       }
     });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       const before = fetcher.seen.length;
       await ui.sendHandler({ message: 'again' });
       await tick(5);
@@ -2548,7 +2575,7 @@ describe('failures', () => {
       responder: () => { call += 1; return jsonResponse(200, call === 1 ? OK_START : OK_SEND); }
     });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       assert.equal(session.sending, false, 'nothing is in flight');
 
@@ -2569,7 +2596,7 @@ describe('failures', () => {
     const { mod } = await load();
     const { ui, session, fetcher } = await connectedSession(mod);
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       const before = fetcher.seen.length;
       session.reportFailure({ status: 401, code: 'invalid_token' }, { message: 'x' });
@@ -2592,7 +2619,7 @@ describe('failures', () => {
       }
     });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await ui.sendHandler({ message: 'too fast' });
       assert.deepEqual(ui.messages, [], 'the optimistic bubble is gone');
     } finally {
@@ -2655,7 +2682,7 @@ describe('failures', () => {
         responder: () => jsonResponse(401, { ok: false, code: 'invalid_token' })
       });
       try {
-        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
         assert.equal(ui.composerEnabled, false);
         assert.equal(ui.retry, null);
         assert.match(ui.notice, /session has expired/);
@@ -2671,7 +2698,7 @@ describe('failures', () => {
         responder: () => jsonResponse(401, { ok: false, code: 'app_check_required' })
       });
       try {
-        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
         assert.match(ui.notice, /could not verify this page/);
       } finally {
         fetcher.restore();
@@ -2683,7 +2710,7 @@ describe('failures', () => {
     const storage = memoryStorage();
     const { ui, fetcher } = await connectedSession(mod, { storage });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       const before = stub.calls.onSnapshot.length;
 
@@ -2710,7 +2737,7 @@ describe('failures', () => {
     const storage = memoryStorage();
     const { ui, session, fetcher } = await connectedSession(mod, { storage });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       assert.ok(storage.getItem(mod._internals.CONVERSATION_KEY), 'stored to begin with');
       /* One start form has already been shown - this session began without a
@@ -2743,7 +2770,7 @@ describe('failures', () => {
       }
     });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       assert.ok(storage.getItem(mod._internals.CONVERSATION_KEY));
       const formsBefore = ui.startFormShown;
@@ -2764,7 +2791,7 @@ describe('failures', () => {
     const { mod, stub } = await load();
     const { ui, fetcher } = await connectedSession(mod);
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await tick();
       const before = stub.calls.onSnapshot.length;
 
@@ -2794,7 +2821,7 @@ describe('failures', () => {
       }
     });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       await ui.sendHandler({ message: 'did this arrive?' });
       assert.match(ui.notice, /could not reach us/);
       assert.equal(typeof ui.retry, 'function');
@@ -2811,7 +2838,7 @@ describe('failures', () => {
     const { mod } = await load();
     const { ui, fetcher } = await connectedSession(mod);
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       const before = fetcher.seen.length;
       await ui.sendHandler({ message: '   ' });
       await ui.sendHandler({ message: '' });
@@ -2830,7 +2857,7 @@ describe('failures', () => {
       responder: () => { call += 1; return jsonResponse(200, call === 1 ? OK_START : OK_SEND); }
     });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       const before = fetcher.seen.length;
       await Promise.all([
         ui.sendHandler({ message: 'one' }),
@@ -2849,7 +2876,7 @@ describe('failures', () => {
         responder: () => ({ ok: false, status: 500, json: async () => { throw new Error('nope'); } })
       });
       try {
-        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
         assert.match(ui.notice, /Something went wrong/);
       } finally {
         fetcher.restore();
@@ -2867,7 +2894,7 @@ describe('failures', () => {
         deps: Object.assign({ storage: () => memoryStorage() }, fakeClock().deps)
       });
       assert.ok(session, 'still connected');
-      const payload = await ui.startHandler({ name: 'Jo', email: 'j@e.co', message: 'hi' });
+      const payload = await ui.startHandler({ name: 'Jo', email: 'j@e.co', message: 'hi', locationId: 'main' });
       assert.equal(payload.conversationId, 'conv-1');
     } finally {
       fetcher.restore();
@@ -2887,7 +2914,7 @@ describe('failures', () => {
         })
       });
       try {
-        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+        await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
         assert.ok(allowed.has(ui.notice), 'the notice is one of ours: ' + ui.notice);
         assert.equal(ui.notice.includes('Traceback'), false);
         assert.equal(ui.notice.includes('secret internal detail'), false);
@@ -2922,7 +2949,7 @@ describe('remembering a conversation', () => {
     const storage = memoryStorage();
     const { ui, fetcher } = await connectedSession(mod, { storage });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'hi', locationId: 'main' });
       const raw = JSON.parse(storage.getItem(mod._internals.CONVERSATION_KEY));
       assert.equal(raw.conversationId, 'conv-1');
       assert.equal(raw.uid, 'anon-uid-1');
@@ -2938,7 +2965,7 @@ describe('remembering a conversation', () => {
     const storage = memoryStorage();
     const { ui, fetcher } = await connectedSession(mod, { storage });
     try {
-      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'secret message' });
+      await ui.startHandler({ name: 'Jo', email: 'jo@example.com', message: 'secret message', locationId: 'main' });
       const dump = JSON.stringify(Array.from(storage._map.entries()));
       for (const secret of ['IDTOKEN-SECRET', 'APPCHECK-SECRET', 'jo@example.com',
         'secret message', 'Jo']) {
@@ -3017,7 +3044,7 @@ describe('remembering a conversation', () => {
         deps: Object.assign({ storage: () => hostile }, fakeClock().deps)
       });
       assert.ok(session, 'a private-mode browser still gets a working chat');
-      await ui.startHandler({ name: 'Jo', email: 'j@e.co', message: 'hi' });
+      await ui.startHandler({ name: 'Jo', email: 'j@e.co', message: 'hi', locationId: 'main' });
       assert.equal(ui.transcriptShown, 1);
     } finally {
       fetcher.restore();
@@ -3678,7 +3705,7 @@ describe('a restored panel never claims a conversation it has not confirmed', ()
         await tick();
         assert.equal(ui.startFormShown, 1, 'a first-time visitor gets the form');
 
-        await ui.startHandler({ name: 'Sam', email: 'sam@example.com', message: 'Hi' });
+        await ui.startHandler({ name: 'Sam', email: 'sam@example.com', message: 'Hi', locationId: 'main' });
         await tick();
 
         assert.equal(session.closed, false);
@@ -3716,6 +3743,8 @@ describe('a restored panel never claims a conversation it has not confirmed', ()
  */
 describe('the chat client is loaded by an explicit, source-controlled version', () => {
   const APP_CHECK_CODE = codeAndStrings(APP_CHECK_SRC);
+  const LOCATIONS_SRC = readFileSync(LOCATIONS_PATH, 'utf8');
+  const LOCATIONS_CODE = codeAndStrings(LOCATIONS_SRC);
 
   /*
    * The one string, read from the widget - which is where a human bumps it.
@@ -3754,7 +3783,8 @@ describe('the chat client is loaded by an explicit, source-controlled version', 
 
       for (const [name, src] of [['chat.js', WIDGET_CODE],
                                  ['chat-customer.js', CUSTOMER_CODE],
-                                 ['chat-app-check.js', APP_CHECK_CODE]]) {
+                                 ['chat-app-check.js', APP_CHECK_CODE],
+                                 ['chat-locations.js', LOCATIONS_CODE]]) {
         const decl = src.match(/CHAT_CLIENT_VERSION = ([^;]+);/);
         assert.ok(decl, name + ' declares the version');
         assert.match(decl[1].trim(), /^'[^']+'$/,
@@ -3766,18 +3796,22 @@ describe('the chat client is loaded by an explicit, source-controlled version', 
       assert.equal(forbidden.test(WIDGET_CODE), false);
       assert.equal(forbidden.test(CUSTOMER_CODE), false);
       assert.equal(forbidden.test(APP_CHECK_CODE), false);
+      assert.equal(forbidden.test(LOCATIONS_CODE), false);
     });
 
-  test('all three chat modules state the SAME version', () => {
+  test('all four chat modules state the SAME version', () => {
     /* A half-finished bump - one file moved, another not - is exactly the
        failure that would produce the mixed graph this design exists to
        prevent. */
     const customer = CUSTOMER_SRC.match(/export const CHAT_CLIENT_VERSION = '([^']+)';/);
     const appCheck = APP_CHECK_SRC.match(/export const CHAT_CLIENT_VERSION = '([^']+)';/);
+    const locations = LOCATIONS_SRC.match(/export const CHAT_CLIENT_VERSION = '([^']+)';/);
     assert.ok(customer, 'chat-customer.js exports CHAT_CLIENT_VERSION');
     assert.ok(appCheck, 'chat-app-check.js exports CHAT_CLIENT_VERSION');
+    assert.ok(locations, 'chat-locations.js exports CHAT_CLIENT_VERSION');
     assert.equal(customer[1], VERSION, 'chat-customer.js agrees with chat.js');
     assert.equal(appCheck[1], VERSION, 'chat-app-check.js agrees with chat.js');
+    assert.equal(locations[1], VERSION, 'chat-locations.js agrees with chat.js');
   });
 
   test('the module namespace really exports it, not just the source text',
@@ -3815,6 +3849,14 @@ describe('the chat client is loaded by an explicit, source-controlled version', 
 
       assert.equal(/from '\.\/chat-app-check\.js'/.test(CUSTOMER_CODE), false,
         'no unversioned local import left');
+
+      /* And the second one, added with routing. Two static imports now, and
+         a bare specifier on either is the same mixed-graph bug. */
+      const loc = CUSTOMER_CODE.match(/from '\.\/chat-locations\.js\?v=([^']+)';/);
+      assert.ok(loc, 'the shop definitions are imported with a ?v= too');
+      assert.equal(loc[1], VERSION);
+      assert.equal(/from '\.\/chat-locations\.js'/.test(CUSTOMER_CODE), false,
+        'no unversioned local import left');
     });
 
   test('the version appears in each file exactly where it is meant to', () => {
@@ -3827,9 +3869,11 @@ describe('the chat client is loaded by an explicit, source-controlled version', 
       'chat.js: once, in the declaration');
     assert.equal(count(APP_CHECK_CODE, lit), 1,
       'chat-app-check.js: once, in the declaration');
-    assert.equal(count(CUSTOMER_CODE, lit), 2,
-      'chat-customer.js: twice - the declaration and the import specifier, '
-      + 'because a static specifier cannot interpolate');
+    assert.equal(count(CUSTOMER_CODE, lit), 3,
+      'chat-customer.js: three times - the declaration and TWO import '
+      + 'specifiers, because a static specifier cannot interpolate');
+    assert.equal(count(LOCATIONS_CODE, lit), 1,
+      'chat-locations.js: once, in the declaration');
   });
 
   test('the pinned Firebase SDK URLs are NOT cache-busted', () => {
@@ -3897,7 +3941,7 @@ describe('the chat client is loaded by an explicit, source-controlled version', 
 
   /* ------------------------------------------------- the served headers */
 
-  test('the three chat scripts are served must-revalidate, and only those',
+  test('the four chat scripts are served must-revalidate, and only those',
     () => {
       /*
        * A version constant is only as fresh as the FILE THAT CARRIES IT.
@@ -3917,12 +3961,30 @@ describe('the chat client is loaded by an explicit, source-controlled version', 
         return h ? h.value : null;
       };
 
+      /* chat-locations.js joined the graph with routing. It is always loaded
+         with a ?v=, like chat-app-check.js - and like chat-app-check.js it
+         gets the header anyway, because the review walkthrough tells a person
+         to import these by hand from DevTools and a stale copy handed out
+         there is a stale copy in the only place anybody looks. */
       for (const file of ['/assets/js/chat.js',
                           '/assets/js/chat-customer.js',
-                          '/assets/js/chat-app-check.js']) {
+                          '/assets/js/chat-app-check.js',
+                          '/assets/js/chat-locations.js']) {
         assert.equal(cacheOf(file), 'public, max-age=0, must-revalidate',
           file + ' revalidates before use');
       }
+
+      /* And the addition was ADDITIVE. Nothing else in the file moved. */
+      assert.deepEqual(rules.map((r) => r.source), [
+        '/(.*)',
+        '/assets/img/(.*)',
+        '/assets/js/chat.js',
+        '/assets/js/chat-customer.js',
+        '/assets/js/chat-app-check.js',
+        '/assets/js/chat-locations.js',
+        '/assets/js/chat-staff.js',
+        '/assets/css/chat-staff.css'
+      ]);
 
       /* Scope. The images keep their long cache, and nothing global was
          turned off - a site-wide no-cache would be a real cost for a fix
@@ -4092,4 +4154,466 @@ describe('the customer session belongs to its tab', () => {
         fetcher.restore();
       }
     });
+});
+
+/* ============================================ 61-74. WHICH SHOP, AND WHERE IT WENT */
+
+/*
+ * TWO SHOPS, FROM THE CUSTOMER'S SIDE.
+ *
+ * Esther's runs two shops that do different work. A message sent to the wrong
+ * one waits behind the wrong queue, so the visitor picks - and then has to be
+ * able to SEE which one they picked, including after a reload and including
+ * after staff quietly hand the conversation to the other shop.
+ *
+ * The thing these tests exist to stop: a panel that says "Main Shop" about a
+ * conversation that is now at Keith Street.
+ */
+describe('the customer chooses a shop, and is told where it went', () => {
+  const startAt = (locationId, extra) => Object.assign(
+    { ok: true, conversationId: 'conv-1', messageId: 'msg-1', status: 'open',
+      locationId: locationId },
+    extra || {});
+
+  test('THE THREE CHOICES, in order, with the exact wording', async () => {
+    const { mod } = await load();
+    const { ui, fetcher } = await connectedSession(mod);
+    try {
+      assert.ok(Array.isArray(ui.locations), 'the panel was given the choices');
+      assert.deepEqual(ui.locations.map((c) => c.id),
+        ['main', 'specialty', 'unassigned'], 'and in that order');
+
+      const byId = Object.fromEntries(ui.locations.map((c) => [c.id, c]));
+      /*
+       * PINNED. "Main Branch" and "Specialty Shop" were rejected: two vague
+       * labels skim-read on a phone is how a curved scupper job arrives at
+       * 1st Avenue. If somebody shortens these, this fails.
+       */
+      assert.equal(byId.main.choice, 'Main Shop - 1st Avenue');
+      assert.equal(byId.main.address, '3890 E. First Ave., Burnaby');
+      assert.equal(byId.specialty.choice, 'Specialty Shop - Keith Street');
+      assert.equal(byId.specialty.address, '3701 Keith Street');
+      assert.equal(byId.unassigned.choice, "I'm Not Sure");
+
+      /* Each one says what that shop actually does, so a customer who has
+         never been to either can route themselves. */
+      for (const c of ui.locations) {
+        assert.ok(c.description && c.description.length > 20,
+          c.id + ' explains itself');
+      }
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('the choices arrive BEFORE the start form is drawn', async () => {
+    const { mod } = await load();
+    const { ui, fetcher } = await connectedSession(mod);
+    try {
+      const gave = ui.calls.indexOf('setLocations');
+      const drew = ui.calls.indexOf('showStartForm');
+      assert.ok(gave !== -1 && drew !== -1, 'both happened');
+      assert.ok(gave < drew, 'a start form with no shops on it is not a form');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('EVERY chosen id reaches the wire verbatim', async () => {
+    for (const id of ['main', 'specialty', 'unassigned']) {
+      const { mod } = await load();
+      const { ui, fetcher } = await connectedSession(mod, {
+        responder: jsonResponse(200, startAt(id))
+      });
+      try {
+        await ui.startHandler({ name: 'Jo', email: 'jo@e.co', message: 'hi',
+          locationId: id });
+        const body = JSON.parse(fetcher.seen[0].init.body);
+        /* Not trimmed, not lower-cased, not defaulted. The server's
+           allow-list is the only thing that decides validity. */
+        assert.equal(body.locationId, id);
+      } finally {
+        fetcher.restore();
+      }
+    }
+  });
+
+  test('NOTHING CHOSEN IS NOT A REQUEST, and never a silent default',
+    async () => {
+      for (const nothing of [undefined, null, '', 0, false]) {
+        const { mod } = await load();
+        const { ui, fetcher } = await connectedSession(mod);
+        try {
+          const before = fetcher.seen.length;
+          await ui.startHandler({ name: 'Jo', email: 'jo@e.co', message: 'hi',
+            locationId: nothing });
+          assert.equal(fetcher.seen.length, before,
+            'no allowance spent on a request that cannot succeed');
+          assert.equal(ui.notice,
+            'Please choose which shop you would like to message.');
+          /* And emphatically NOT sent to a shop nobody picked. */
+          assert.equal(ui.destination, null);
+        } finally {
+          fetcher.restore();
+        }
+      }
+    });
+
+  test('the destination comes from the SERVER, not from what was clicked',
+    async () => {
+      const { mod } = await load();
+      /* The visitor asked for main; the server answers specialty - which is
+         what a retry landing on an already-transferred conversation looks
+         like. The panel must say what the server said. */
+      const { ui, fetcher } = await connectedSession(mod, {
+        responder: jsonResponse(200, startAt('specialty'))
+      });
+      try {
+        await ui.startHandler({ name: 'Jo', email: 'jo@e.co', message: 'hi',
+          locationId: 'main' });
+        await tick();
+        assert.equal(ui.destination, 'Specialty Shop - Keith Street');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('the line is painted AFTER the view switches, or it is wiped',
+    async () => {
+      const { mod } = await load();
+      const { ui, fetcher } = await connectedSession(mod, {
+        responder: jsonResponse(200, startAt('main'))
+      });
+      try {
+        await ui.startHandler({ name: 'Jo', email: 'jo@e.co', message: 'hi',
+          locationId: 'main' });
+        await tick();
+        const shown = ui.calls.lastIndexOf('showTranscript');
+        const painted = ui.calls.lastIndexOf('setDestination');
+        assert.ok(shown !== -1 && painted > shown,
+          'showStartForm() clears the line, so order matters');
+        assert.equal(ui.destination, 'Main Shop - 1st Avenue');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('A RESTORED CONVERSATION LEARNS ITS SHOP FROM /status', async () => {
+    const { mod } = await load();
+    const storage = memoryStorage({
+      [mod._internals.CONVERSATION_KEY]:
+        JSON.stringify({ uid: 'anon-uid-1', conversationId: 'conv-earlier' })
+    });
+    const fetcher = captureFetch(jsonResponse(200,
+      { ok: true, conversationId: 'conv-earlier', status: 'open',
+        locationId: 'specialty' }));
+    try {
+      const ui = recordingUi();
+      await mod.openChatForReview({
+        ui, openPanel: () => {},
+        deps: Object.assign({ storage: () => storage }, fakeClock().deps)
+      });
+      await tick();
+      assert.equal(ui.destination, 'Specialty Shop - Keith Street',
+        'the panel does not have to guess across a reload');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('A TRANSFER REACHES THE CUSTOMER, and it is the only way it can',
+    async () => {
+      /*
+       * Moving a conversation writes NO message - lastMessageAt and
+       * messageCount are deliberately untouched - so the Firestore transcript
+       * listener sees absolutely nothing. The status poll is the entire
+       * channel, which is why this test exists.
+       */
+      const { mod } = await load();
+      let where = 'main';
+      const { ui, fetcher, clock } = await connectedSession(mod, {
+        responder: (n, input) => {
+          const url = String(input);
+          if (url.indexOf('/api/chat/status') !== -1) {
+            return jsonResponse(200, { ok: true, conversationId: 'conv-1',
+              status: 'open', locationId: where });
+          }
+          return jsonResponse(200, startAt('main'));
+        }
+      });
+      try {
+        await ui.startHandler({ name: 'Jo', email: 'jo@e.co', message: 'hi',
+          locationId: 'main' });
+        await tick();
+        assert.equal(ui.destination, 'Main Shop - 1st Avenue');
+
+        where = 'specialty';                     /* staff move it */
+        clock.fireInterval();
+        await tick();
+
+        assert.equal(ui.destination, 'Specialty Shop - Keith Street',
+          'the customer follows the conversation');
+        /*
+         * What the visitor actually reads is the SEQUENCE of distinct values,
+         * so consecutive repeats are collapsed before comparing. There is one
+         * on the start path on purpose: the line is repainted after
+         * openTranscript() switches views, because relying on a view switch
+         * to leave an unrelated element alone is the coupling that already
+         * ate the notice once. Idempotent, and cheaper than the bug.
+         */
+        const seen = ui.destinationHistory.filter(Boolean)
+          .filter((v, i, all) => i === 0 || v !== all[i - 1]);
+        assert.deepEqual(seen, [
+          'Main Shop - 1st Avenue', 'Specialty Shop - Keith Street'
+        ], 'main, then specialty, and nothing in between');
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('an unchanged shop is not repainted on every poll', async () => {
+    const { mod } = await load();
+    const { ui, fetcher, clock } = await connectedSession(mod, {
+      responder: (n, input) => (String(input).indexOf('/api/chat/status') !== -1
+        ? jsonResponse(200, { ok: true, conversationId: 'conv-1',
+            status: 'open', locationId: 'main' })
+        : jsonResponse(200, startAt('main')))
+    });
+    try {
+      await ui.startHandler({ name: 'Jo', email: 'jo@e.co', message: 'hi',
+        locationId: 'main' });
+      await tick();
+      const after = ui.destinationHistory.length;
+      clock.fireInterval(); await tick();
+      clock.fireInterval(); await tick();
+      assert.equal(ui.destinationHistory.length, after,
+        'three answers, one paint');
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  test('LETTING GO OF A CONVERSATION TAKES ITS DESTINATION WITH IT',
+    async () => {
+      const { mod } = await load();
+      const storage = memoryStorage({
+        [mod._internals.CONVERSATION_KEY]:
+          JSON.stringify({ uid: 'anon-uid-1', conversationId: 'conv-gone' })
+      });
+      const fetcher = captureFetch(jsonResponse(404,
+        { ok: false, code: 'conversation_not_found', error: 'nope' }));
+      try {
+        const ui = recordingUi();
+        await mod.openChatForReview({
+          ui, openPanel: () => {},
+          deps: Object.assign({ storage: () => storage }, fakeClock().deps)
+        });
+        await tick();
+        assert.equal(ui.destination, null,
+          '"Sending to: Keith Street" above an empty start form is a lie');
+        assert.equal(ui.startFormShown >= 1, true);
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('AN ID THIS BUILD DOES NOT KNOW IS NEVER ECHOED', async () => {
+    /* The last stop before a string reaches a screen. A response carrying
+       something unexpected - a shop added server-side, or something worse -
+       reads as the unassigned label rather than being printed. */
+    const hostile = '<img src=x onerror="alert(1)">';
+    for (const bad of [hostile, 'MAIN', ' main', 'main ', 'shop-3', 42, {}]) {
+      const { mod } = await load();
+      const { ui, fetcher } = await connectedSession(mod, {
+        responder: jsonResponse(200, startAt(bad))
+      });
+      try {
+        await ui.startHandler({ name: 'Jo', email: 'jo@e.co', message: 'hi',
+          locationId: 'main' });
+        await tick();
+        if (typeof bad === 'string' && bad) {
+          assert.equal(ui.destination, 'Not Sure / Unassigned',
+            JSON.stringify(bad) + ' must not be echoed');
+        } else {
+          assert.equal(ui.destination, null, 'nothing said, nothing shown');
+        }
+      } finally {
+        fetcher.restore();
+      }
+    }
+  });
+
+  test('the retry carries the destination, so Try again is the same request',
+    async () => {
+      const { mod } = await load();
+      let n = 0;
+      const { ui, fetcher } = await connectedSession(mod, {
+        responder: () => {
+          n += 1;
+          if (n === 1) return new TypeError('network');
+          return jsonResponse(200, startAt('specialty'));
+        }
+      });
+      try {
+        await ui.startHandler({ name: 'Jo', email: 'jo@e.co', message: 'hi',
+          locationId: 'specialty' });
+        await tick();
+        assert.equal(typeof ui.retry, 'function', 'a retry was offered');
+        await ui.retry();
+        await tick();
+        const body = JSON.parse(fetcher.seen[1].init.body);
+        assert.equal(body.locationId, 'specialty',
+          'dropping it would make the retry fail for a different reason');
+        /* And the SAME key, so it is a second attempt and not a second
+           conversation. */
+        assert.equal(body.clientMessageId,
+          JSON.parse(fetcher.seen[0].init.body).clientMessageId);
+      } finally {
+        fetcher.restore();
+      }
+    });
+
+  test('the customer is never shown a staff uid or an audit field', async () => {
+    const { mod } = await load();
+    const { ui, fetcher } = await connectedSession(mod, {
+      responder: jsonResponse(200, startAt('main', {
+        /* A server that over-shares must not make the panel over-show. */
+        previousLocationId: 'specialty',
+        lastTransferredByStaffUid: 'staff-uid-1',
+        lastTransferredAt: 1700000000000,
+        transferCount: 4,
+        locationLabel: 'Somewhere Else Entirely'
+      }))
+    });
+    try {
+      await ui.startHandler({ name: 'Jo', email: 'jo@e.co', message: 'hi',
+        locationId: 'main' });
+      await tick();
+      assert.equal(ui.destination, 'Main Shop - 1st Avenue',
+        'the LABEL is derived from the id, never taken from the response');
+      const seen = JSON.stringify(ui.destinationHistory) + String(ui.status)
+        + String(ui.notice);
+      for (const secret of ['staff-uid-1', 'Somewhere Else Entirely',
+                            'transferCount', 'previousLocationId']) {
+        assert.equal(seen.indexOf(secret), -1, secret + ' reached the panel');
+      }
+    } finally {
+      fetcher.restore();
+    }
+  });
+
+  /* ---------------------------------------------------- the widget itself */
+
+  test('THE WIDGET HAS NO SHOP LIST OF ITS OWN', () => {
+    /*
+     * chat.js draws the selector but must not know what is in it. A second
+     * copy of "Specialty Shop - Keith Street" in a classic script is exactly
+     * how the two spellings appear.
+     */
+    for (const literal of ['Main Shop', 'Keith Street', 'First Ave',
+                           'Specialty Shop', 'Not Sure', "I'm Not Sure",
+                           "'main'", "'specialty'", "'unassigned'"]) {
+      assert.equal(WIDGET_CODE.indexOf(literal), -1,
+        'chat.js hard-codes ' + literal);
+    }
+  });
+
+  test('the widget sends what was selected, and nothing when nothing is', () => {
+    assert.match(WIDGET_CODE, /locationId: selectedLocation\(\)/);
+    /* selectedLocation() reads the radios and returns null - it does not
+       fall back to a shop. */
+    assert.match(WIDGET_CODE, /function selectedLocation\(\)[\s\S]{0,240}return null;/);
+  });
+
+  test('FOUND IN THE BROWSER: focus lands on the first question, not past it',
+    () => {
+      /*
+       * At 390px the start form is taller than the panel, and focusing the
+       * Name field scrolled the shop chooser clean off the top of the log -
+       * the visitor opened the panel looking at "Email" with no idea a
+       * routing question had gone by. Reading the code did not find this;
+       * a screenshot did.
+       *
+       * The fix has three parts and all three are load-bearing: focus the
+       * first radio rather than Name, ask the browser not to scroll for it,
+       * and put the log back to the top afterwards.
+       */
+      assert.match(WIDGET_CODE,
+        /var first = locationInputs\.length \? locationInputs\[0\] : null;/);
+      assert.match(WIDGET_CODE, /preventScroll: true/);
+      assert.match(WIDGET_CODE, /log\.scrollTop = 0;/);
+      /* Focusing an unchecked radio does not check it - so this moves the
+         view without answering the question. Nothing here checks one. */
+      assert.equal(/locationInputs\[0\]\.checked\s*=/.test(WIDGET_CODE), false,
+        'nothing preselects a shop');
+    });
+
+  test('the selector and the destination line are textContent, like everything else',
+    () => {
+      /* The one rule in that section of chat.js. Three innerHTML calls exist
+         and all three are fixed SVG icons in build(). */
+      const html = (WIDGET_CODE.match(/innerHTML/g) || []).length;
+      assert.equal(html, 3, 'no new innerHTML was introduced');
+      assert.match(WIDGET_CODE, /destBar\.textContent = 'Sending to: '/);
+    });
+
+  test('NO SHOP ID IS NAMED ANYWHERE OUTSIDE chat-locations.js', () => {
+    /*
+     * The kill for a silent default. `locationId: input.locationId || 'main'`
+     * is unreachable while the guard above it stands - which is exactly why
+     * no behavioural test can see it, and exactly why it must not be written:
+     * the day somebody relaxes the guard it becomes a live path that sends a
+     * curved-scupper job to 1st Avenue without telling anybody.
+     *
+     * chat-locations.js is where the three ids are declared. Nothing else
+     * spells one out: the selector supplies them to the transport, the
+     * server supplies them back, and neither the transport nor the widget
+     * has an opinion about which one is right.
+     */
+    for (const [name, src] of [['chat-customer.js', CUSTOMER_CODE],
+                               ['chat.js', WIDGET_CODE]]) {
+      for (const id of ["'main'", '"main"', "'specialty'", '"specialty"',
+                        "'unassigned'", '"unassigned"']) {
+        assert.equal(src.indexOf(id), -1, name + ' names the shop ' + id);
+      }
+    }
+    /*
+     * And in particular, nothing defaults one where a VALUE is produced -
+     * `locationId: x || y`. Matched on the property form specifically, so
+     * the guard's own `typeof input.locationId !== 'string' || !…` is not
+     * mistaken for a fallback: that one refuses, it does not substitute.
+     */
+    const substitutes = /locationId:\s*[^\n,}]*(\|\||\?\?)/;
+    assert.equal(substitutes.test(CUSTOMER_CODE), false,
+      'chat-customer.js substitutes a destination');
+    assert.equal(substitutes.test(WIDGET_CODE), false,
+      'chat.js substitutes a destination');
+  });
+
+  test('the transport imports the shop definitions rather than restating them',
+    () => {
+      assert.match(CUSTOMER_CODE, /from '\.\/chat-locations\.js\?v=/);
+      /* And does not keep its own copy of the words. */
+      for (const literal of ['Main Shop', 'Keith Street', 'Specialty Shop']) {
+        assert.equal(CUSTOMER_CODE.indexOf(literal), -1,
+          'chat-customer.js hard-codes ' + literal);
+      }
+    });
+
+  test('and that module is the one the server twin is pinned to', async () => {
+    /* Imported inside the test, not in the describe body: on Node v22 a
+       throw in a describe body marks the suite not-ok, runs none of it, and
+       still exits 0 - so an assertion up there is a safety net that is not
+       attached to anything. */
+    const LOCATIONS = await import(LOCATIONS_URL);
+    assert.equal(LOCATIONS.labelFor('main'), 'Main Shop - 1st Avenue');
+    assert.equal(LOCATIONS.labelFor('specialty'), 'Specialty Shop - Keith Street');
+    assert.equal(LOCATIONS.labelFor('unassigned'), 'Not Sure / Unassigned');
+    assert.equal(LOCATIONS.labelFor('nonsense'), 'Not Sure / Unassigned');
+    assert.deepEqual(LOCATIONS.LOCATION_IDS, ['main', 'specialty', 'unassigned']);
+    /* resolveLocation() never invents main. Missing routing is unassigned. */
+    assert.equal(LOCATIONS.resolveLocation(undefined), 'unassigned');
+    assert.equal(LOCATIONS.resolveLocation(''), 'unassigned');
+    assert.equal(LOCATIONS.resolveLocation('MAIN'), 'unassigned');
+  });
 });

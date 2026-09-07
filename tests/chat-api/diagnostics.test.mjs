@@ -452,7 +452,8 @@ describe('no diagnostic ever contains anything sensitive', () => {
 
     const req = makeReq({ method: 'POST', ip: '203.0.113.42',
       body: { name: 'Jordan Ellis', email: 'jordan@example.test',
-        message: 'a private message body', clientMessageId: uuid() },
+        message: 'a private message body', clientMessageId: uuid(),
+        locationId: 'main' },
       headers: { authorization: 'Bearer a.fake.id.token' } });
     const res = makeRes();
     const { lines } = await captureLog(() => handler(req, res));
