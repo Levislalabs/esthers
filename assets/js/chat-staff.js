@@ -50,7 +50,7 @@ import {
   getFirebaseApp,
   initAppCheck,
   authorizedFetch
-} from './chat-app-check.js?v=2026-09-06.2';
+} from './chat-app-check.js?v=2026-09-07.1';
 
 /*
  * The three shops, for DISPLAY only.
@@ -63,7 +63,7 @@ import {
  * Same ?v= as the import above, for the same measured reason: a query on this
  * module's own URL does not reach its specifiers.
  */
-import * as LOC from './chat-locations.js?v=2026-09-06.2';
+import * as LOC from './chat-locations.js?v=2026-09-07.1';
 
 /*
  * The noise: sound, desktop notifications, the tab-title count, reminders.
@@ -76,13 +76,13 @@ import * as LOC from './chat-locations.js?v=2026-09-06.2';
  *
  * Same ?v= as the imports above, for the same measured reason.
  */
-import { createAlerts, REMINDER_MS } from './chat-staff-alerts.js?v=2026-09-06.2';
+import { createAlerts, REMINDER_MS } from './chat-staff-alerts.js?v=2026-09-07.1';
 
 /* The chat client version. THE SAME STRING as CHAT_CLIENT_VERSION in
    chat.js, chat-customer.js and chat-app-check.js, and the same string as the
    ?v= in the import above and in staff/chat/index.html. One version for the
    whole local chat graph; a test pins every copy to the others. */
-export const CHAT_CLIENT_VERSION = '2026-09-06.2';
+export const CHAT_CLIENT_VERSION = '2026-09-07.1';
 
 /* Pinned by path, exactly as the customer transport loads it. No cache-busting
    query: gstatic already serves an exact version per URL. */

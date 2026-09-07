@@ -2148,14 +2148,22 @@ describe('the open transcript is re-read only when it actually changed', () => {
 
 describe('the whole local chat graph moved to one new version', () => {
   test('every local chat module and the staff page agree', () => {
-    const WANT = '2026-09-06.2';
+    const WANT = '2026-09-07.1';
     const files = {
       'assets/js/chat.js': [/var CHAT_CLIENT_VERSION = '([^']+)';/],
       'assets/js/chat-customer.js': [/export const CHAT_CLIENT_VERSION = '([^']+)';/,
-                                     /from '\.\/chat-app-check\.js\?v=([^']+)';/],
+                                     /from '\.\/chat-app-check\.js\?v=([^']+)';/,
+                                     /from '\.\/chat-locations\.js\?v=([^']+)';/],
       'assets/js/chat-app-check.js': [/export const CHAT_CLIENT_VERSION = '([^']+)';/],
+      /* chat-locations.js and chat-staff-alerts.js carry the version too, and
+         were not checked here before. A module left behind is exactly the
+         mixed graph this suite exists to prevent, so they are checked now. */
+      'assets/js/chat-locations.js': [/export const CHAT_CLIENT_VERSION = '([^']+)';/],
+      'assets/js/chat-staff-alerts.js': [/export const CHAT_CLIENT_VERSION = '([^']+)';/],
       'assets/js/chat-staff.js': [/export const CHAT_CLIENT_VERSION = '([^']+)';/,
-                                  /from '\.\/chat-app-check\.js\?v=([^']+)';/],
+                                  /from '\.\/chat-app-check\.js\?v=([^']+)';/,
+                                  /from '\.\/chat-locations\.js\?v=([^']+)';/,
+                                  /from '\.\/chat-staff-alerts\.js\?v=([^']+)';/],
       'staff/chat/index.html': [/chat-staff\.js\?v=([^"]+)"/,
                                 /chat-staff\.css\?v=([^"]+)"/]
     };
@@ -2172,10 +2180,14 @@ describe('the whole local chat graph moved to one new version', () => {
   test('no module is left behind on the previous version', () => {
     for (const file of ['assets/js/chat.js', 'assets/js/chat-customer.js',
                         'assets/js/chat-app-check.js', 'assets/js/chat-staff.js',
+                        'assets/js/chat-locations.js',
+                        'assets/js/chat-staff-alerts.js',
                         'staff/chat/index.html']) {
       const src = readFileSync(ROOT + '/' + file, 'utf8');
-      assert.equal(src.indexOf('2026-09-05.1'), -1,
-        file + ' has no trace of the old version');
+      for (const stale of ['2026-09-05.1', '2026-09-06.1', '2026-09-06.2']) {
+        assert.equal(src.indexOf(stale), -1,
+          file + ' has no trace of ' + stale);
+      }
     }
   });
 
@@ -2839,8 +2851,18 @@ describe('the shop is told, until somebody looks', () => {
       audioFails: o.audioFails === true
     };
     function Notif(title, opts) {
-      state.notifications.push({ title: title, body: (opts || {}).body,
-        tag: (opts || {}).tag });
+      const o2 = opts || {};
+      /*
+       * The platform throws TypeError for renotify WITHOUT a tag - measured
+       * in a real Chromium build, see the QA notes. The fake throws for the
+       * same input, so a call site that forgot the tag fails here rather than
+       * on a shop computer.
+       */
+      if (o2.renotify === true && (typeof o2.tag !== 'string' || o2.tag === '')) {
+        throw new TypeError('renotify without a tag');
+      }
+      state.notifications.push({ title: title, body: o2.body,
+        tag: o2.tag, renotify: o2.renotify });
     }
     Notif.permission = o.permission || 'granted';
     Notif.requestPermission = async () => {
@@ -3027,15 +3049,216 @@ describe('the shop is told, until somebody looks', () => {
       'a handoff is not described as a new message');
   });
 
-  test('one notification per conversation, replaced rather than stacked',
+  /* ------------------------------------------------------------------------
+   * THE PLATFORM IDENTITY.
+   *
+   * THIS SECTION EXISTS BECAUSE OF A PRODUCTION BUG, and the test it replaces
+   * is the one that certified the bug as correct.
+   *
+   * The old code tagged every notification with the conversation id alone and
+   * sent renotify:false. A platform treats a repeated tag as the SAME
+   * notification and replaces it in place; with renotify false that
+   * replacement is silent. On Windows, Chrome raised a banner for the first
+   * notification of a tag and quietly rewrote it for every one after. The
+   * chime still played - it is Web Audio in this file and owes the
+   * notification nothing - so the symptom was "sound but no banner".
+   *
+   * Counting notifications, which is what the rest of this suite does, could
+   * never have caught it: the count was always right. What was wrong was the
+   * IDENTITY, so these tests assert identities.
+   * --------------------------------------------------------------------- */
+
+  /* Every notification must carry a non-empty tag AND renotify:true. The
+     fake constructor throws on renotify without a tag, exactly as Chromium
+     does, so this is a real constraint and not a formality. */
+  function assertFreshBanner(n, why) {
+    assert.equal(typeof n.tag, 'string', why + ': has a tag');
+    assert.notEqual(n.tag, '', why + ': the tag is not empty');
+    assert.equal(n.renotify, true, why + ': renotify re-alerts on a collision');
+  }
+
+  test('FIVE TEST ALERT PRESSES ARE FIVE DISTINCT NOTIFICATIONS', async () => {
+    const b = fakeBrowser();
+    const alerts = await alertsFor(b);
+    await alerts.enable();
+    b.notifications.length = 0;
+
+    const tags = [];
+    for (let i = 0; i < 5; i += 1) {
+      /* Real presses land on the same millisecond in a test and often in
+         life. The identity must not depend on the clock moving. */
+      const r = alerts.test();
+      assert.equal(r.shown, true, 'press ' + (i + 1) + ' showed something');
+      tags.push(r.tag);
+    }
+
+    assert.equal(b.notifications.length, 5, 'five constructor calls');
+    for (const n of b.notifications) assertFreshBanner(n, 'test alert');
+    assert.equal(new Set(b.notifications.map(n => n.tag)).size, 5,
+      'FIVE DISTINCT TAGS - nothing for the platform to collapse');
+    assert.equal(new Set(tags).size, 5, 'and the caller is told each identity');
+  });
+
+  test('the test alert stays inert: no API call, no unread, no read ack',
     async () => {
       const b = fakeBrowser();
       const alerts = await alertsFor(b);
       await alerts.enable();
       b.notifications.length = 0;
-      alerts.observe([UNREAD()]);
-      assert.equal(b.notifications[0].tag, 'esthers-chat-c-new',
-        'tagged by conversation, so a second replaces the first');
+
+      const before = alerts._pending().slice();
+      alerts.test();
+      alerts.test();
+
+      assert.deepEqual(alerts._pending(), before,
+        'the dedupe ledger is untouched - no invented unread');
+      assert.equal(b.title, "Esther's Staff Chat",
+        'and no unread count appears in the tab title');
+    });
+
+  test('A SECOND MESSAGE IN THE SAME THREAD IS A SECOND BANNER', async () => {
+    const b = fakeBrowser();
+    const alerts = await alertsFor(b);
+    await alerts.enable();
+    b.notifications.length = 0;
+
+    /* Two genuine customer messages, one conversation. This is the case the
+       shop cares about most and the one the old tag silently swallowed. */
+    alerts.observe([UNREAD({ attentionVersion: 4 })]);
+    alerts.observe([UNREAD({ attentionVersion: 5 })]);
+
+    assert.equal(b.notifications.length, 2, 'two notification attempts');
+    for (const n of b.notifications) assertFreshBanner(n, 'new message');
+    assert.equal(b.notifications[0].tag, 'esthers-chat:c-new:v4');
+    assert.equal(b.notifications[1].tag, 'esthers-chat:c-new:v5');
+    assert.notEqual(b.notifications[0].tag, b.notifications[1].tag,
+      'VERSION 5 DOES NOT SILENTLY REPLACE VERSION 4');
+  });
+
+  test('ten polls of one version are one notification, with one identity',
+    async () => {
+      const b = fakeBrowser();
+      const alerts = await alertsFor(b);
+      await alerts.enable();
+      b.notifications.length = 0;
+
+      for (let i = 0; i < 10; i += 1) {
+        /* Well inside the reminder cooldown, so nothing here is a reminder. */
+        b.now += 1000;
+        alerts.observe([UNREAD({ attentionVersion: 7 })]);
+      }
+      assert.equal(b.notifications.length, 1,
+        'the application dedupe is still conversationId + attentionVersion');
+      assert.equal(b.notifications[0].tag, 'esthers-chat:c-new:v7');
+    });
+
+  test('EACH REMINDER IS ITS OWN BANNER, NOT A REWRITE OF THE LAST',
+    async () => {
+      const b = fakeBrowser();
+      const alerts = await alertsFor(b);
+      await alerts.enable();
+      b.notifications.length = 0;
+
+      alerts.observe([UNREAD()]);              /* initial */
+      b.now += REMINDER_WINDOW;
+      alerts.observe([UNREAD()]);              /* reminder 1 */
+      b.now += REMINDER_WINDOW;
+      alerts.observe([UNREAD()]);              /* reminder 2 */
+
+      assert.equal(b.notifications.length, 3);
+      for (const n of b.notifications) assertFreshBanner(n, 'reminder');
+      const tags = b.notifications.map(n => n.tag);
+      assert.deepEqual(tags, [
+        'esthers-chat:c-new:v4',
+        'esthers-chat:c-new:v4:r1',
+        'esthers-chat:c-new:v4:r2'
+      ], 'the reminder sequence keeps each nudge distinct');
+      assert.equal(new Set(tags).size, 3, 'three identities, three banners');
+    });
+
+  test('a transfer raises its own fresh identity too', async () => {
+    const b = fakeBrowser();
+    const alerts = await alertsFor(b);
+    await alerts.enable();
+    b.notifications.length = 0;
+
+    alerts.observe([UNREAD({ attentionVersion: 4 })]);
+    alerts.observe([UNREAD({ attentionVersion: 5,
+      lastAttentionType: 'transfer',
+      locationId: 'specialty',
+      locationLabel: 'Specialty Shop - Keith Street',
+      customerName: 'ABC Construction' })]);
+
+    assert.equal(b.notifications.length, 2);
+    const n = b.notifications[1];
+    assertFreshBanner(n, 'transfer');
+    assert.equal(n.tag, 'esthers-chat:c-new:v5');
+    assert.notEqual(n.tag, b.notifications[0].tag,
+      'the handover is not a silent rewrite of the message before it');
+    assert.equal(n.title, 'Conversation transferred — Specialty Shop - Keith Street');
+    assert.equal(n.body, 'ABC Construction — this conversation was moved to your shop.');
+  });
+
+  test('READ STOPS EVERYTHING, AND A LATER VERSION STILL GETS THROUGH',
+    async () => {
+      const b = fakeBrowser();
+      const alerts = await alertsFor(b);
+      await alerts.enable();
+      b.notifications.length = 0;
+
+      alerts.observe([UNREAD({ attentionVersion: 4 })]);
+      assert.equal(b.notifications.length, 1);
+
+      /* Somebody looked - on this computer or the other one. */
+      alerts.observe([UNREAD({ attentionVersion: 4, unread: false })]);
+      b.now += REMINDER_WINDOW * 3;
+      alerts.observe([UNREAD({ attentionVersion: 4, unread: false })]);
+      assert.equal(b.notifications.length, 1, 'no popup, no reminder');
+      assert.equal(b.title, "Esther's Staff Chat", 'and the badge is gone');
+
+      /* The customer writes again. That is a new event and must be heard. */
+      alerts.observe([UNREAD({ attentionVersion: 5 })]);
+      assert.equal(b.notifications.length, 2);
+      assert.equal(b.notifications[1].tag, 'esthers-chat:c-new:v5');
+    });
+
+  test('the identity carries no customer message text and no preview',
+    async () => {
+      const b = fakeBrowser();
+      const alerts = await alertsFor(b);
+      await alerts.enable();
+      b.notifications.length = 0;
+
+      alerts.observe([UNREAD({
+        lastMessagePreview: 'the quote for the flashing is too high',
+        lastMessage: 'the quote for the flashing is too high'
+      })]);
+      const n = b.notifications[0];
+      for (const field of [n.tag, n.title, n.body]) {
+        assert.equal(field.indexOf('flashing'), -1,
+          'no customer words reach the platform, not even in the tag');
+        assert.equal(field.indexOf('quote'), -1);
+      }
+      assert.equal(n.tag, 'esthers-chat:c-new:v4',
+        'the tag is ids and a version, nothing else');
+    });
+
+  test('the ledger stays bounded: it holds only what is unread right now',
+    async () => {
+      const b = fakeBrowser();
+      const alerts = await alertsFor(b);
+      await alerts.enable();
+
+      /* Fifty reminders on one conversation. The reminder SEQUENCE grows, but
+         it lives inside the one entry that is already there - no new keys. */
+      for (let i = 0; i < 50; i += 1) {
+        alerts.observe([UNREAD()]);
+        b.now += REMINDER_WINDOW;
+      }
+      assert.equal(alerts._pending().length, 1, 'one unread, one ledger entry');
+
+      alerts.observe([UNREAD({ unread: false })]);
+      assert.equal(alerts._pending().length, 0, 'read empties it');
     });
 
   test('HOSTILE CUSTOMER TEXT CANNOT INJECT ANYTHING', async () => {
