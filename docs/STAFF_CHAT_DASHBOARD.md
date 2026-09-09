@@ -172,6 +172,9 @@ before a page may make a sound, and this one tells you so rather than pretending
 conversation is marked read, no customer is affected. Use it freely to check
 the volume.
 
+You only need it to check the volume, not to switch the sound on: after a
+reload the first click anywhere does that on its own.
+
 **Mute** silences the sound only. Unread badges, the pop-ups and the number in
 the browser tab all keep working. Press it again to unmute.
 
@@ -188,6 +191,15 @@ still works, and the page says so.
 **No sound?** Check the computer's own volume, and whether the machine is in Do
 Not Disturb or focus mode. A web page cannot override either of those, and this
 one does not try.
+
+**Pop-up but no sound?** A browser will not let a page make a noise until
+somebody has interacted with that page, and it forgets each time the page
+reloads. Your alert preference is remembered; the permission to make a sound
+is not. The button says so when this happens — it reads **Enable loud
+alerts** instead of **Alerts ON** — and **the first click or keypress
+anywhere on the dashboard quietly switches the sound back on**. You do not
+have to press anything in particular, and nothing makes a noise just because
+you clicked. Until then the pop-ups and unread badges keep working normally.
 
 **Sound but no pop-up on Windows?** The browser can be allowed to show
 notifications while *Windows itself* is still blocking them, and the two
