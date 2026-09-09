@@ -217,6 +217,12 @@ function fakeClock() {
     intervals: () => Array.from(timers.values()).map((t) => t.ms).sort((a, b) => a - b),
     fireAll: () => { for (const t of Array.from(timers.values())) t.fn(); },
     visibilityListeners: () => (doc.listeners.visibilitychange || []).length,
+    /* The one-shot listeners that re-arm the speaker after a reload. */
+    gestureListeners: () => ((doc.listeners.pointerdown || []).length
+      + (doc.listeners.keydown || []).length),
+    gesture: (type) => {
+      for (const fn of (doc.listeners[type || 'pointerdown'] || []).slice()) fn();
+    },
     hide: () => { doc.hidden = true; },
     show: () => {
       doc.hidden = false;
@@ -2148,7 +2154,7 @@ describe('the open transcript is re-read only when it actually changed', () => {
 
 describe('the whole local chat graph moved to one new version', () => {
   test('every local chat module and the staff page agree', () => {
-    const WANT = '2026-09-07.1';
+    const WANT = '2026-09-08.1';
     const files = {
       'assets/js/chat.js': [/var CHAT_CLIENT_VERSION = '([^']+)';/],
       'assets/js/chat-customer.js': [/export const CHAT_CLIENT_VERSION = '([^']+)';/,
@@ -2184,7 +2190,8 @@ describe('the whole local chat graph moved to one new version', () => {
                         'assets/js/chat-staff-alerts.js',
                         'staff/chat/index.html']) {
       const src = readFileSync(ROOT + '/' + file, 'utf8');
-      for (const stale of ['2026-09-05.1', '2026-09-06.1', '2026-09-06.2']) {
+      for (const stale of ['2026-09-05.1', '2026-09-06.1', '2026-09-06.2',
+                           '2026-09-07.1']) {
         assert.equal(src.indexOf(stale), -1,
           file + ' has no trace of ' + stale);
       }
@@ -2848,7 +2855,12 @@ describe('the shop is told, until somebody looks', () => {
       sounds: 0,
       title: "Esther's Staff Chat",
       store: new Map(),
-      audioFails: o.audioFails === true
+      audioFails: o.audioFails === true,
+      contextsCreated: 0,
+      resumeCalls: 0,
+      resumeRejects: o.resumeRejects === true,
+      settleResume: null,
+      missedNotes: 0
     };
     function Notif(title, opts) {
       const o2 = opts || {};
@@ -2864,6 +2876,54 @@ describe('the shop is told, until somebody looks', () => {
       state.notifications.push({ title: title, body: o2.body,
         tag: o2.tag, renotify: o2.renotify });
     }
+    /*
+     * A FAKE AUDIOCONTEXT THAT CAN ACTUALLY BE PARKED.
+     *
+     * The old fake was hardcoded state:'running' with a no-op resume, which
+     * is precisely why a whole release shipped with the chime broken: the
+     * failure it had to model was unrepresentable. This one models what a
+     * real browser does when a tab goes to the background -
+     *
+     *   suspended        currentTime FROZEN, and createOscillator still
+     *                    "works", so scheduling against the frozen clock
+     *                    fails SILENTLY exactly as it does in Chromium
+     *   resume()         a real Promise, resolved by the test, not instantly
+     *   running          currentTime advances again
+     *
+     * Every note scheduled while suspended is recorded as a MISS rather than
+     * a sound, which is what makes the production defect assertable.
+     */
+    state.audio = {
+      state: 'running',
+      currentTime: 10,
+      /* Resolved by the test, so "before resume settles" is a real moment. */
+      resume() {
+        state.resumeCalls += 1;
+        if (state.resumeRejects) return Promise.reject(new Error('resume refused'));
+        return new Promise((resolve) => { state.settleResume = () => {
+          if (state.audio.state === 'suspended') {
+            state.audio.state = 'running';
+            state.audio.currentTime += 0.5;   /* the clock moved on while parked */
+          }
+          resolve();
+        }; });
+      },
+      suspend() { state.audio.state = 'suspended'; },
+      createOscillator: () => ({
+        type: '', frequency: { value: 0 },
+        connect: () => {}, stop: () => {},
+        start: () => {
+          if (state.audio.state === 'running') state.sounds += 1;
+          else state.missedNotes += 1;      /* scheduled at a dead clock */
+        }
+      }),
+      createGain: () => ({
+        gain: { setValueAtTime: () => {}, exponentialRampToValueAtTime: () => {} },
+        connect: () => {}
+      }),
+      destination: {}
+    };
+
     Notif.permission = o.permission || 'granted';
     Notif.requestPermission = async () => {
       state.requested += 1;
@@ -2886,24 +2946,16 @@ describe('the shop is told, until somebody looks', () => {
       notificationApi: () => (o.noNotificationApi ? null : Notif),
       audioContext: () => {
         if (state.audioFails) return null;
-        return {
-          state: 'running',
-          currentTime: 0,
-          resume: () => {},
-          createOscillator: () => ({
-            type: '', frequency: { value: 0 },
-            connect: () => {}, start: () => { state.sounds += 1; }, stop: () => {}
-          }),
-          createGain: () => ({
-            gain: { setValueAtTime: () => {}, exponentialRampToValueAtTime: () => {} },
-            connect: () => {}
-          }),
-          destination: {}
-        };
+        state.contextsCreated += 1;
+        return state.audio;
       }
     };
     /* Three oscillators per chime - see CHIME in chat-staff-alerts.js. */
     state.chimes = () => state.sounds / 3;
+    /* Notes the browser would have thrown away, scheduled at a frozen clock. */
+    state.missedChimes = () => state.missedNotes / 3;
+    /* Park the context, exactly as backgrounding the tab does. */
+    state.background = () => { state.audio.suspend(); };
     return state;
   }
 
@@ -3243,7 +3295,446 @@ describe('the shop is told, until somebody looks', () => {
         'the tag is ids and a version, nothing else');
     });
 
-  test('the ledger stays bounded: it holds only what is unread right now',
+  /* ------------------------------------------------------------------------
+   * THE SPEAKER.
+   *
+   * A SECOND PRODUCTION BUG, AND A SECOND FAILURE OF THIS SUITE.
+   *
+   * The banners were fixed and the shop still missed customers, because the
+   * chime stopped and nothing here noticed. Two separate defects:
+   *
+   *   1. the AudioContext does not survive a page load, but the "alerts on"
+   *      preference and the notification permission both do. The engine ran
+   *      half on - banners, silence - and only the two alert buttons could
+   *      ever repair it.
+   *
+   *   2. sound() called ctx.resume() WITHOUT AWAITING IT and scheduled the
+   *      chime immediately, against a clock that is FROZEN while the context
+   *      is parked. Backgrounding the tab for a few seconds - which is what
+   *      you do to go and send the customer a message - was enough.
+   *
+   * Every test above counted notifications. NOT ONE counted chimes across
+   * two attention versions, and the fake context could not be suspended, so
+   * neither defect was expressible. These assert the sound.
+   * --------------------------------------------------------------------- */
+
+  /* ------------------------------------------------------------------------
+   * THE SPEAKER AFTER A RELOAD.
+   *
+   * These run the WHOLE DASHBOARD, not the alert engine alone, because the
+   * defect lives in the seam between them: the engine cannot create an
+   * AudioContext without a gesture, and only the page knows when a gesture
+   * happened. The old suite tested each side and never the seam.
+   * --------------------------------------------------------------------- */
+
+  /* An alert-engine browser whose localStorage already says "alerts on",
+     exactly as it does the morning after somebody switched them on. */
+  function reloadedBrowser() {
+    const b = fakeBrowser();
+    b.store.set('esthers.staff.alerts',
+      JSON.stringify({ alertsEnabled: true, muted: false }));
+    return b;
+  }
+
+  const WAITING = (over) => Object.assign({
+    conversationId: 'conv-a', customerName: 'Dana Fraser', status: 'open',
+    locationId: 'main', unread: true, attentionVersion: 1,
+    lastAttentionType: 'customer_message'
+  }, over || {});
+
+  test('AFTER A RELOAD THE PAGE IS HONEST: alerts on, speaker not armed',
+    async () => {
+      const { mod } = await load();
+      const b = reloadedBrowser();
+      const { ui, clock, fetcher } = await signedIn(mod, { deps: { alertDeps: b.deps } });
+      try {
+        const st = ui.alertStatus;
+        assert.equal(st.enabled, true, 'the preference came back');
+        assert.equal(st.audio, false,
+          'BUT THE SPEAKER DID NOT - and the page says so rather than lying');
+        assert.equal(b.contextsCreated, 0,
+          'no AudioContext was conjured without a gesture');
+        assert.equal(clock.gestureListeners(), 2,
+          'pointerdown and keydown are waiting for one');
+      } finally { fetcher.restore(); }
+    });
+
+  test('a banner still arrives before the speaker is armed, silently',
+    async () => {
+      const { mod } = await load();
+      const b = reloadedBrowser();
+      const { session, fetcher } = await signedIn(mod, { deps: { alertDeps: b.deps } });
+      try {
+        b.notifications.length = 0;
+        b.sounds = 0;
+        session.applyAttention({ conversations: [WAITING()] });
+        assert.equal(b.notifications.length, 1,
+          'the customer is still announced');
+        assert.equal(b.chimes(), 0, 'but there is nothing to make a noise with');
+        assert.equal(b.missedChimes(), 0, 'and nothing was faked');
+      } finally { fetcher.restore(); }
+    });
+
+  test('THE FIRST CLICK ANYWHERE ARMS THE SPEAKER - silently', async () => {
+    const { mod } = await load();
+    const b = reloadedBrowser();
+    const { ui, clock, fetcher, session } = await signedIn(mod,
+      { deps: { alertDeps: b.deps } });
+    try {
+      b.notifications.length = 0;
+      b.sounds = 0;
+      const callsBefore = fetcher.seen.length;
+
+      clock.gesture('pointerdown');
+
+      assert.equal(b.contextsCreated, 1, 'the speaker is armed');
+      assert.equal(ui.alertStatus.audio, true, 'and the page says so');
+      /* The whole point of "silently": */
+      assert.equal(b.chimes(), 0, 'NO chime merely because somebody clicked');
+      assert.equal(b.notifications.length, 0, 'no notification either');
+      assert.equal(fetcher.seen.length, callsBefore, 'NO API call');
+      assert.equal(session.selectedId, null, 'nothing selected, nothing read');
+      assert.equal(JSON.parse(b.store.get('esthers.staff.alerts')).alertsEnabled,
+        true, 'and the preference is untouched');
+
+      /* THE LISTENERS ARE GONE. */
+      assert.equal(clock.gestureListeners(), 0,
+        'the one-shot listeners removed themselves');
+
+      /* And now a genuine customer is heard. */
+      session.applyAttention({ conversations: [WAITING({ attentionVersion: 2 })] });
+      assert.equal(b.chimes(), 1, 'THE NEXT REAL ALERT CHIMES');
+      assert.equal(b.notifications.length, 1, 'and shows its banner');
+    } finally { fetcher.restore(); }
+  });
+
+  test('a keypress arms it just as well as a click', async () => {
+    const { mod } = await load();
+    const b = reloadedBrowser();
+    const { clock, fetcher } = await signedIn(mod, { deps: { alertDeps: b.deps } });
+    try {
+      clock.gesture('keydown');
+      assert.equal(b.contextsCreated, 1);
+      assert.equal(clock.gestureListeners(), 0);
+    } finally { fetcher.restore(); }
+  });
+
+  test('ALERTS OFF MEANS NO LISTENERS AND NO AUDIOCONTEXT, EVER', async () => {
+    const { mod } = await load();
+    const b = fakeBrowser();          /* nothing in storage: alerts are off */
+    const { clock, fetcher } = await signedIn(mod, { deps: { alertDeps: b.deps } });
+    try {
+      assert.equal(clock.gestureListeners(), 0,
+        'a shop that turned alerts off is not listening for gestures');
+      clock.gesture('pointerdown');
+      assert.equal(b.contextsCreated, 0,
+        'and never gets an AudioContext it did not ask for');
+    } finally { fetcher.restore(); }
+  });
+
+  test('the listeners do not stack, and sign-out takes them away', async () => {
+    const { mod } = await load();
+    const b = reloadedBrowser();
+    const { ui, clock, fetcher, session } = await signedIn(mod,
+      { deps: { alertDeps: b.deps } });
+    try {
+      /* Whatever else re-runs, there is one logical armer. */
+      session.armAudio();
+      session.armAudio();
+      assert.equal(clock.gestureListeners(), 2, 'still exactly one pair');
+      assert.equal(clock.liveTimers(), 1, 'and STILL ONE TIMER - none added');
+
+      await ui.handlers.signOut();
+      assert.equal(clock.gestureListeners(), 0, 'signing out disarms them');
+    } finally { fetcher.restore(); }
+  });
+
+  test('muted still arms the speaker, and still makes no noise doing it',
+    async () => {
+      const { mod } = await load();
+      const b = fakeBrowser();
+      b.store.set('esthers.staff.alerts',
+        JSON.stringify({ alertsEnabled: true, muted: true }));
+      const { clock, fetcher, session } = await signedIn(mod,
+        { deps: { alertDeps: b.deps } });
+      try {
+        clock.gesture('pointerdown');
+        assert.equal(b.contextsCreated, 1, 'a muted speaker is still armed');
+        assert.equal(b.chimes(), 0, 'silently');
+        b.notifications.length = 0;
+        session.applyAttention({ conversations: [WAITING({ attentionVersion: 3 })] });
+        assert.equal(b.chimes(), 0, 'and stays silent while muted');
+        assert.equal(b.notifications.length, 1,
+          'while the banner still comes through');
+      } finally { fetcher.restore(); }
+    });
+
+    test('EVERY NEW VERSION IS ANOTHER CHIME, NOT JUST ANOTHER BANNER',
+    async () => {
+      const b = fakeBrowser();
+      const alerts = await alertsFor(b);
+      await alerts.enable();
+      b.notifications.length = 0;
+      b.sounds = 0;
+
+      await alerts.observe([UNREAD({ attentionVersion: 1 })]).sound;
+      assert.equal(b.chimes(), 1, 'v1 chimes');
+      assert.equal(b.notifications.length, 1, 'v1 banners');
+
+      /* Polled again and again at the same version: one event, not ten. */
+      for (let i = 0; i < 5; i += 1) {
+        b.now += 1000;
+        await alerts.observe([UNREAD({ attentionVersion: 1 })]).sound;
+      }
+      assert.equal(b.chimes(), 1, 'no extra chime for the same version');
+      assert.equal(b.notifications.length, 1, 'and no extra banner');
+
+      await alerts.observe([UNREAD({ attentionVersion: 2 })]).sound;
+      assert.equal(b.chimes(), 2, 'v2 IS A SECOND CHIME');
+      assert.equal(b.notifications.length, 2, 'and a second banner');
+
+      await alerts.observe([UNREAD({ attentionVersion: 3 })]).sound;
+      assert.equal(b.chimes(), 3, 'v3 is a third chime');
+      assert.equal(b.notifications.length, 3, 'and a third banner');
+    });
+
+  test('THE EXACT PRODUCTION SEQUENCE: test alert, background, real message',
+    async () => {
+      const b = fakeBrowser();
+      const alerts = await alertsFor(b);
+      await alerts.enable();
+      b.notifications.length = 0;
+      b.sounds = 0;
+
+      /* 1-3. Test alert on a running context: chime and banner. */
+      const t = alerts.test();
+      assert.equal(await t.chime, true, 'the test alert chimes');
+      assert.equal(b.chimes(), 1);
+      assert.equal(b.notifications.length, 1, 'and shows its banner');
+
+      /* 4. The staff member switches to the customer tab to send a message.
+            The browser parks the AudioContext. */
+      b.background();
+      assert.equal(b.audio.state, 'suspended');
+
+      /* 5. They come straight back and the genuine message lands. */
+      const out = alerts.observe([UNREAD({ attentionVersion: 9 })]);
+
+      /* 6-7. THE BANNER IS ALREADY THERE, and NOTHING has been scheduled
+              against the frozen clock. This is the assertion that fails
+              against the shipped build. */
+      assert.equal(b.notifications.length, 2,
+        'THE BANNER DOES NOT WAIT FOR THE SPEAKER');
+      assert.equal(b.chimes(), 1, 'no chime yet - the context is still parked');
+      assert.equal(b.missedChimes(), 0,
+        'AND NOTHING WAS SCHEDULED AT A DEAD CLOCK');
+      assert.equal(b.resumeCalls, 1, 'exactly one resume was asked for');
+
+      /* 8. The resume lands. */
+      b.settleResume();
+      /* 9-10. Now, and only now, the chime. */
+      assert.deepEqual(await out.sound, [true], 'the chime reports success');
+      assert.equal(b.chimes(), 2, 'THE GENUINE ALERT GETS ITS CHIME');
+      assert.equal(b.missedChimes(), 0, 'and none of it was thrown away');
+      assert.equal(b.notifications.length, 2, 'still exactly one banner for it');
+      assert.equal(b.notifications[1].tag, 'esthers-chat:c-new:v9');
+    });
+
+  test('two alerts arriving together share ONE resume, and both chime',
+    async () => {
+      const b = fakeBrowser();
+      const alerts = await alertsFor(b);
+      await alerts.enable();
+      b.notifications.length = 0;
+      b.sounds = 0;
+      b.background();
+
+      const out = alerts.observe([
+        UNREAD({ conversationId: 'c-a', attentionVersion: 1 }),
+        UNREAD({ conversationId: 'c-b', attentionVersion: 1 })
+      ]);
+      assert.equal(b.resumeCalls, 1, 'ONE resume in flight, not two');
+      assert.equal(b.notifications.length, 2, 'both banners are already up');
+
+      b.settleResume();
+      assert.deepEqual(await out.sound, [true, true]);
+      assert.equal(b.chimes(), 2, 'and both chime once the clock is live');
+    });
+
+  test('a rejected resume costs the chime and NOTHING else', async () => {
+    const b = fakeBrowser({ resumeRejects: true });
+    const alerts = await alertsFor(b);
+    await alerts.enable();
+    b.notifications.length = 0;
+    b.sounds = 0;
+    b.background();
+
+    const out = alerts.observe([UNREAD({ attentionVersion: 4 })]);
+    assert.equal(b.notifications.length, 1, 'THE BANNER STILL APPEARS');
+    assert.deepEqual(await out.sound, [false], 'the chime reports failure');
+    assert.equal(b.chimes(), 0, 'no sound');
+    assert.equal(b.missedChimes(), 0, 'and nothing scheduled at a dead clock');
+
+    /* The poll loop is unharmed: the next alert still works. */
+    b.audio.state = 'running';
+    await alerts.observe([UNREAD({ attentionVersion: 5 })]).sound;
+    assert.equal(b.chimes(), 1, 'the engine carries on');
+    assert.equal(b.notifications.length, 2);
+  });
+
+  test('a context that will not come back stays silent rather than throwing',
+    async () => {
+      const b = fakeBrowser();
+      const alerts = await alertsFor(b);
+      await alerts.enable();
+      b.notifications.length = 0;
+      b.sounds = 0;
+
+      /* The browser took the device away: the resume resolves but the context
+         never reaches 'running'. createOscillator on a dead context throws in
+         a real browser, so the guard after the await is what keeps this a
+         missed chime instead of an exception in the poll loop. */
+      b.audio.state = 'suspended';
+      const out = alerts.observe([UNREAD({ attentionVersion: 2 })]);
+      assert.equal(b.notifications.length, 1, 'the banner is unaffected');
+      b.audio.state = 'closed';          /* resume "succeeded" into nothing */
+      b.settleResume();
+      assert.deepEqual(await out.sound, [false], 'and the chime says so');
+      assert.equal(b.chimes(), 0);
+      assert.equal(b.missedChimes(), 0, 'NOTHING was scheduled at a dead clock');
+
+      /* The engine is still alive. */
+      b.audio.state = 'running';
+      await alerts.observe([UNREAD({ attentionVersion: 3 })]).sound;
+      assert.equal(b.chimes(), 1);
+    });
+
+  test('unlock() refuses when alerts are off, from the module up', async () => {
+    const b = fakeBrowser();                 /* nothing stored: alerts off */
+    const alerts = await alertsFor(b);
+    assert.equal(alerts.status().enabled, false);
+    assert.equal(alerts.unlock(), false,
+      'NO AudioContext for a shop that turned alerts off');
+    assert.equal(b.contextsCreated, 0);
+    assert.equal(alerts.status().audio, false, 'and status does not pretend');
+
+    /* Once alerts are on, a later page load can arm it on a gesture. */
+    await alerts.enable();
+    const armed = b.contextsCreated;
+    const second = await alertsFor(b);       /* a reload: same storage */
+    assert.equal(second.status().enabled, true);
+    assert.equal(second.status().audio, false);
+    assert.equal(second.unlock(), true, 'now a gesture may arm it');
+    assert.equal(b.contextsCreated, armed + 1, 'exactly one more context');
+    assert.equal(b.chimes(), 1, 'and arming made no new sound of its own');
+
+    /* Idempotent: a second call does not build a second context. */
+    assert.equal(second.unlock(), true);
+    assert.equal(b.contextsCreated, armed + 1, 'still just the one');
+  });
+
+    test('a running context plays with no await at all', async () => {
+    const b = fakeBrowser();
+    const alerts = await alertsFor(b);
+    await alerts.enable();
+    b.sounds = 0;
+    /* Synchronously after the call, before any microtask has run. */
+    alerts.observe([UNREAD({ attentionVersion: 2 })]);
+    assert.equal(b.chimes(), 1, 'no needless delay when nothing is parked');
+    assert.equal(b.resumeCalls, 0, 'and no pointless resume');
+  });
+
+  test('EVERY REMINDER CHIMES, NOT JUST BANNERS', async () => {
+    const b = fakeBrowser();
+    const alerts = await alertsFor(b);
+    await alerts.enable();
+    b.notifications.length = 0;
+    b.sounds = 0;
+
+    await alerts.observe([UNREAD()]).sound;
+    assert.equal(b.chimes(), 1, 'initial chime');
+    assert.equal(b.notifications.length, 1);
+
+    /* Inside the cooldown: nothing at all. */
+    b.now += REMINDER_WINDOW - 1000;
+    await alerts.observe([UNREAD()]).sound;
+    assert.equal(b.chimes(), 1, 'NO chime before the cooldown');
+    assert.equal(b.notifications.length, 1, 'and no reminder banner');
+
+    b.now += 1000;
+    await alerts.observe([UNREAD()]).sound;
+    assert.equal(b.chimes(), 2, 'the reminder chimes');
+    assert.equal(b.notifications.length, 2);
+
+    b.now += REMINDER_WINDOW;
+    await alerts.observe([UNREAD()]).sound;
+    assert.equal(b.chimes(), 3, 'and the one after it');
+    assert.equal(b.notifications.length, 3);
+
+    /* Somebody looked. */
+    await alerts.observe([UNREAD({ unread: false })]).sound;
+    b.now += REMINDER_WINDOW * 3;
+    await alerts.observe([UNREAD({ unread: false })]).sound;
+    assert.equal(b.chimes(), 3, 'READ STOPS THE SOUND');
+    assert.equal(b.notifications.length, 3, 'and the banners');
+  });
+
+  test('a transfer chimes too, parked context and all', async () => {
+    const b = fakeBrowser();
+    const alerts = await alertsFor(b);
+    await alerts.enable();
+    b.notifications.length = 0;
+    b.sounds = 0;
+
+    const TRANSFER = { attentionVersion: 6, lastAttentionType: 'transfer',
+      locationId: 'specialty', locationLabel: 'Specialty Shop - Keith Street',
+      customerName: 'ABC Construction' };
+
+    await alerts.observe([UNREAD(TRANSFER)]).sound;
+    assert.equal(b.chimes(), 1, 'a handover is heard');
+    assert.equal(b.notifications[0].title,
+      'Conversation transferred — Specialty Shop - Keith Street');
+    assert.equal(b.notifications[0].body,
+      'ABC Construction — this conversation was moved to your shop.');
+
+    /* And again from a parked context. */
+    b.background();
+    const out = alerts.observe([UNREAD(Object.assign({}, TRANSFER,
+      { attentionVersion: 7 }))]);
+    assert.equal(b.notifications.length, 2, 'the banner does not wait');
+    b.settleResume();
+    assert.deepEqual(await out.sound, [true]);
+    assert.equal(b.chimes(), 2, 'and the chime follows the resume');
+  });
+
+  test('muted stays silent through a resume, and unmuting needs no new context',
+    async () => {
+      const b = fakeBrowser();
+      const alerts = await alertsFor(b);
+      await alerts.enable();
+      alerts.setMuted(true);
+      b.notifications.length = 0;
+      b.sounds = 0;
+      const contextsAfterEnable = b.contextsCreated;
+
+      b.background();
+      const out = alerts.observe([UNREAD({ attentionVersion: 2 })]);
+      assert.equal(b.notifications.length, 1, 'muted never silences the banner');
+      assert.deepEqual(await out.sound, [false]);
+      assert.equal(b.chimes(), 0, 'and makes no sound');
+      assert.equal(b.resumeCalls, 0,
+        'muted does not even wake the speaker up');
+
+      /* Unmute: the context is already armed, so no second one is made. */
+      b.audio.state = 'running';
+      alerts.setMuted(false);
+      await alerts.observe([UNREAD({ attentionVersion: 3 })]).sound;
+      assert.equal(b.chimes(), 1, 'unmuting just works');
+      assert.equal(b.contextsCreated, contextsAfterEnable,
+        'NO second AudioContext was created');
+    });
+
+    test('the ledger stays bounded: it holds only what is unread right now',
     async () => {
       const b = fakeBrowser();
       const alerts = await alertsFor(b);

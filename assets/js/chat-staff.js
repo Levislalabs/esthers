@@ -50,7 +50,7 @@ import {
   getFirebaseApp,
   initAppCheck,
   authorizedFetch
-} from './chat-app-check.js?v=2026-09-07.1';
+} from './chat-app-check.js?v=2026-09-08.1';
 
 /*
  * The three shops, for DISPLAY only.
@@ -63,7 +63,7 @@ import {
  * Same ?v= as the import above, for the same measured reason: a query on this
  * module's own URL does not reach its specifiers.
  */
-import * as LOC from './chat-locations.js?v=2026-09-07.1';
+import * as LOC from './chat-locations.js?v=2026-09-08.1';
 
 /*
  * The noise: sound, desktop notifications, the tab-title count, reminders.
@@ -76,13 +76,13 @@ import * as LOC from './chat-locations.js?v=2026-09-07.1';
  *
  * Same ?v= as the imports above, for the same measured reason.
  */
-import { createAlerts, REMINDER_MS } from './chat-staff-alerts.js?v=2026-09-07.1';
+import { createAlerts, REMINDER_MS } from './chat-staff-alerts.js?v=2026-09-08.1';
 
 /* The chat client version. THE SAME STRING as CHAT_CLIENT_VERSION in
    chat.js, chat-customer.js and chat-app-check.js, and the same string as the
    ?v= in the import above and in staff/chat/index.html. One version for the
    whole local chat graph; a test pins every copy to the others. */
-export const CHAT_CLIENT_VERSION = '2026-09-07.1';
+export const CHAT_CLIENT_VERSION = '2026-09-08.1';
 
 /* Pinned by path, exactly as the customer transport loads it. No cache-busting
    query: gstatic already serves an exact version per URL. */
@@ -392,6 +392,10 @@ export class StaffDashboard {
      */
     this.alerts = (this.deps.createAlerts || createAlerts)({ deps: this.deps.alertDeps });
 
+    /* The one-shot gesture listeners that re-arm the speaker after a reload.
+       Null when nothing is waiting - see armAudio(). */
+    this.audioArmer = null;
+
     /*
      * THE AUTHORITATIVE OPEN LIST, which is NOT the same thing as the list on
      * screen.
@@ -657,6 +661,9 @@ export class StaffDashboard {
        per page load - so the control reflects "on, needs a click" honestly
        rather than claiming a speaker it has not been given yet. */
     callUi(this.ui, 'setAlertStatus', this.alerts.status());
+    /* Alerts on from a previous visit but no speaker yet? Wait for the first
+       real click or keypress and arm it then - see armAudio(). */
+    this.armAudio();
     callUi(this.ui, 'setPhase', 'ready');
     this.watch();
     return true;
@@ -716,6 +723,7 @@ export class StaffDashboard {
     this.readAcking = false;
     this.ackedVersions = new Map();
     this.alerts.reset();
+    this.disarmAudio();
     this.inboxFailures = 0;
     this.threadFailures = 0;
     this.inboxLoading = false;
@@ -750,6 +758,7 @@ export class StaffDashboard {
   /* Tear down completely - the page is going away. */
   stop() {
     this.stopped = true;
+    this.disarmAudio();
     this.stopWatch();
     return true;
   }
@@ -988,9 +997,77 @@ export class StaffDashboard {
 
   /* ---- the alert controls ---- */
 
+  /*
+   * SILENTLY RE-ARM THE SPEAKER ON THE FIRST CLICK AFTER A RELOAD.
+   *
+   * Three pieces of state, three different lifetimes:
+   *
+   *   the alerts preference    localStorage       survives a reload
+   *   notification permission  browser, by origin survives a reload
+   *   the AudioContext         this page load     DOES NOT
+   *
+   * A browser requires a fresh gesture per page load before a page may make
+   * noise. So after every reload the shop had alerts "on", banners working,
+   * and no chime - and the only two things that could fix it were the Enable
+   * and Test buttons, which is not something anybody knows to do.
+   *
+   * The first honest click or keypress ANYWHERE on the dashboard now arms
+   * it. Not a timer, not a poll, not a background callback: a real user
+   * gesture, which is exactly what the autoplay policy asks for. Nothing is
+   * bypassed and nothing is faked - until that gesture happens, status()
+   * still reports audio as not armed and the UI still says so.
+   *
+   * Capture-phase listeners so a handler that stops propagation cannot
+   * swallow the gesture, and passive so they can never delay a click.
+   */
+  armAudio() {
+    const st = this.alerts.status();
+    /* Only for a preference somebody already set, and only when the speaker
+       is not already armed. A shop with alerts off gets no AudioContext. */
+    if (st.enabled !== true || st.audio === true) return false;
+    if (this.audioArmer) return false;              /* already waiting */
+
+    const doc = this.deps.document();
+    if (!doc || typeof doc.addEventListener !== 'function') return false;
+
+    const onGesture = () => {
+      /*
+       * UNLOCK ONLY. No chime - somebody clicking a conversation has not
+       * asked to be beeped at. No notification, no API call, no read
+       * acknowledgement, no preference write, nothing marked read.
+       */
+      if (this.alerts.unlock() !== true) return;    /* try again next gesture */
+      this.disarmAudio();
+      callUi(this.ui, 'setAlertStatus', this.alerts.status());
+    };
+
+    this.audioArmer = { doc: doc, handler: onGesture };
+    doc.addEventListener('pointerdown', onGesture, true);
+    doc.addEventListener('keydown', onGesture, true);
+    return true;
+  }
+
+  /* Remove the one-shot listeners. Idempotent, because it is called from
+     the gesture, from sign-out and from stop(), and two of those can happen
+     in either order. */
+  disarmAudio() {
+    const armer = this.audioArmer;
+    if (!armer) return false;
+    this.audioArmer = null;
+    try {
+      armer.doc.removeEventListener('pointerdown', armer.handler, true);
+      armer.doc.removeEventListener('keydown', armer.handler, true);
+    } catch (err) { /* the document went away; there is nothing to remove */ }
+    return true;
+  }
+
   async enableAlerts() {
     const status = await this.alerts.enable();
     callUi(this.ui, 'setAlertStatus', status);
+    /* The button IS a gesture, so it normally arms the speaker itself and any
+       waiting listeners are now redundant. If the browser refused, leave them
+       waiting for the next honest gesture rather than pretending. */
+    if (status.audio === true) this.disarmAudio(); else this.armAudio();
     /* Turning alerts on in a hidden tab is not a normal path, but it costs
        nothing to be correct about: start monitoring from the next tick. */
     this.hiddenTicks = 0;

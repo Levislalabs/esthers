@@ -33,7 +33,7 @@
 
 /* The chat client version. THE SAME STRING as CHAT_CLIENT_VERSION in chat.js,
    chat-customer.js, chat-staff.js, chat-app-check.js and chat-locations.js. */
-export const CHAT_CLIENT_VERSION = '2026-09-07.1';
+export const CHAT_CLIENT_VERSION = '2026-09-08.1';
 
 /*
  * How long an unread conversation waits before it says something again.
@@ -294,16 +294,61 @@ export function createAlerts(options) {
     }
   }
 
-  function sound() {
-    if (!ctx || muted) return false;
+  /*
+   * RESUME FIRST, SCHEDULE SECOND. THIS ORDER IS THE WHOLE FIX.
+   *
+   * The browser parks an AudioContext when the tab goes to the background -
+   * which is exactly what a staff member does when they switch to another
+   * program to answer the customer. While it is parked, ctx.currentTime IS
+   * FROZEN.
+   *
+   * The old code did this:
+   *
+   *     ctx.resume();            // a Promise, dropped on the floor
+   *     playChime(ctx, 0.9);     // runs NOW, reads the FROZEN clock
+   *
+   * playChime schedules its three notes at currentTime + 0.00 / 0.20 / 0.40.
+   * Against a frozen clock those are absolute times that the context has
+   * already passed by the moment it actually resumes, so the notes are
+   * clipped or dropped outright and the shop hears nothing. Measured in a
+   * real Chromium build: at the instant playChime read the clock, it was
+   * still frozen.
+   *
+   * Awaiting the resume costs a few milliseconds and buys a chime that is
+   * actually audible. The banner does NOT wait for any of this - see
+   * observe().
+   */
+  let resuming = null;
+
+  async function sound() {
+    /* Not armed on this page load. An honest false: the caller may still
+       show its banner, and status().audio already says so. */
+    if (!ctx) return false;
+    if (muted) return false;
     try {
-      /* A context can be suspended again by the browser when a tab is
-         backgrounded on some platforms. Asking it to resume costs nothing
-         when it is already running. */
-      if (ctx.state === 'suspended' && typeof ctx.resume === 'function') ctx.resume();
+      if (ctx.state === 'suspended') {
+        if (typeof ctx.resume !== 'function') return false;
+        /*
+         * ONE RESUME IN FLIGHT, SHARED. Two conversations going unread in the
+         * same poll must not launch two resumes and must not race each
+         * other's view of the clock. They both wait on this one and then each
+         * schedules its own notes against the same live clock.
+         */
+        if (!resuming) {
+          resuming = Promise.resolve(ctx.resume())
+            .then(() => { resuming = null; },
+                  (err) => { resuming = null; throw err; });
+        }
+        await resuming;
+      }
+      /* Resumed, closed, or interrupted - only one of those can make a
+         sound, and createOscillator on a closed context throws. */
+      if (ctx.state !== 'running') return false;
       playChime(ctx, 0.9);
       return true;
     } catch (err) {
+      /* A rejected resume, a closed device, a context the browser took away.
+         Never a crash, never an unhandled rejection, never a lost banner. */
       return false;
     }
   }
@@ -446,9 +491,43 @@ export function createAlerts(options) {
         try { await N.requestPermission(); } catch (err) { /* denied or unavailable */ }
       }
       /* A test chime, so the person hears exactly what will happen later and
-         can judge the volume now rather than at 8am on a Tuesday. */
-      if (audio) sound();
+         can judge the volume now rather than at 8am on a Tuesday. Awaited so
+         the status returned below reflects a speaker that has actually
+         spoken. */
+      if (audio) await sound();
       return status();
+    },
+
+    /*
+     * ARM THE SPEAKER, ON SOMEBODY ELSE'S GESTURE.
+     *
+     * A browser requires a fresh user gesture per PAGE LOAD before it will
+     * let a page make noise, and it is right to. The alerts preference and
+     * the notification permission both survive a reload; the audio unlock
+     * cannot. That left the engine half on after every reload - banners, no
+     * chime - because nothing but the two alert buttons ever created the
+     * context.
+     *
+     * So the dashboard calls this from the first real click or keypress
+     * anywhere on the page. It is deliberately minimal:
+     *
+     *   - it makes NO sound. Somebody clicking a conversation has not asked
+     *     to be chimed at.
+     *   - it shows no notification, touches no conversation, reads nothing,
+     *     calls nothing, and does not write the preference.
+     *   - it refuses unless alerts are already ON, so a shop that turned
+     *     them off never gets an AudioContext it did not ask for.
+     *   - muted is irrelevant: arming a muted speaker is still correct, and
+     *     unmuting later must not need a second gesture.
+     *
+     * This does not bypass the autoplay policy. It IS the gesture the policy
+     * asks for; the only change is that any honest click will do, instead of
+     * one particular button nobody knew to press.
+     */
+    unlock: function () {
+      if (enabled !== true) return false;
+      if (ctx) return true;
+      return unlockAudio();
     },
 
     setMuted: function (flag) {
@@ -467,7 +546,7 @@ export function createAlerts(options) {
      */
     test: function () {
       unlockAudio();
-      const played = sound();
+      const played = sound();     /* a Promise; deliberately not awaited */
       /*
        * A FRESH IDENTITY EVERY PRESS. The whole point of the button is that
        * somebody presses it and sees what will happen later, so five presses
@@ -481,7 +560,9 @@ export function createAlerts(options) {
         locationLabel: "Esther's Sheet Metal",
         lastAttentionType: 'customer_message'
       }, tag);
-      return { played: played, shown: shown, tag: tag, status: status() };
+      /* `chime` is a PROMISE, because a parked context has to be resumed
+         before it can make a noise. The banner above did not wait for it. */
+      return { chime: played, shown: shown, tag: tag, status: status() };
     },
 
     /*
@@ -500,6 +581,7 @@ export function createAlerts(options) {
       const now = deps.now();
       const seen = new Set();
       const fired = [];
+      const chimes = [];
       let unreadCount = 0;
 
       for (const c of list) {
@@ -537,7 +619,17 @@ export function createAlerts(options) {
         }
 
         if (enabled) {
-          sound();
+          /*
+           * THE BANNER NEVER WAITS FOR THE SPEAKER.
+           *
+           * sound() is async now - a parked context must be resumed before a
+           * note can be scheduled - so it is started and NOT awaited, and
+           * popup() runs synchronously on the next line. A slow or rejected
+           * resume costs the chime and nothing else: the banner still
+           * appears, the badge still updates, and the poll loop is never
+           * blocked or thrown out of.
+           */
+          chimes.push(sound());
           popup(c, tag);
         }
       }
@@ -557,7 +649,20 @@ export function createAlerts(options) {
       }
 
       applyTitle(unreadCount);
-      return { unreadCount: unreadCount, fired: fired, alerts: enabled === true };
+      /*
+       * `sound` settles when every chime this pass attempted has finished
+       * trying. Nothing in the app awaits it - the poll moves on immediately.
+       * It exists so that a test can prove a chime actually happened, and so
+       * that every promise has a handler attached: sound() already swallows
+       * its own failures, and this guarantees no unhandled rejection can
+       * escape even if that ever changed.
+       */
+      return {
+        unreadCount: unreadCount,
+        fired: fired,
+        alerts: enabled === true,
+        sound: Promise.all(chimes.map((p) => p.then((v) => v, () => false)))
+      };
     },
 
     /* Sign-out, or teardown. The title goes back to what it was - a phantom
