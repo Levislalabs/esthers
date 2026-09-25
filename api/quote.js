@@ -30,6 +30,7 @@
 'use strict';
 
 const L = require('./_lib.js');
+const QL = require('./_quote-limit.js');
 
 function bad(res, status, message, extra) {
   return res.status(status).json(Object.assign({ ok: false, error: message }, extra || {}));
@@ -68,6 +69,11 @@ module.exports = async function handler(req, res) {
     return res.status(503).json({ ok: false, notConfigured: true,
       error: 'Quote email delivery is not configured on this deployment.' });
   }
+
+  // Every POST that could send an email counts, valid or not, before any
+  // work is done. See _quote-limit.js for the two layers and why it fails open.
+  const limit = await QL.check(req, 'quote');
+  if (limit.limited) return QL.reject(res, limit);
 
   let body = req.body;
   if (typeof body === 'string') {

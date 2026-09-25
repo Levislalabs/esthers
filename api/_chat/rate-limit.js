@@ -84,7 +84,20 @@ const RULES = {
    * it writes nothing. Reaching this bucket requires already owning a stored
    * message, which itself had to pass the ordinary limits.
    */
-  replay_uid:  { limit: 120, windowMs:     60 * 1000 }
+  replay_uid:  { limit: 120, windowMs:     60 * 1000 },
+
+  /*
+   * THE QUOTE FORM, not chat. It borrows this limiter (see api/_quote-limit.js)
+   * rather than growing a second one, under its own scopes so the two never
+   * share a bucket.
+   *
+   * quote_ip is a sent quote email, per hashed IP. A real customer sends one,
+   * perhaps two; the headroom is for an office where several people share an
+   * address. upload_ip is permission to upload files, asked once per quote
+   * that has attachments and again on a retry, so it is looser.
+   */
+  quote_ip:    { limit: 10, windowMs: 60 * 60 * 1000 },
+  upload_ip:   { limit: 20, windowMs: 60 * 60 * 1000 }
 };
 
 class RateLimitError extends Error {

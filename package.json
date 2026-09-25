@@ -5,7 +5,8 @@
   "scripts": {
     "test:firestore-rules": "firebase emulators:exec --only firestore --project demo-esthers-rules \"node --test tests/firestore-rules/rules.test.mjs\"",
     "test:chat-api": "firebase emulators:exec --only firestore --project demo-esthers-chat \"node --test tests/chat-api/*.test.mjs\"",
-    "test": "npm run test:firestore-rules && npm run test:chat-api"
+    "test:quote-api": "node --test tests/quote-api/*.test.mjs",
+    "test": "npm run test:quote-api && npm run test:firestore-rules && npm run test:chat-api"
   },
   "dependencies": {
     "@vercel/blob": "^2.8.0",

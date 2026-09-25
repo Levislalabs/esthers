@@ -94,6 +94,26 @@ A public upload endpoint is an invitation, so:
   really is what its extension claims. A Windows executable renamed `.jpg`
   uploads fine and is then refused — the quote does not send.
 
+- **Both endpoints are rate limited per address** (`api/_quote-limit.js`).
+  Without this, anybody could POST `/api/quote` in a loop and send email
+  through the Resend account until the inbox flooded and the sending quota ran
+  out. Limits: **10 quote emails** and **20 upload permissions** per address
+  per hour. Every POST counts, valid or not. Over the limit the customer gets
+  a 429 and a plain sentence asking them to wait or email/phone instead; the
+  form already shows it. `GET /api/quote` (the readiness probe) is never
+  limited.
+
+  There are two layers. An **in-memory** counter is always on and needs no
+  setup, but each server instance keeps its own, so on its own it only stops
+  the simple case. The **shared** counter reuses the chat system's Firestore
+  limiter (`api/_chat/rate-limit.js`, scopes `quote_ip` / `upload_ip`) and
+  holds across instances — it switches on by itself once the chat environment
+  variables below are set. Unlike chat, the quote limiter **fails open**: if
+  Firestore is unconfigured or erroring, the request goes through (the
+  in-memory layer still applies) and a reason token is logged. Losing a real
+  customer's quote is the worse failure. No raw address is stored or logged
+  in either layer.
+
 The one thing this deliberately does *not* do is make customers create
 accounts, or track them.
 
@@ -186,6 +206,7 @@ them with everything else. Nothing extra to do.
 | `QUOTE_TO` | Comma-separated recipients. **This is the recipient setting** — there is no other. |
 | `QUOTE_FROM` | Optional sender. Unset uses the provider's test address, which needs no DNS changes. |
 | `BLOB_READ_WRITE_TOKEN` | Created automatically by Vercel when a Blob store is connected. Never set by hand, never in the repository. |
+| `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`, `CHAT_RATE_LIMIT_SECRET` | Optional here — they belong to the chat system (see `CHAT_API.md`). When all four are set, the quote rate limit becomes shared across server instances. Unset, it runs per instance only. |
 
 `GET /api/quote` reports readiness as two booleans — `ready` (mailbox) and
 `uploads` (storage) — and never anything about the values themselves.

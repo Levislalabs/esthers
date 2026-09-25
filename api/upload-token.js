@@ -23,6 +23,7 @@
 'use strict';
 
 const L = require('./_lib.js');
+const QL = require('./_quote-limit.js');
 
 function bad(res, status, message) {
   return res.status(status).json({ ok: false, error: message });
@@ -38,6 +39,10 @@ module.exports = async function handler(req, res) {
     return res.status(503).json({ ok: false, notConfigured: true,
       error: 'File uploads are not configured on this deployment.' });
   }
+
+  // Counted before any upload permission is issued. See _quote-limit.js.
+  const limit = await QL.check(req, 'upload');
+  if (limit.limited) return QL.reject(res, limit);
 
   let body = req.body;
   if (typeof body === 'string') {
