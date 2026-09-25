@@ -18,7 +18,10 @@ import {
   db, handlerFor, call, wipe, uuid, anonToken, passwordToken, seedStaff,
   getConversation, countMessages, Timestamp
 } from './helpers.mjs';
-import { fileURLToPath as __rootFileURLToPath } from 'node:url';
+import { fileURLToPath as __rootFileURLToPath, pathToFileURL as __rootPathToFileURL } from 'node:url';
+/* import() takes a URL, not a filesystem path: on Windows "D:/..." is read
+   as a URL with the scheme "d:" and refused (ERR_UNSUPPORTED_ESM_URL_SCHEME). */
+const moduleUrl = (p) => __rootPathToFileURL(p).href;
 
 /* Repository root, from this file's own location - portable across
    machines and operating systems. Forward slashes on Windows too, which
@@ -739,7 +742,7 @@ describe('every gate holds on its own, not only as a pair', () => {
     /* Imported in a test rather than in the describe body: on Node v22 a
        throw up there marks the suite not-ok, runs none of it, and still exits
        0 - so the assertion would be attached to nothing. */
-    S = (await import(ROOT + '/api/_chat/service.js')).default;
+    S = (await import(moduleUrl(ROOT + '/api/_chat/service.js'))).default;
     assert.equal(typeof S.markConversationRead, 'function');
     assert.equal(typeof S.sendCustomerMessage, 'function');
   });
@@ -752,7 +755,7 @@ describe('every gate holds on its own, not only as a pair', () => {
      * at all. That branch is the authoritative one: it is what makes two
      * SIMULTANEOUS identical sends safe, and it is only observable from here.
      */
-    S = S || (await import(ROOT + '/api/_chat/service.js')).default;
+    S = S || (await import(moduleUrl(ROOT + '/api/_chat/service.js'))).default;
     const id = await conversationAt('main');
     const clientMessageId = uuid();
 
@@ -779,7 +782,7 @@ describe('every gate holds on its own, not only as a pair', () => {
      * The route authorises at the door, then this re-checks. A transfer can
      * land in the gap. Calling the service directly IS that gap.
      */
-    S = S || (await import(ROOT + '/api/_chat/service.js')).default;
+    S = S || (await import(moduleUrl(ROOT + '/api/_chat/service.js'))).default;
     const id = await conversationAt('main');
     await db().collection('chatConversations').doc(id)
       .update({ locationId: 'specialty' });        /* the transfer lands */
@@ -807,7 +810,7 @@ describe('every gate holds on its own, not only as a pair', () => {
 
   test('the version arithmetic is a pure max/min, testable without a database',
     async () => {
-      const A = (await import(ROOT + '/api/_chat/attention.js')).default;
+      const A = (await import(moduleUrl(ROOT + '/api/_chat/attention.js'))).default;
       const at = (a, r) => ({ staffAttentionVersion: a, staffReadVersion: r });
 
       /* Never more than was seen. */

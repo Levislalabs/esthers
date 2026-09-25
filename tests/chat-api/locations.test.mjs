@@ -19,7 +19,10 @@ import {
   db, handlerFor, call, wipe, uuid, anonToken, passwordToken, seedStaff,
   countMessages, getConversation, Timestamp
 } from './helpers.mjs';
-import { fileURLToPath as __rootFileURLToPath } from 'node:url';
+import { fileURLToPath as __rootFileURLToPath, pathToFileURL as __rootPathToFileURL } from 'node:url';
+/* import() takes a URL, not a filesystem path: on Windows "D:/..." is read
+   as a URL with the scheme "d:" and refused (ERR_UNSUPPORTED_ESM_URL_SCHEME). */
+const moduleUrl = (p) => __rootPathToFileURL(p).href;
 
 /* Repository root, from this file's own location - portable across
    machines and operating systems. Forward slashes on Windows too, which
@@ -702,7 +705,7 @@ describe('a misrouted conversation can be handed to the other shop', () => {
 
 describe('client and server describe the same three shops', () => {
   test('the canonical ids match exactly', async () => {
-    const server = await import(ROOT + '/api/_chat/locations.js');
+    const server = await import(moduleUrl(ROOT + '/api/_chat/locations.js'));
     const clientSrc = readFileSync(ROOT + '/assets/js/chat-locations.js', 'utf8');
     for (const id of server.default.LOCATION_IDS) {
       assert.ok(clientSrc.indexOf("'" + id + "'") !== -1, id + ' missing client-side');
@@ -715,7 +718,7 @@ describe('client and server describe the same three shops', () => {
     /* "Main Branch" and "Specialty Shop" were rejected: a customer
        skim-reading two vague labels sends the curved scupper to the wrong
        shop, and so does a staff member glancing at an inbox row. */
-    const server = (await import(ROOT + '/api/_chat/locations.js')).default;
+    const server = (await import(moduleUrl(ROOT + '/api/_chat/locations.js'))).default;
     assert.equal(server.LABELS.main, 'Main Shop - 1st Avenue');
     assert.equal(server.LABELS.specialty, 'Specialty Shop - Keith Street');
     assert.equal(server.LABELS.unassigned, 'Not Sure / Unassigned');
@@ -784,7 +787,7 @@ describe('every gate holds on its own, not only as a pair', () => {
     /* Imported in a test rather than in the describe body: on Node v22 a
        throw up there marks the suite not-ok, runs none of it, and still exits
        0 - so the assertion would be attached to nothing. */
-    S = (await import(ROOT + '/api/_chat/service.js')).default;
+    S = (await import(moduleUrl(ROOT + '/api/_chat/service.js'))).default;
     assert.equal(typeof S.loadConversationForStaff, 'function');
     assert.equal(typeof S.sendStaffMessage, 'function');
     assert.equal(typeof S.closeConversation, 'function');
@@ -794,7 +797,7 @@ describe('every gate holds on its own, not only as a pair', () => {
 
   test('THE DOOR: loadConversationForStaff refuses the other shop by itself',
     async () => {
-      S = S || (await import(ROOT + '/api/_chat/service.js')).default;
+      S = S || (await import(moduleUrl(ROOT + '/api/_chat/service.js'))).default;
       const id = await conversationAt('specialty');
       await assert.rejects(
         () => S.loadConversationForStaff(db(), mainOnly(), id),
@@ -819,7 +822,7 @@ describe('every gate holds on its own, not only as a pair', () => {
        * runs the conversation is at Keith Street. Calling the service
        * directly is that race, deterministically.
        */
-      S = S || (await import(ROOT + '/api/_chat/service.js')).default;
+      S = S || (await import(moduleUrl(ROOT + '/api/_chat/service.js'))).default;
       const id = await conversationAt('main');
       await db().collection('chatConversations').doc(id)
         .update({ locationId: 'specialty' });      /* the transfer lands */
@@ -837,7 +840,7 @@ describe('every gate holds on its own, not only as a pair', () => {
     });
 
   test('and so is a close', async () => {
-    S = S || (await import(ROOT + '/api/_chat/service.js')).default;
+    S = S || (await import(moduleUrl(ROOT + '/api/_chat/service.js'))).default;
     const id = await conversationAt('main');
     await db().collection('chatConversations').doc(id)
       .update({ locationId: 'specialty' });
@@ -858,7 +861,7 @@ describe('every gate holds on its own, not only as a pair', () => {
     /* Read straight off the function, so a fallback added in ANY branch of
        staffLocations() shows up here rather than only in whichever branch an
        end-to-end test happens to walk. */
-    const L = (await import(ROOT + '/api/_chat/locations.js')).default;
+    const L = (await import(moduleUrl(ROOT + '/api/_chat/locations.js'))).default;
     assert.deepEqual(L.staffLocations({ role: 'admin', locations: [] }), []);
     assert.deepEqual(L.staffLocations({ role: 'admin', locations: ['nonsense'] }), []);
     assert.deepEqual(L.staffLocations({ role: 'admin', locations: 'main' }), []);

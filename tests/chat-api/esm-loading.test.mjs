@@ -377,8 +377,14 @@ describe('the security model is untouched by this change', () => {
   });
 
   test('the four-field message contract is unchanged', () => {
-    const build = S.slice(S.indexOf('function buildMessage'));
-    const body = build.slice(0, build.indexOf('}\n'));
+    /* Line endings normalised first: on a Windows checkout service.js has
+       CRLF, '}\n' never matches, and the slice below would run to the end of
+       the file - finding fields that belong to other functions. */
+    const src = S.replace(/\r\n/g, '\n');
+    const build = src.slice(src.indexOf('function buildMessage'));
+    const end = build.indexOf('}\n');
+    assert.ok(end > 0, 'the end of buildMessage must be found, not the end of the file');
+    const body = build.slice(0, end);
     for (const field of ['conversationId', 'createdAt', 'senderType', 'body']) {
       assert.ok(body.includes(field + ':'), field);
     }
