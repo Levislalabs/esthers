@@ -13,7 +13,12 @@
  */
 
 import { createRequire } from 'module';
-const require = createRequire('/home/user/esthers/');
+import { fileURLToPath as __rootFileURLToPath } from 'node:url';
+/* Repository root, from this file's own location - portable across
+   machines and operating systems. Forward slashes on Windows too, which
+   Node's fs, require and pathToFileURL all accept. */
+const ROOT = __rootFileURLToPath(new URL('../../', import.meta.url)).replace(/\\/g, '/').replace(/\/$/, '');
+const require = createRequire(ROOT + '/');
 
 process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
 

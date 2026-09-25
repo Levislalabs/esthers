@@ -31,9 +31,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { codeOnly, codeAndStrings } from './fixtures/source-view.mjs';
+import { fileURLToPath as __rootFileURLToPath } from 'node:url';
+/* Repository root, from this file's own location - portable across
+   machines and operating systems. Forward slashes on Windows too, which
+   Node's fs, require and pathToFileURL all accept. */
+const ROOT = __rootFileURLToPath(new URL('../../', import.meta.url)).replace(/\\/g, '/').replace(/\/$/, '');
 
-const SRC_PATH = '/home/user/esthers/assets/js/chat-app-check.js';
-const STUB_PATH = '/home/user/esthers/tests/chat-api/fixtures/firebase-sdk-stub.mjs';
+const SRC_PATH = ROOT + '/assets/js/chat-app-check.js';
+const STUB_PATH = ROOT + '/tests/chat-api/fixtures/firebase-sdk-stub.mjs';
 const SRC = readFileSync(SRC_PATH, 'utf8');
 
 /* The real values, written out here independently of the module so a silent

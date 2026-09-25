@@ -7,12 +7,17 @@ import {
   db, handlerFor, call, wipe, uuid, anonToken, passwordToken, seedStaff,
   countMessages, getConversation
 } from './helpers.mjs';
+import { fileURLToPath as __rootFileURLToPath } from 'node:url';
+/* Repository root, from this file's own location - portable across
+   machines and operating systems. Forward slashes on Windows too, which
+   Node's fs, require and pathToFileURL all accept. */
+const ROOT = __rootFileURLToPath(new URL('../../', import.meta.url)).replace(/\\/g, '/').replace(/\/$/, '');
 
-const START = '/home/user/esthers/api/chat/start.js';
-const CONVERSATIONS = '/home/user/esthers/api/admin/chat/conversations.js';
-const MESSAGES = '/home/user/esthers/api/admin/chat/messages.js';
-const STAFF_SEND = '/home/user/esthers/api/admin/chat/send.js';
-const CLOSE = '/home/user/esthers/api/admin/chat/close.js';
+const START = ROOT + '/api/chat/start.js';
+const CONVERSATIONS = ROOT + '/api/admin/chat/conversations.js';
+const MESSAGES = ROOT + '/api/admin/chat/messages.js';
+const STAFF_SEND = ROOT + '/api/admin/chat/send.js';
+const CLOSE = ROOT + '/api/admin/chat/close.js';
 
 const ADMIN_UID = 'staff-admin-1';
 const INACTIVE_UID = 'staff-inactive-1';

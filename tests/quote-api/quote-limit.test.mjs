@@ -12,6 +12,7 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'module';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const QL = require('../../api/_quote-limit.js');
@@ -224,7 +225,11 @@ const L = require('../../api/_lib.js');
    own lazy require('@vercel/blob') receives it. It records every call, so a
    test can prove what WOULD have been authorised and that nothing was
    authorised at all when a request is refused. No network is touched. */
-const BLOB_PATH = require.resolve('@vercel/blob', { paths: [new URL('../../api/', import.meta.url).pathname] });
+/* fileURLToPath, not URL.pathname: on Windows .pathname gives
+   "/D:/Esthers%20Sheet%20Metal/..." - percent-encoded, with a leading slash -
+   which is not a filesystem path, so resolution fails there. */
+const API_DIR = fileURLToPath(new URL('../../api/', import.meta.url));
+const BLOB_PATH = require.resolve('@vercel/blob', { paths: [API_DIR] });
 function installFakeBlob() {
   const calls = { issue: [], presign: [], head: [] };
   const saved = require.cache[BLOB_PATH];

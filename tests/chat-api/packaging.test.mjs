@@ -25,10 +25,14 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'module';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import { fileURLToPath as __rootFileURLToPath } from 'node:url';
+/* Repository root, from this file's own location - portable across
+   machines and operating systems. Forward slashes on Windows too, which
+   Node's fs, require and pathToFileURL all accept. */
+const ROOT = __rootFileURLToPath(new URL('../../', import.meta.url)).replace(/\\/g, '/').replace(/\/$/, '');
 
-const require = createRequire('/home/user/esthers/');
-const FB = require('/home/user/esthers/api/_chat/firebase-admin.js');
-const ROOT = '/home/user/esthers';
+const require = createRequire(ROOT + '/');
+const FB = require(ROOT + '/api/_chat/firebase-admin.js');
 
 /* ================================================== THE MANIFEST AND LOCK */
 describe('firebase-admin is a production dependency', () => {
@@ -58,8 +62,9 @@ describe('firebase-admin is a production dependency', () => {
   });
 
   test('npm resolves it with devDependencies omitted', () => {
+    /* On Windows npm is npm.cmd, which Node will only launch through a shell. */
     const out = execFileSync('npm', ['ls', '--omit=dev', 'firebase-admin'],
-      { cwd: ROOT, encoding: 'utf8' });
+      { cwd: ROOT, encoding: 'utf8', shell: process.platform === 'win32' });
     assert.match(out, /firebase-admin@14\.3\.0/);
     assert.equal(out.includes('UNMET'), false);
     assert.equal(out.includes('invalid'), false);
@@ -72,7 +77,8 @@ describe('the modular entry points resolve', () => {
     for (const spec of ['firebase-admin/app', 'firebase-admin/firestore',
       'firebase-admin/auth']) {
       const resolved = require.resolve(spec);
-      assert.ok(resolved.includes('node_modules/firebase-admin'), spec);
+      /* Separator-normalised: require.resolve returns backslashes on Windows. */
+      assert.ok(resolved.replace(/\\/g, '/').includes('node_modules/firebase-admin'), spec);
       assert.ok(fs.existsSync(resolved), spec + ' resolved to a missing file');
     }
   });

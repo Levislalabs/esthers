@@ -31,13 +31,17 @@ import {
   db, makeReq, makeRes, wipe, uuid, anonToken, passwordToken, seedStaff,
   firebaseAuthError, RATE_SECRET
 } from './helpers.mjs';
+import { fileURLToPath as __rootFileURLToPath } from 'node:url';
+/* Repository root, from this file's own location - portable across
+   machines and operating systems. Forward slashes on Windows too, which
+   Node's fs, require and pathToFileURL all accept. */
+const ROOT = __rootFileURLToPath(new URL('../../', import.meta.url)).replace(/\\/g, '/').replace(/\/$/, '');
 
-const require = createRequire('/home/user/esthers/');
-const ROOT = '/home/user/esthers';
-const STAGES = require('/home/user/esthers/api/_chat/stages.js');
-const AUTH = require('/home/user/esthers/api/_chat/auth.js');
-const FB = require('/home/user/esthers/api/_chat/firebase-admin.js');
-const START = '/home/user/esthers/api/chat/start.js';
+const require = createRequire(ROOT + '/');
+const STAGES = require(ROOT + '/api/_chat/stages.js');
+const AUTH = require(ROOT + '/api/_chat/auth.js');
+const FB = require(ROOT + '/api/_chat/firebase-admin.js');
+const START = ROOT + '/api/chat/start.js';
 
 /* Sentinels. If any of these ever reaches a log line, the test fails. */
 const FAKE_TOKEN = 'SUPER_SECRET_FAKE_ID_TOKEN_DO_NOT_LOG';
@@ -324,9 +328,9 @@ describe('each stage of an authenticated request names itself', () => {
 /* ===================== A 4xx MUST SURVIVE LOSING instanceof =========== */
 describe('a classified error is recognised by tag, not only by instanceof', () => {
   test('every chat error class carries a stable kind marker', () => {
-    const V = require('/home/user/esthers/api/_chat/validation.js');
-    const S = require('/home/user/esthers/api/_chat/service.js');
-    const RL = require('/home/user/esthers/api/_chat/rate-limit.js');
+    const V = require(ROOT + '/api/_chat/validation.js');
+    const S = require(ROOT + '/api/_chat/service.js');
+    const RL = require(ROOT + '/api/_chat/rate-limit.js');
     assert.equal(new AUTH.AuthError(401, 'x', 'y').chatErrorKind, 'auth');
     assert.equal(new V.ValidationError('x', 'y').chatErrorKind, 'validation');
     assert.equal(new S.ServiceError(404, 'x', 'y').chatErrorKind, 'service');
@@ -337,7 +341,7 @@ describe('a classified error is recognised by tag, not only by instanceof', () =
     /* If this file were ever loaded twice, instanceof would stop matching
        and a well-formed 401 would become a 500 unknown_error - which is
        indistinguishable from the fault being diagnosed here. */
-    const H = require('/home/user/esthers/api/_chat/handler.js');
+    const H = require(ROOT + '/api/_chat/handler.js');
     const foreign = new Error('Sign-in is required.');
     foreign.name = 'AuthError';
     foreign.status = 401;
@@ -352,7 +356,7 @@ describe('a classified error is recognised by tag, not only by instanceof', () =
   });
 
   test('an unknown kind marker is ignored, not trusted', () => {
-    const H = require('/home/user/esthers/api/_chat/handler.js');
+    const H = require(ROOT + '/api/_chat/handler.js');
     const fake = new Error('x');
     fake.chatErrorKind = 'admin';
     assert.equal(H.kindOf(fake), null);

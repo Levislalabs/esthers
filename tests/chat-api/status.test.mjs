@@ -24,11 +24,16 @@ import {
   db, handlerFor, call, wipe, uuid, anonToken, passwordToken, seedStaff,
   getConversation, APP_CHECK_OK, APP_CHECK_BAD
 } from './helpers.mjs';
+import { fileURLToPath as __rootFileURLToPath } from 'node:url';
+/* Repository root, from this file's own location - portable across
+   machines and operating systems. Forward slashes on Windows too, which
+   Node's fs, require and pathToFileURL all accept. */
+const ROOT = __rootFileURLToPath(new URL('../../', import.meta.url)).replace(/\\/g, '/').replace(/\/$/, '');
 
-const START = '/home/user/esthers/api/chat/start.js';
-const SEND = '/home/user/esthers/api/chat/send.js';
-const STATUS = '/home/user/esthers/api/chat/status.js';
-const CLOSE = '/home/user/esthers/api/admin/chat/close.js';
+const START = ROOT + '/api/chat/start.js';
+const SEND = ROOT + '/api/chat/send.js';
+const STATUS = ROOT + '/api/chat/status.js';
+const CLOSE = ROOT + '/api/admin/chat/close.js';
 
 const CUST_A = 'anon-customer-a';
 const CUST_B = 'anon-customer-b';

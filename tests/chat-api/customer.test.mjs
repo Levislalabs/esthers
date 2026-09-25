@@ -6,9 +6,14 @@ import {
   db, handlerFor, call, wipe, uuid, anonToken, passwordToken,
   countMessages, getConversation, RATE_SECRET
 } from './helpers.mjs';
+import { fileURLToPath as __rootFileURLToPath } from 'node:url';
+/* Repository root, from this file's own location - portable across
+   machines and operating systems. Forward slashes on Windows too, which
+   Node's fs, require and pathToFileURL all accept. */
+const ROOT = __rootFileURLToPath(new URL('../../', import.meta.url)).replace(/\\/g, '/').replace(/\/$/, '');
 
-const START = '/home/user/esthers/api/chat/start.js';
-const SEND = '/home/user/esthers/api/chat/send.js';
+const START = ROOT + '/api/chat/start.js';
+const SEND = ROOT + '/api/chat/send.js';
 
 const CUST_A = 'anon-customer-a';
 const CUST_B = 'anon-customer-b';
@@ -301,8 +306,8 @@ describe('idempotency', () => {
     /* start() mints a new conversation id each call, so two starts are two
        conversations by design - what must hold is that the derived message id
        is deterministic from (conversationId, clientMessageId). */
-    const S = (await import('node:module')).createRequire('/home/user/esthers/')
-      ('/home/user/esthers/api/_chat/service.js');
+    const S = (await import('node:module')).createRequire(ROOT + '/')
+      (ROOT + '/api/_chat/service.js');
     const a = S.messageId('conv1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
     const b = S.messageId('conv1', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
     const c = S.messageId('conv2', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');

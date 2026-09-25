@@ -17,10 +17,15 @@ import {
   db, handlerFor, call, wipe, uuid, anonToken, passwordToken, seedStaff,
   RATE_SECRET
 } from './helpers.mjs';
+import { fileURLToPath as __rootFileURLToPath } from 'node:url';
+/* Repository root, from this file's own location - portable across
+   machines and operating systems. Forward slashes on Windows too, which
+   Node's fs, require and pathToFileURL all accept. */
+const ROOT = __rootFileURLToPath(new URL('../../', import.meta.url)).replace(/\\/g, '/').replace(/\/$/, '');
 
-const require = createRequire('/home/user/esthers/');
-const RL = require('/home/user/esthers/api/_chat/rate-limit.js');
-const FB = require('/home/user/esthers/api/_chat/firebase-admin.js');
+const require = createRequire(ROOT + '/');
+const RL = require(ROOT + '/api/_chat/rate-limit.js');
+const FB = require(ROOT + '/api/_chat/firebase-admin.js');
 
 /* assert.throws() returns nothing, so it cannot be used to inspect the error
    that was raised. This returns it. Async-aware, because initAdmin() became
@@ -30,11 +35,11 @@ async function caught(fn) {
   assert.fail('expected this to throw, and it did not');
 }
 
-const START = '/home/user/esthers/api/chat/start.js';
-const SEND = '/home/user/esthers/api/chat/send.js';
-const CONVERSATIONS = '/home/user/esthers/api/admin/chat/conversations.js';
-const STAFF_SEND = '/home/user/esthers/api/admin/chat/send.js';
-const CLOSE = '/home/user/esthers/api/admin/chat/close.js';
+const START = ROOT + '/api/chat/start.js';
+const SEND = ROOT + '/api/chat/send.js';
+const CONVERSATIONS = ROOT + '/api/admin/chat/conversations.js';
+const STAFF_SEND = ROOT + '/api/admin/chat/send.js';
+const CLOSE = ROOT + '/api/admin/chat/close.js';
 
 const UID_A = 'anon-limit-a';
 const UID_B = 'anon-limit-b';
@@ -497,7 +502,7 @@ describe('fail closed without Firebase credentials', () => {
        value guards nothing. */
     assert.equal(FB.EXPECTED_PROJECT_ID, 'esther-s-chat');
     const source = require('fs')
-      .readFileSync('/home/user/esthers/api/_chat/firebase-admin.js', 'utf8');
+      .readFileSync(ROOT + '/api/_chat/firebase-admin.js', 'utf8');
     assert.match(source, /const EXPECTED_PROJECT_ID = 'esther-s-chat';/);
   });
 });

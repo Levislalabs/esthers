@@ -28,12 +28,17 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'module';
 import crypto from 'node:crypto';
 import { db, handlerFor, makeReq, makeRes, wipe, uuid, anonToken } from './helpers.mjs';
+import { fileURLToPath as __rootFileURLToPath } from 'node:url';
+/* Repository root, from this file's own location - portable across
+   machines and operating systems. Forward slashes on Windows too, which
+   Node's fs, require and pathToFileURL all accept. */
+const ROOT = __rootFileURLToPath(new URL('../../', import.meta.url)).replace(/\\/g, '/').replace(/\/$/, '');
 
-const require = createRequire('/home/user/esthers/');
-const FB = require('/home/user/esthers/api/_chat/firebase-admin.js');
+const require = createRequire(ROOT + '/');
+const FB = require(ROOT + '/api/_chat/firebase-admin.js');
 
-const START = '/home/user/esthers/api/chat/start.js';
-const CONVERSATIONS = '/home/user/esthers/api/admin/chat/conversations.js';
+const START = ROOT + '/api/chat/start.js';
+const CONVERSATIONS = ROOT + '/api/admin/chat/conversations.js';
 
 /* A throwaway keypair, generated here and never stored. Structurally a real
    PEM, so the "valid shape" paths are exercised honestly rather than against
@@ -488,7 +493,7 @@ describe('no diagnostic ever contains anything sensitive', () => {
 
     let checked = 0;
     for (const name of files) {
-      const source = fs.readFileSync('/home/user/esthers/api/_chat/' + name, 'utf8');
+      const source = fs.readFileSync(ROOT + '/api/_chat/' + name, 'utf8');
       /* Every console.* call, including ones spanning two lines. */
       const calls = source.match(/console\.[a-z]+\([\s\S]{0,400}?\);/g) || [];
       for (const call of calls) {
@@ -501,7 +506,7 @@ describe('no diagnostic ever contains anything sensitive', () => {
     }
     assert.ok(checked >= 3, 'expected to have inspected some log calls, saw ' + checked);
 
-    const handler = fs.readFileSync('/home/user/esthers/api/_chat/handler.js', 'utf8');
+    const handler = fs.readFileSync(ROOT + '/api/_chat/handler.js', 'utf8');
     assert.ok(handler.includes('classifyRuntimeError'),
       'the runtime path must go through the allow-list');
     assert.ok(handler.includes('safeReason'), 'the config path must too');

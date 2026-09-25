@@ -32,12 +32,17 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { codeOnly, codeAndStrings } from './fixtures/source-view.mjs';
+import { fileURLToPath as __rootFileURLToPath } from 'node:url';
+/* Repository root, from this file's own location - portable across
+   machines and operating systems. Forward slashes on Windows too, which
+   Node's fs, require and pathToFileURL all accept. */
+const ROOT = __rootFileURLToPath(new URL('../../', import.meta.url)).replace(/\\/g, '/').replace(/\/$/, '');
 
-const CUSTOMER_PATH = '/home/user/esthers/assets/js/chat-customer.js';
-const APP_CHECK_PATH = '/home/user/esthers/assets/js/chat-app-check.js';
-const WIDGET_PATH = '/home/user/esthers/assets/js/chat.js';
-const LOCATIONS_PATH = '/home/user/esthers/assets/js/chat-locations.js';
-const STUB_PATH = '/home/user/esthers/tests/chat-api/fixtures/firebase-sdk-full-stub.mjs';
+const CUSTOMER_PATH = ROOT + '/assets/js/chat-customer.js';
+const APP_CHECK_PATH = ROOT + '/assets/js/chat-app-check.js';
+const WIDGET_PATH = ROOT + '/assets/js/chat.js';
+const LOCATIONS_PATH = ROOT + '/assets/js/chat-locations.js';
+const STUB_PATH = ROOT + '/tests/chat-api/fixtures/firebase-sdk-full-stub.mjs';
 
 const CUSTOMER_SRC = readFileSync(CUSTOMER_PATH, 'utf8');
 const APP_CHECK_SRC = readFileSync(APP_CHECK_PATH, 'utf8');
@@ -645,7 +650,7 @@ describe('the realtime listener', () => {
        listener whose request.query.limit is null. Both halves matter. */
     const { mod } = await load();
     assert.equal(mod._internals.TRANSCRIPT_LIMIT, 200);
-    const rules = readFileSync('/home/user/esthers/firestore.rules', 'utf8');
+    const rules = readFileSync(ROOT + '/firestore.rules', 'utf8');
     assert.match(rules, /function maxMessageQuery\(\) \{ return 200; \}/);
     assert.match(rules, /request\.query\.limit != null/);
   });
@@ -659,7 +664,7 @@ describe('the realtime listener', () => {
      * every customer, so it is pinned here rather than left to memory.
      */
     const indexes = JSON.parse(
-      readFileSync('/home/user/esthers/firestore.indexes.json', 'utf8'));
+      readFileSync(ROOT + '/firestore.indexes.json', 'utf8'));
     const desc = indexes.indexes.find((i) =>
       i.collectionGroup === 'chatMessages'
       && i.queryScope === 'COLLECTION'
@@ -676,7 +681,7 @@ describe('the realtime listener', () => {
        ASC index to "tidy up" after the client switched to DESC would break
        the staff inbox. */
     const indexes = JSON.parse(
-      readFileSync('/home/user/esthers/firestore.indexes.json', 'utf8'));
+      readFileSync(ROOT + '/firestore.indexes.json', 'utf8'));
     const asc = indexes.indexes.find((i) =>
       i.collectionGroup === 'chatMessages'
       && i.fields.length === 2
@@ -684,13 +689,13 @@ describe('the realtime listener', () => {
       && i.fields[1].fieldPath === 'createdAt' && i.fields[1].order === 'ASCENDING');
     assert.ok(asc, 'the ASC index must stay');
 
-    const service = readFileSync('/home/user/esthers/api/_chat/service.js', 'utf8');
+    const service = readFileSync(ROOT + '/api/_chat/service.js', 'utf8');
     assert.match(service, /\.orderBy\('createdAt', 'asc'\)/,
       'and the server code that needs it is still there');
   });
 
   test('firestore.indexes.json is valid JSON in the expected shape', () => {
-    const raw = readFileSync('/home/user/esthers/firestore.indexes.json', 'utf8');
+    const raw = readFileSync(ROOT + '/firestore.indexes.json', 'utf8');
     const parsed = JSON.parse(raw);
     assert.ok(Array.isArray(parsed.indexes));
     assert.ok(Array.isArray(parsed.fieldOverrides));
@@ -1309,7 +1314,7 @@ describe('regressions', () => {
      * visitor sees today, because that button is disabled whenever the
      * composer is empty.
      */
-    const css = readFileSync('/home/user/esthers/assets/css/chat.css', 'utf8');
+    const css = readFileSync(ROOT + '/assets/css/chat.css', 'utf8');
     const rules = css.split('\n')
       .map((l, i) => ({ l: l.trim(), n: i + 1 }))
       .filter((x) => x.l.includes('.chat__send:disabled') && !x.l.startsWith('*'));
@@ -1327,7 +1332,7 @@ describe('regressions', () => {
      * and nothing happened - the start form and the composer were on screen
      * together, asking for the same message twice.
      */
-    const css = readFileSync('/home/user/esthers/assets/css/chat.css', 'utf8');
+    const css = readFileSync(ROOT + '/assets/css/chat.css', 'utf8');
     assert.match(css, /\.chat__form\[hidden\] \{\s*display: none;/);
   });
 
@@ -1366,7 +1371,7 @@ describe('regressions', () => {
       assert.equal(stub.calls.limit[0].n, 200);
       assert.equal(mod._internals.TRANSCRIPT_LIMIT, 200);
       /* The rules cap it, independently of this client. */
-      const rules = readFileSync('/home/user/esthers/firestore.rules', 'utf8');
+      const rules = readFileSync(ROOT + '/firestore.rules', 'utf8');
       assert.match(rules, /function maxMessageQuery\(\) \{ return 200; \}/);
     } finally {
       fetcher.restore();
@@ -3083,7 +3088,7 @@ describe('the review harness', () => {
         'gallery/index.html', 'materials/index.html', 'quote/index.html',
         'services/index.html'
       ]) {
-        const html = readFileSync('/home/user/esthers/' + page, 'utf8');
+        const html = readFileSync(ROOT + '/' + page, 'utf8');
         assert.equal(html.includes('chat-customer'), false,
           page + ' must not load the transport');
       }
@@ -3184,14 +3189,14 @@ describe('the widget, with the gate shut', () => {
   });
 
   test('the mobile composer keeps the 14px that stops iOS zooming', () => {
-    const css = readFileSync('/home/user/esthers/assets/css/chat.css', 'utf8');
+    const css = readFileSync(ROOT + '/assets/css/chat.css', 'utf8');
     const text = css.slice(css.indexOf('.chat__text {'), css.indexOf('.chat__text--area'));
     assert.match(text, /font-size: 14px;/);
     assert.match(text, /height: 44px;/);       /* the touch target the widget already uses */
   });
 
   test('the new CSS introduces no colour of its own', () => {
-    const css = readFileSync('/home/user/esthers/assets/css/chat.css', 'utf8');
+    const css = readFileSync(ROOT + '/assets/css/chat.css', 'utf8');
     const added = css.slice(css.indexOf('   LIVE CHAT'));
     assert.ok(added.length > 500, 'found the live section');
     /* Hex literals and rgb() would mean a new colour outside the token set.
@@ -3952,7 +3957,7 @@ describe('the chat client is loaded by an explicit, source-controlled version', 
        * old build back. These headers are what keep the loader honest.
        */
       const cfg = JSON.parse(
-        readFileSync('/home/user/esthers/vercel.json', 'utf8'));
+        readFileSync(ROOT + '/vercel.json', 'utf8'));
       const rules = cfg.headers || [];
       const cacheOf = (source) => {
         const rule = rules.find((r) => r.source === source);
@@ -4012,7 +4017,7 @@ describe('the chat client is loaded by an explicit, source-controlled version', 
       'gallery/index.html', 'materials/index.html', 'quote/index.html',
       'services/index.html'];
     for (const page of pages) {
-      const html = readFileSync('/home/user/esthers/' + page, 'utf8');
+      const html = readFileSync(ROOT + '/' + page, 'utf8');
       assert.match(html, /src="\.?\.?\/?assets\/js\/chat\.js"/,
         page + ' still loads chat.js by its plain path');
       assert.equal(/chat-customer\.js/.test(html), false,

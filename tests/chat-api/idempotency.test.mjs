@@ -16,15 +16,20 @@ import {
   db, handlerFor, call, wipe, uuid, anonToken, passwordToken, seedStaff,
   countMessages, getConversation, RATE_SECRET
 } from './helpers.mjs';
+import { fileURLToPath as __rootFileURLToPath } from 'node:url';
+/* Repository root, from this file's own location - portable across
+   machines and operating systems. Forward slashes on Windows too, which
+   Node's fs, require and pathToFileURL all accept. */
+const ROOT = __rootFileURLToPath(new URL('../../', import.meta.url)).replace(/\\/g, '/').replace(/\/$/, '');
 
-const require = createRequire('/home/user/esthers/');
-const H = require('/home/user/esthers/api/_chat/http.js');
-const S = require('/home/user/esthers/api/_chat/service.js');
-const RL = require('/home/user/esthers/api/_chat/rate-limit.js');
+const require = createRequire(ROOT + '/');
+const H = require(ROOT + '/api/_chat/http.js');
+const S = require(ROOT + '/api/_chat/service.js');
+const RL = require(ROOT + '/api/_chat/rate-limit.js');
 
-const START = '/home/user/esthers/api/chat/start.js';
-const SEND = '/home/user/esthers/api/chat/send.js';
-const STAFF_SEND = '/home/user/esthers/api/admin/chat/send.js';
+const START = ROOT + '/api/chat/start.js';
+const SEND = ROOT + '/api/chat/send.js';
+const STAFF_SEND = ROOT + '/api/admin/chat/send.js';
 
 const CUST = 'anon-idem-a';
 const OTHER = 'anon-idem-b';

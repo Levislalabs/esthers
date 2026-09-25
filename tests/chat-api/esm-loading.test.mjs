@@ -30,11 +30,15 @@ import { createRequire } from 'module';
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { makeReq, makeRes } from './helpers.mjs';
+import { fileURLToPath as __rootFileURLToPath } from 'node:url';
+/* Repository root, from this file's own location - portable across
+   machines and operating systems. Forward slashes on Windows too, which
+   Node's fs, require and pathToFileURL all accept. */
+const ROOT = __rootFileURLToPath(new URL('../../', import.meta.url)).replace(/\\/g, '/').replace(/\/$/, '');
 
-const require = createRequire('/home/user/esthers/');
-const FB = require('/home/user/esthers/api/_chat/firebase-admin.js');
-const ROOT = '/home/user/esthers';
-const START = '/home/user/esthers/api/chat/start.js';
+const require = createRequire(ROOT + '/');
+const FB = require(ROOT + '/api/_chat/firebase-admin.js');
+const START = ROOT + '/api/chat/start.js';
 
 const GOOD_KEY = '-----BEGIN PRIVATE KEY-----\\n'
   + 'Tk9ULUEtUkVBTC1LRVktcGxhY2Vob2xkZXItZm9yLXRlc3Rz\\n'
@@ -146,7 +150,7 @@ describe('the real Node 22 module import', () => {
       "const added = Object.keys(require.cache).filter(f => !before.has(f));",
       "const bad = new Set(); const esm = new Set();",
       "for (const file of added) {",
-      "  const m = file.match(/^(.*node_modules\\/(?:@[^/]+\\/)?[^/]+)\\//);",
+      "  const m = file.split(path.sep).join('/').match(/^(.*node_modules\\/(?:@[^/]+\\/)?[^/]+)\\//);",
       "  if (!m) continue;",
       "  try {",
       "    const p = JSON.parse(fs.readFileSync(m[1] + '/package.json','utf8'));",

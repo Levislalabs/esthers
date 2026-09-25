@@ -31,8 +31,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { codeOnly, codeAndStrings } from './fixtures/source-view.mjs';
+import { fileURLToPath as __rootFileURLToPath } from 'node:url';
 
-const ROOT = '/home/user/esthers';
+/* Repository root, from this file's own location - portable across
+   machines and operating systems. Forward slashes on Windows too, which
+   Node's fs, require and pathToFileURL all accept. */
+const ROOT = __rootFileURLToPath(new URL('../../', import.meta.url)).replace(/\\/g, '/').replace(/\/$/, '');
 const STAFF_PATH = ROOT + '/assets/js/chat-staff.js';
 const APP_CHECK_PATH = ROOT + '/assets/js/chat-app-check.js';
 const CUSTOMER_PATH = ROOT + '/assets/js/chat-customer.js';

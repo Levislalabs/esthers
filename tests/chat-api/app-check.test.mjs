@@ -24,12 +24,17 @@ import {
 } from './helpers.mjs';
 
 import { createRequire } from 'module';
-const require = createRequire('/home/user/esthers/');
-const AC = require('/home/user/esthers/api/_chat/app-check.js');
+import { fileURLToPath as __rootFileURLToPath } from 'node:url';
+/* Repository root, from this file's own location - portable across
+   machines and operating systems. Forward slashes on Windows too, which
+   Node's fs, require and pathToFileURL all accept. */
+const ROOT = __rootFileURLToPath(new URL('../../', import.meta.url)).replace(/\\/g, '/').replace(/\/$/, '');
+const require = createRequire(ROOT + '/');
+const AC = require(ROOT + '/api/_chat/app-check.js');
 
-const START = '/home/user/esthers/api/chat/start.js';
-const STAFF_LIST = '/home/user/esthers/api/admin/chat/conversations.js';
-const STAFF_SEND = '/home/user/esthers/api/admin/chat/send.js';
+const START = ROOT + '/api/chat/start.js';
+const STAFF_LIST = ROOT + '/api/admin/chat/conversations.js';
+const STAFF_SEND = ROOT + '/api/admin/chat/send.js';
 
 const CUST = 'cust-appcheck-1';
 const STAFF = 'staff-appcheck-1';
@@ -97,7 +102,7 @@ describe('the App Check contract', () => {
     /* The function body only - comments after it are prose and legitimately
        use the word "request". */
     const src = require('fs').readFileSync(
-      '/home/user/esthers/api/_chat/app-check.js', 'utf8');
+      ROOT + '/api/_chat/app-check.js', 'utf8');
     const start = src.indexOf('function isEnforced');
     const body = src.slice(start, src.indexOf('\n}', start));
     for (const bad of ['req', 'query', 'body', 'header']) {
@@ -459,17 +464,17 @@ describe('the gate is wired into every chat route, not just the ones tested abov
   test('every route is built by createHandler, which owns the gate', () => {
     const fs = require('fs');
     for (const r of ROUTES) {
-      const src = fs.readFileSync('/home/user/esthers/' + r, 'utf8');
+      const src = fs.readFileSync(ROOT + '/' + r, 'utf8');
       assert.ok(src.includes('createHandler'), r + ' must go through createHandler');
     }
-    const handler = fs.readFileSync('/home/user/esthers/api/_chat/handler.js', 'utf8');
+    const handler = fs.readFileSync(ROOT + '/api/_chat/handler.js', 'utf8');
     assert.ok(handler.includes('AC.verifyAppCheck'),
       'createHandler must call the App Check gate');
   });
 
   test('the gate runs after configuration and before authentication', () => {
     const src = require('fs').readFileSync(
-      '/home/user/esthers/api/_chat/handler.js', 'utf8');
+      ROOT + '/api/_chat/handler.js', 'utf8');
     const origin = src.indexOf('H.sameOrigin');
     const init = src.indexOf('initAdmin()');
     const gate = src.indexOf('AC.verifyAppCheck');

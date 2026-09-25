@@ -42,9 +42,13 @@ import { createRequire } from 'module';
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import { fileURLToPath as __rootFileURLToPath } from 'node:url';
+/* Repository root, from this file's own location - portable across
+   machines and operating systems. Forward slashes on Windows too, which
+   Node's fs, require and pathToFileURL all accept. */
+const ROOT = __rootFileURLToPath(new URL('../../', import.meta.url)).replace(/\\/g, '/').replace(/\/$/, '');
 
-const require = createRequire('/home/user/esthers/');
-const ROOT = '/home/user/esthers';
+const require = createRequire(ROOT + '/');
 
 /* Runs a script in a child Node with native require(esm) DISABLED, which is
    how Vercel's Node 22.x below 22.12 behaves. This is the whole point: the
@@ -93,8 +97,9 @@ describe('the scoped jose override', () => {
 /* ================================================ THE INSTALLED TREE */
 describe('the installed dependency tree', () => {
   test('the jose that jwks-rsa loads is CommonJS, not ESM-only', () => {
+    /* Separator-normalised so the regex below also matches on Windows. */
     const resolved = createRequire(ROOT + '/node_modules/jwks-rsa/src/utils.js')
-      .resolve('jose');
+      .resolve('jose').replace(/\\/g, '/');
     const root = resolved.replace(/(node_modules\/jose)\/.*/, '$1');
     const pkg = JSON.parse(fs.readFileSync(root + '/package.json', 'utf8'));
     assert.match(pkg.version, /^5\./, 'jwks-rsa must resolve jose 5');
@@ -124,7 +129,7 @@ describe('the installed dependency tree', () => {
   test('jwks-rsa is reached eagerly from firebase-admin/auth', () => {
     const out = execFileSync(process.execPath, ['-e',
       "require('firebase-admin/auth');"
-      + "const f=Object.keys(require.cache).filter(k=>k.includes('node_modules/jwks-rsa'));"
+      + "const f=Object.keys(require.cache).filter(k=>k.split(require('path').sep).join('/').includes('node_modules/jwks-rsa'));"
       + "console.log(f.length);"], { cwd: ROOT, encoding: 'utf8' }).trim();
     assert.ok(Number(out) > 0,
       'auth loads jwks-rsa at import time, which is why the failure was at load');

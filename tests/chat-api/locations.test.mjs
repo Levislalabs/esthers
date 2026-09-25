@@ -19,8 +19,12 @@ import {
   db, handlerFor, call, wipe, uuid, anonToken, passwordToken, seedStaff,
   countMessages, getConversation, Timestamp
 } from './helpers.mjs';
+import { fileURLToPath as __rootFileURLToPath } from 'node:url';
 
-const ROOT = '/home/user/esthers';
+/* Repository root, from this file's own location - portable across
+   machines and operating systems. Forward slashes on Windows too, which
+   Node's fs, require and pathToFileURL all accept. */
+const ROOT = __rootFileURLToPath(new URL('../../', import.meta.url)).replace(/\\/g, '/').replace(/\/$/, '');
 const START = ROOT + '/api/chat/start.js';
 const STATUS = ROOT + '/api/chat/status.js';
 const SEND = ROOT + '/api/chat/send.js';
