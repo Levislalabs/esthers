@@ -40,10 +40,6 @@ module.exports = async function handler(req, res) {
       error: 'File uploads are not configured on this deployment.' });
   }
 
-  // Counted before any upload permission is issued. See _quote-limit.js.
-  const limit = await QL.check(req, 'upload');
-  if (limit.limited) return QL.reject(res, limit);
-
   let body = req.body;
   if (typeof body === 'string') {
     try { body = JSON.parse(body); } catch (e) { return bad(res, 400, 'Malformed request.'); }
@@ -55,6 +51,22 @@ module.exports = async function handler(req, res) {
 
   const problem = L.checkManifest(files);
   if (problem) return bad(res, 413, problem);
+
+  /* RATE LIMIT. After the manifest is validated - so an invalid request is
+     refused without spending anybody's allowance - and before any upload
+     permission is issued. See _quote-limit.js. */
+  const limit = await QL.check(req, 'upload');
+  if (limit.limited) return QL.reject(res, limit);
+
+  /* Each file's upload ceiling is its OWN declared size, not the 25 MB
+     per-file maximum. checkManifest() above has already proved every size is
+     a safe positive integer within the per-file limit and that they sum to
+     no more than MAX_TOTAL_BYTES, so the permissions issued below can never
+     add up to more than the manifest was allowed to ask for. Before this, a
+     caller could declare five tiny files and receive five 25 MB permissions -
+     125 MB against a 75 MB limit. A customer's browser reports File.size
+     exactly, and the upload is the raw file, so an honest upload fits. */
+  const maxBytes = files.map(function (f) { return f.size; });
 
   let issueSignedToken, presignUrl;
   try {
@@ -74,16 +86,16 @@ module.exports = async function handler(req, res) {
       const name = String(files[i].name);
       const pathname = L.blobPath(requestId, i, name, now);
 
-      /* Scope the delegation to this one object and this one operation. The
-         size ceiling is the customer limit, not the file's declared size:
-         a browser could understate a file, and the storage layer refusing at
-         25 MB is the check that actually counts. */
+      /* Scope the delegation to this one object, this one operation and this
+         one file's validated declared size. A browser that understates a
+         file only gets permission for the smaller number, and the storage
+         layer refusing anything larger is the check that actually counts. */
       const signed = await issueSignedToken({
         token: process.env.BLOB_READ_WRITE_TOKEN,
         pathname: pathname,
         operations: ['put'],
         validUntil: validUntil,
-        maximumSizeInBytes: L.MAX_FILE_BYTES,
+        maximumSizeInBytes: maxBytes[i],
         allowedContentTypes: L.ALLOWED_CONTENT_TYPES
       });
 
@@ -92,7 +104,7 @@ module.exports = async function handler(req, res) {
         pathname: pathname,
         access: 'private',
         validUntil: validUntil,
-        maximumSizeInBytes: L.MAX_FILE_BYTES,
+        maximumSizeInBytes: maxBytes[i],
         allowedContentTypes: L.ALLOWED_CONTENT_TYPES,
         /* Our pathname is already unique and unguessable; a random suffix
            would only make the name in the email harder to read. Overwrite

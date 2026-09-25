@@ -176,6 +176,11 @@ function isOurBlobPath(p) {
  * Validates the manifest the browser sends before any upload starts, so an
  * oversized or unsupported file is refused before a single byte moves.
  * Returns a customer-facing sentence, or null when the selection is fine.
+ *
+ * This is THE gate for declared sizes. Once it returns null, every
+ * files[i].size is a safe positive integer no larger than MAX_FILE_BYTES,
+ * and together they sum to no more than MAX_TOTAL_BYTES - which is what lets
+ * upload-token.js use each one directly as that file's upload ceiling.
  */
 function checkManifest(files) {
   if (!Array.isArray(files)) return 'We could not read the list of files.';
@@ -186,10 +191,18 @@ function checkManifest(files) {
   for (let i = 0; i < files.length; i++) {
     const f = files[i] || {};
     const name = String(f.name == null ? '' : f.name);
-    const size = Number(f.size);
+    const size = f.size;
 
     if (!name.trim()) return 'One of the files has no name.';
-    if (!Number.isFinite(size) || size <= 0) {
+    /* The declared size becomes the hard ceiling on that file's upload
+       permission (see upload-token.js), so it must be exactly what a browser
+       sends for File.size: a whole, positive number of bytes. A string, a
+       fraction, NaN, Infinity or anything else is refused rather than
+       coerced - coercion is how "3e7" or "0x1" would slip past. */
+    if (typeof size !== 'number' || !Number.isSafeInteger(size)) {
+      return 'We could not read the size of "' + name + '". Please try again.';
+    }
+    if (size <= 0) {
       return '"' + name + '" looks empty.';
     }
     if (!ALLOWED[extensionOf(name)]) {

@@ -70,11 +70,6 @@ module.exports = async function handler(req, res) {
       error: 'Quote email delivery is not configured on this deployment.' });
   }
 
-  // Every POST that could send an email counts, valid or not, before any
-  // work is done. See _quote-limit.js for the two layers and why it fails open.
-  const limit = await QL.check(req, 'quote');
-  if (limit.limited) return QL.reject(res, limit);
-
   let body = req.body;
   if (typeof body === 'string') {
     try { body = JSON.parse(body); } catch (e) { return bad(res, 400, 'Malformed request.'); }
@@ -96,13 +91,38 @@ module.exports = async function handler(req, res) {
   if (claimed.length > L.MAX_FILES) {
     return bad(res, 400, 'Please attach no more than ' + L.MAX_FILES + ' files.');
   }
+  if (claimed.length && !process.env.BLOB_READ_WRITE_TOKEN) {
+    return bad(res, 503, 'File uploads are not configured on this deployment.');
+  }
+
+  /* Cheap structural checks on every claimed file, done BEFORE the rate
+     limit so a malformed request is refused without spending anybody's
+     allowance. Nothing here touches the network. */
+  for (let i = 0; i < claimed.length; i++) {
+    const f = claimed[i] || {};
+
+    /* Refuse anything that is not shaped like a path we issue. Without
+       this, a caller could name any object in the store and have a signed
+       link to it emailed out. */
+    if (!L.isOurBlobPath(f.pathname)) {
+      console.error('quote: rejected a pathname that we did not issue');
+      return bad(res, 400, 'We could not find one of your uploaded files. Please try again.');
+    }
+    if (!L.ALLOWED[L.extensionOf(f.pathname)]) {
+      return bad(res, 415, 'One of those files is not a type we can open.');
+    }
+  }
+
+  /* RATE LIMIT. Placed after every cheap validation - so garbage requests
+     cannot use up a real customer's allowance at the same address - and
+     before anything expensive: the Blob lookups and signature reads below,
+     and the email itself. See _quote-limit.js for the two layers and why
+     it fails open. */
+  const limit = await QL.check(req, 'quote');
+  if (limit.limited) return QL.reject(res, limit);
 
   let attachments = [];
   if (claimed.length) {
-    if (!process.env.BLOB_READ_WRITE_TOKEN) {
-      return bad(res, 503, 'File uploads are not configured on this deployment.');
-    }
-
     let head, issueSignedToken, presignUrl;
     try {
       ({ head, issueSignedToken, presignUrl } = require('@vercel/blob'));
@@ -115,19 +135,9 @@ module.exports = async function handler(req, res) {
     let total = 0;
 
     for (let i = 0; i < claimed.length; i++) {
-      const f = claimed[i] || {};
-      const pathname = f.pathname;
-
-      /* Refuse anything that is not shaped like a path we issue. Without
-         this, a caller could name any object in the store and have a signed
-         link to it emailed out. */
-      if (!L.isOurBlobPath(pathname)) {
-        console.error('quote: rejected a pathname that we did not issue');
-        return bad(res, 400, 'We could not find one of your uploaded files. Please try again.');
-      }
-
+      /* Shape and type were already checked above, before the rate limit. */
+      const pathname = claimed[i].pathname;
       const ext = L.extensionOf(pathname);
-      if (!L.ALLOWED[ext]) return bad(res, 415, 'One of those files is not a type we can open.');
 
       // Does an object actually exist there, and how big is it really?
       let info;

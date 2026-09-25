@@ -15,6 +15,8 @@
  *      instances and each keeps its own count (see the note at the top of
  *      _chat/rate-limit.js) - but it stops the simple case of one script
  *      hammering the endpoint, and it works from the moment this deploys.
+ *      It is PARTIAL protection only: gap G1 is not closed in production
+ *      until layer 2 is configured and verified (docs/QUOTE_UPLOADS.md).
  *
  *   2. Shared, in Firestore, reusing the chat system's limiter
  *      (_chat/rate-limit.js) with its own quote_* / upload_* scopes. Every

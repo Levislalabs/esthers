@@ -77,10 +77,21 @@ a long upload. **The browser's copy is a courtesy, not a control.**
 A public upload endpoint is an invitation, so:
 
 - **The upload URL is scoped, not general.** Each one is tied to a single
-  pathname *we* choose, a single operation (`put`), a maximum size, a content
-  type allowlist, and a **30-minute expiry**. A URL handed out for a 3 MB photo
-  cannot be spent on a 2 GB file, cannot overwrite anything, and stops working
-  within the half hour.
+  pathname *we* choose, a single operation (`put`), a content type allowlist,
+  a **30-minute expiry**, and a maximum size equal to **that file's own
+  declared size** — not the 25 MB per-file cap. A URL handed out for a 3 MB
+  photo cannot be spent on a 25 MB file, let alone a 2 GB one, cannot
+  overwrite anything, and stops working within the half hour.
+- **Declared sizes are validated before they become ceilings.**
+  `checkManifest()` in `api/_lib.js` is the gate: each size must be a whole,
+  positive number of bytes (a real JSON number — strings, fractions, NaN and
+  Infinity are refused, never coerced), no more than 25 MB, and all of them
+  together no more than 75 MB. Only then is each size used as that file's
+  upload ceiling, in both the signed token and the presigned URL, so the
+  permissions from one manifest can never add up to more than 75 MB. (Before
+  this, five understated files each got a 25 MB permission — 125 MB in all.)
+  The browser reports `File.size` exactly and uploads the raw file, so an
+  honest upload always fits.
 - **The browser never receives `BLOB_READ_WRITE_TOKEN`**, or anything that
   could be reused as one.
 - **The customer cannot choose where a file goes.** They send a filename; we
@@ -97,8 +108,16 @@ A public upload endpoint is an invitation, so:
 - **Both endpoints are rate limited per address** (`api/_quote-limit.js`).
   Without this, anybody could POST `/api/quote` in a loop and send email
   through the Resend account until the inbox flooded and the sending quota ran
-  out. Limits: **10 quote emails** and **20 upload permissions** per address
-  per hour. Every POST counts, valid or not. Over the limit the customer gets
+  out. Limits: **10 quote emails** and **20 upload-permission requests** per
+  address per hour.
+
+  **Only well-formed requests count.** The limit is checked *after* the cheap
+  validation — for a quote: the body, name, email, text, file count, and each
+  file's path shape and type; for uploads: the whole manifest via
+  `checkManifest()` — so a stream of garbage from the same address cannot use
+  up a real customer's allowance. It is checked *before* anything expensive:
+  the Blob lookups and signature reads, issuing upload permissions, and the
+  email itself. Over the limit the customer gets
   a 429 and a plain sentence asking them to wait or email/phone instead; the
   form already shows it. `GET /api/quote` (the readiness probe) is never
   limited.
@@ -113,6 +132,20 @@ A public upload endpoint is an invitation, so:
   in-memory layer still applies) and a reason token is logged. Losing a real
   customer's quote is the worse failure. No raw address is stored or logged
   in either layer.
+
+  **The in-memory layer is only partial protection.** Vercel runs several
+  instances and routes requests between them, so a caller spread across
+  instances gets several allowances. **G1 is not closed in production** until
+  all three of these are done:
+
+  1. the production Firestore security rules are deployed to `esther-s-chat`;
+  2. `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` and
+     `CHAT_RATE_LIMIT_SECRET` are set in Vercel;
+  3. the shared Firestore quote limiter is verified working in production —
+     e.g. a `chatRateLimits/quote_ip_*` document appears after a real quote,
+     and no `quote-limit: shared limiter unavailable` lines are in the logs.
+
+  Until then, deploying this code gives the in-memory layer only.
 
 The one thing this deliberately does *not* do is make customers create
 accounts, or track them.
