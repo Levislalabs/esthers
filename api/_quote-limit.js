@@ -48,9 +48,11 @@ const H = require('./_chat/http.js');
 const RL = require('./_chat/rate-limit.js');
 const FB = require('./_chat/firebase-admin.js');
 
+/* Each kind consumes a BURST and an HOURLY scope together, all or nothing.
+   The values live in _chat/rate-limit.js RULES. */
 const SCOPES = {
-  quote: 'quote_ip',
-  upload: 'upload_ip'
+  quote: ['quote_burst_ip', 'quote_ip'],
+  upload: ['upload_burst_ip', 'upload_ip']
 };
 
 /* Upper bound on the in-memory table, so a flood of distinct addresses
@@ -111,7 +113,35 @@ function createMemoryLimiter() {
     return { limited: false };
   }
 
-  return { consume: consume, size: function () { return buckets.size; } };
+  /* All-or-nothing across several scopes, mirroring RL.consumeMany: check
+     every bucket first, and only if none is exhausted count the request in
+     all of them. Returns the longest wait when refused. */
+  function consumeMany(scopes, identifier, now) {
+    let retryMs = 0;
+    const live = scopes.map(function (scope) {
+      const rule = RL.RULES[scope];
+      if (!rule) throw new Error('unknown rate-limit scope: ' + scope);
+      const k = id(scope, identifier);
+      let b = buckets.get(k);
+      if (b && now - b.windowStart >= rule.windowMs) b = null;
+      if (b && b.count >= rule.limit) {
+        retryMs = Math.max(retryMs, rule.windowMs - (now - b.windowStart));
+      }
+      return { k: k, b: b, scope: scope };
+    });
+    if (retryMs > 0) {
+      return { limited: true, retryAfterSeconds: Math.max(1, Math.ceil(retryMs / 1000)) };
+    }
+    for (const x of live) {
+      if (x.b) { x.b.count += 1; continue; }
+      if (buckets.size >= MEMORY_MAX_ENTRIES) prune(now);
+      buckets.set(x.k, { scope: x.scope, windowStart: now, count: 1 });
+    }
+    return { limited: false };
+  }
+
+  return { consume: consume, consumeMany: consumeMany,
+           size: function () { return buckets.size; } };
 }
 
 const defaultMemory = createMemoryLimiter();
@@ -141,15 +171,16 @@ function reasonOf(err) {
 
 /*
  * Consumes one request for `kind` ('quote' or 'upload') from the caller's
- * address. Resolves to { limited: false } or
- * { limited: true, retryAfterSeconds }. Never rejects.
+ * address, in every scope of that kind at once. Resolves to
+ * { limited: false } or { limited: true, retryAfterSeconds }. Never rejects.
  *
- * deps is for tests only: { env, now, memory, initAdmin, consume }.
+ * deps is for tests only: { env, now, memory, initAdmin, consumeMany }.
  */
 async function check(req, kind, deps) {
   const d = deps || {};
-  const scope = SCOPES[kind];
-  if (!scope) throw new Error('unknown quote limit kind: ' + kind);
+  const scopes = SCOPES[kind];
+  if (!scopes) throw new Error('unknown quote limit kind: ' + kind);
+  const scope = scopes.join('+');   /* for log lines only */
 
   const env = d.env || process.env;
   const now = d.now || Date.now();
@@ -158,7 +189,7 @@ async function check(req, kind, deps) {
      requests share one bucket rather than going unlimited. */
   const ip = H.clientIp(req) || 'unknown';
 
-  const local = memory.consume(scope, ip, now);
+  const local = memory.consumeMany(scopes, ip, now);
   if (local.limited) {
     console.warn('quote-limit: ' + scope + ' limited (instance)');
     return local;
@@ -168,7 +199,7 @@ async function check(req, kind, deps) {
 
   try {
     const admin = await (d.initAdmin ? d.initAdmin() : FB.initAdmin());
-    await (d.consume || RL.consume)(admin.db, scope, ip, env.CHAT_RATE_LIMIT_SECRET, { now: now });
+    await (d.consumeMany || RL.consumeMany)(admin.db, scopes, ip, env.CHAT_RATE_LIMIT_SECRET, { now: now });
     return { limited: false };
   } catch (err) {
     if (err instanceof RL.RateLimitError || (err && err.chatErrorKind === 'rate_limit')) {

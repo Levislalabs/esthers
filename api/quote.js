@@ -31,6 +31,7 @@
 
 const L = require('./_lib.js');
 const QL = require('./_quote-limit.js');
+const QG = require('./_quote-guard.js');
 
 function bad(res, status, message, extra) {
   return res.status(status).json(Object.assign({ ok: false, error: message }, extra || {}));
@@ -39,12 +40,22 @@ function bad(res, status, message, extra) {
 module.exports = async function handler(req, res) {
   // Readiness probe. The browser asks this on load so it knows whether to
   // offer real uploads or fall back. It reports booleans and limits - never
-  // a key, never a key's length.
+  // a secret, never a secret's length. The Turnstile SITE key is public by
+  // design (it is embedded in every page that shows a widget), and the form
+  // stamp is a signed timestamp: see _quote-guard.js.
   if (req.method === 'GET') {
+    const ts = QG.turnstileConfig(process.env);
+    /* Server sending needs a mailbox AND a working Turnstile configuration.
+       Without Turnstile the form falls back to the customer's email app,
+       which cannot be used to make this server send anything. */
+    const ready = Boolean(process.env.RESEND_API_KEY && process.env.QUOTE_TO && ts.ok);
+    res.setHeader('Cache-Control', 'no-store');
     return res.status(200).json({
       ok: true,
-      ready: Boolean(process.env.RESEND_API_KEY && process.env.QUOTE_TO),
+      ready: ready,
       uploads: Boolean(process.env.BLOB_READ_WRITE_TOKEN),
+      turnstileSiteKey: ready ? ts.siteKey : null,
+      formStamp: ready ? QG.issueFormStamp(process.env) : null,
       limits: {
         maxFiles: L.MAX_FILES,
         maxFileBytes: L.MAX_FILE_BYTES,
@@ -59,6 +70,13 @@ module.exports = async function handler(req, res) {
     return bad(res, 405, 'Method not allowed.');
   }
 
+  /* A browser's cross-site POST is refused outright. A script can forge or
+     omit Origin, so this is a filter, never the boundary - Turnstile is. */
+  if (!QG.originAllowed(req)) {
+    QG.logReason('quote', 'origin');
+    return QG.refuse(res, 403);
+  }
+
   const apiKey = process.env.RESEND_API_KEY;
   const to = (process.env.QUOTE_TO || '').split(',')
     .map(function (s) { return s.trim(); }).filter(Boolean);
@@ -66,6 +84,15 @@ module.exports = async function handler(req, res) {
 
   if (!apiKey || !to.length) {
     // 503, not 500: the request was fine, the mailbox is not connected.
+    return res.status(503).json({ ok: false, notConfigured: true,
+      error: 'Quote email delivery is not configured on this deployment.' });
+  }
+
+  /* No server-sent email without a working Turnstile configuration - ever.
+     notConfigured makes the form fall back to the customer's email app. */
+  const turnstile = QG.turnstileConfig(process.env);
+  if (!turnstile.ok) {
+    QG.logReason('quote', turnstile.reason);
     return res.status(503).json({ ok: false, notConfigured: true,
       error: 'Quote email delivery is not configured on this deployment.' });
   }
@@ -113,11 +140,33 @@ module.exports = async function handler(req, res) {
     }
   }
 
-  /* RATE LIMIT. Placed after every cheap validation - so garbage requests
-     cannot use up a real customer's allowance at the same address - and
-     before anything expensive: the Blob lookups and signature reads below,
-     and the email itself. See _quote-limit.js for the two layers and why
-     it fails open. */
+  /* SUPPLEMENTAL BOT SIGNALS: honeypot and form age. Cheap, and they spend
+     nobody's allowance. Never relied on alone - see _quote-guard.js. */
+  const signals = QG.checkFormSignals(body, process.env);
+  if (!signals.ok) {
+    QG.logReason('quote', signals.reason);
+    return QG.refuse(res, 403);
+  }
+
+  /* THE BOUNDARY: a single-use Turnstile token for the quote_submit action,
+     verified with Cloudflare before anything is spent or sent. Fails closed. */
+  const human = await QG.verifyTurnstile(body.turnstileToken, {
+    action: QG.ACTIONS.quote, ip: QG.clientIp(req)
+  });
+  if (!human.ok) {
+    QG.logReason('quote', human.reason);
+    if (human.notConfigured) {
+      return res.status(503).json({ ok: false, notConfigured: true,
+        error: 'Quote email delivery is not configured on this deployment.' });
+    }
+    return QG.refuse(res, human.status);
+  }
+
+  /* RATE LIMIT, burst and hourly together. After validation and
+     verification - so neither garbage nor unverified requests spend a real
+     customer's allowance at the same address - and before anything
+     expensive: the Blob lookups and signature reads below, and the email.
+     See _quote-limit.js for the two layers and why the limiter fails open. */
   const limit = await QL.check(req, 'quote');
   if (limit.limited) return QL.reject(res, limit);
 
@@ -230,6 +279,18 @@ module.exports = async function handler(req, res) {
     text: fullText
   };
 
+  /* DUPLICATE SUPPRESSION, immediately before the send, so the only way a
+     reservation can fail to become an email is the provider call itself -
+     and that path releases it. A duplicate is never reported as sent. */
+  const dup = await QG.reserveDuplicate({
+    name: name, email: email, text: text,
+    files: claimed.map(function (f) { return f.pathname; })
+  });
+  if (dup.duplicate) {
+    QG.logReason('quote', 'duplicate');
+    return QG.refuseDuplicate(res);
+  }
+
   let providerResponse;
   try {
     providerResponse = await fetch('https://api.resend.com/emails', {
@@ -238,16 +299,25 @@ module.exports = async function handler(req, res) {
       body: JSON.stringify(payload)
     });
   } catch (err) {
-    console.error('quote: provider unreachable:', err && err.message);
+    await dup.release();
+    console.error('quote: provider unreachable');
     return bad(res, 502, 'We could not send your request just now. Please try again, or email us directly.');
   }
 
   if (!providerResponse.ok) {
-    let detail = '';
-    try { detail = (await providerResponse.text()).slice(0, 300); } catch (e) { /* ignore */ }
-    console.error('quote: provider rejected, status', providerResponse.status, detail);
+    await dup.release();
+    /* Status and the provider's error NAME only (an allow-listed shape).
+       The error message can echo request fields such as an address. */
+    let errName = '';
+    try {
+      const j = await providerResponse.json();
+      if (j && typeof j.name === 'string' && /^[a-z_]{1,40}$/.test(j.name)) errName = j.name;
+    } catch (e) { /* ignore */ }
+    console.error('quote: provider rejected, status ' + providerResponse.status +
+                  (errName ? ', error ' + errName : ''));
     return bad(res, 502, 'We could not send your request just now. Please try again, or email us directly.');
   }
+  await dup.confirm();
 
   let sent = {};
   try { sent = await providerResponse.json(); } catch (e) { /* body is optional */ }

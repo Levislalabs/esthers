@@ -190,7 +190,22 @@
                   placeholder="Flue count and dimensions, chimney size, roof pitch, exposure, access, and anything else that affects the build."></textarea>
               </div>
 
+              <!-- Honeypot: people never see or fill this; some bots do. It
+                   is not the protection (that is the server-verified check
+                   below), only a cheap extra signal. Off-screen rather than
+                   display:none, out of the tab order, hidden from assistive
+                   technology, and named so that no password manager or
+                   autofill profile matches it. -->
+              <div class="field--hp" aria-hidden="true">
+                <label for="q-hp">Leave this field empty</label>
+                <input id="q-hp" name="q_hp_ref" type="text" tabindex="-1" autocomplete="off" value="">
+              </div>
+
             </div>
+
+            <!-- Cloudflare Turnstile renders here only if it needs the visitor
+                 to tick a box; most visitors never see it. -->
+            <div class="quote__turnstile" id="quote-turnstile"></div>
 
             <div class="quote__actions">
               <button class="btn btn--primary" type="submit">
@@ -204,7 +219,8 @@
               </p>
               <p class="quote__note quote__note--server">
                 Your quote request and files are sent directly to Esther's. Files are stored
-                privately, are not shared, and are removed after 30 days.
+                privately, are not shared, and are removed after 30 days. To keep out automated
+                spam, sending is checked by Cloudflare Turnstile.
               </p>
             </div>
 

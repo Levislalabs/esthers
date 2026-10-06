@@ -91,13 +91,21 @@ const RULES = {
    * rather than growing a second one, under its own scopes so the two never
    * share a bucket.
    *
-   * quote_ip is a sent quote email, per hashed IP. A real customer sends one,
-   * perhaps two; the headroom is for an office where several people share an
-   * address. upload_ip is permission to upload files, asked once per quote
-   * that has attachments and again on a retry, so it is looser.
+   * Each kind has a BURST window and an HOURLY window, consumed together
+   * (consumeMany, below). The hourly limit alone let a bot send several valid
+   * quotes within minutes - which is exactly what happened in production -
+   * so the burst window is what stops a run, and the hourly one caps what a
+   * patient bot can do. Both count only requests that have already passed
+   * validation and Turnstile verification, so garbage cannot spend them.
+   *
+   * quote: a real customer sends one, perhaps two after a correction.
+   * upload: permission to upload files, asked once per quote that has
+   * attachments and again on a retry, so it is looser than quote.
    */
-  quote_ip:    { limit: 10, windowMs: 60 * 60 * 1000 },
-  upload_ip:   { limit: 20, windowMs: 60 * 60 * 1000 }
+  quote_burst_ip:  { limit: 2,  windowMs:  5 * 60 * 1000 },
+  quote_ip:        { limit: 4,  windowMs: 60 * 60 * 1000 },
+  upload_burst_ip: { limit: 4,  windowMs:  5 * 60 * 1000 },
+  upload_ip:       { limit: 10, windowMs: 60 * 60 * 1000 }
 };
 
 class RateLimitError extends Error {
@@ -190,7 +198,59 @@ async function consume(db, scope, rawIdentifier, secret, opts) {
   });
 }
 
+/*
+ * Consume one unit from SEVERAL scopes for the same identity, all or nothing,
+ * in ONE transaction. Used by the quote form, whose burst and hourly windows
+ * must agree: with two separate consume() calls, a request refused by the
+ * second would still have spent a unit of the first.
+ *
+ * Every bucket is read before any is written (a Firestore transaction
+ * requires reads first). If any is exhausted, nothing is written and the
+ * RateLimitError carries the LONGEST wait among the exhausted buckets, so a
+ * client that honours Retry-After is not refused again straight away.
+ */
+async function consumeMany(db, scopes, rawIdentifier, secret, opts) {
+  if (!Array.isArray(scopes) || !scopes.length) throw new Error('no rate-limit scopes');
+  const rules = scopes.map(function (scope) {
+    const rule = RULES[scope];
+    if (!rule) throw new Error('unknown rate-limit scope: ' + scope);
+    return rule;
+  });
+
+  const now = (opts && opts.now) || Date.now();
+  const refs = scopes.map(function (scope) {
+    return db.collection(COLLECTION).doc(bucketId(scope, rawIdentifier, secret));
+  });
+
+  await db.runTransaction(async (tx) => {
+    const snaps = [];
+    for (const ref of refs) snaps.push(await tx.get(ref));
+
+    const next = [];
+    let retryMs = 0;
+    snaps.forEach(function (snap, i) {
+      const rule = rules[i];
+      const data = snap.exists ? (snap.data() || {}) : {};
+      const windowStart = typeof data.windowStart === 'number' ? data.windowStart : 0;
+      const count = typeof data.count === 'number' ? data.count : 0;
+      const expired = (now - windowStart) >= rule.windowMs;
+      if (!expired && count >= rule.limit) {
+        retryMs = Math.max(retryMs, rule.windowMs - (now - windowStart));
+      }
+      next.push({
+        scope: scopes[i],
+        windowStart: expired ? now : windowStart,
+        count: expired ? 1 : count + 1,
+        updatedAt: now
+      });
+    });
+
+    if (retryMs > 0) throw new RateLimitError(Math.max(1, Math.ceil(retryMs / 1000)));
+    refs.forEach(function (ref, i) { tx.set(ref, next[i]); });
+  });
+}
+
 module.exports = {
   COLLECTION, RULES, RateLimitError, RateLimitConfigError,
-  hashIdentifier, bucketId, consume
+  hashIdentifier, bucketId, consume, consumeMany
 };

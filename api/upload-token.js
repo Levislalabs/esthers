@@ -24,6 +24,7 @@
 
 const L = require('./_lib.js');
 const QL = require('./_quote-limit.js');
+const QG = require('./_quote-guard.js');
 
 function bad(res, status, message) {
   return res.status(status).json({ ok: false, error: message });
@@ -35,7 +36,19 @@ module.exports = async function handler(req, res) {
     return bad(res, 405, 'Method not allowed.');
   }
 
+  /* Cross-site browser POSTs refused. A filter, not the boundary. */
+  if (!QG.originAllowed(req)) {
+    QG.logReason('upload', 'origin');
+    return QG.refuse(res, 403);
+  }
+
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    return res.status(503).json({ ok: false, notConfigured: true,
+      error: 'File uploads are not configured on this deployment.' });
+  }
+
+  /* No upload permission without a working Turnstile configuration. */
+  if (!QG.turnstileConfig(process.env).ok) {
     return res.status(503).json({ ok: false, notConfigured: true,
       error: 'File uploads are not configured on this deployment.' });
   }
@@ -52,9 +65,31 @@ module.exports = async function handler(req, res) {
   const problem = L.checkManifest(files);
   if (problem) return bad(res, 413, problem);
 
-  /* RATE LIMIT. After the manifest is validated - so an invalid request is
-     refused without spending anybody's allowance - and before any upload
-     permission is issued. See _quote-limit.js. */
+  /* Supplemental signals, then THE BOUNDARY: a Turnstile token minted for
+     the quote_upload action. It is single-use, so the browser asks Turnstile
+     again for a separate quote_submit token before the final send - one
+     token is never verified twice. */
+  const signals = QG.checkFormSignals(body, process.env);
+  if (!signals.ok) {
+    QG.logReason('upload', signals.reason);
+    return QG.refuse(res, 403);
+  }
+  const human = await QG.verifyTurnstile(body.turnstileToken, {
+    action: QG.ACTIONS.upload, ip: QG.clientIp(req)
+  });
+  if (!human.ok) {
+    QG.logReason('upload', human.reason);
+    if (human.notConfigured) {
+      return res.status(503).json({ ok: false, notConfigured: true,
+        error: 'File uploads are not configured on this deployment.' });
+    }
+    return QG.refuse(res, human.status);
+  }
+
+  /* RATE LIMIT, burst and hourly together. After the manifest is validated
+     and the request verified - so neither invalid nor unverified requests
+     spend anybody's allowance - and before any upload permission is issued.
+     See _quote-limit.js. */
   const limit = await QL.check(req, 'upload');
   if (limit.limited) return QL.reject(res, limit);
 

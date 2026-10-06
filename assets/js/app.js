@@ -22,6 +22,8 @@
     colourChosen: false, /* true only after the visitor clicks a swatch */
     quoteText: '',
     quoteUpload: false,   /* true once /api/quote reports it can send mail */
+    quoteSiteKey: '',     /* public Turnstile site key, from the same probe */
+    quoteFormStamp: '',   /* signed page-load time, from the same probe */
     quoteSentCount: 0,    /* attachments on the request that just went */
     patina: 0,
     patinaAuto: false
@@ -1466,6 +1468,11 @@
     fillSelect($('#q-timeline'), CM.timelines, 'Select a timeline');
 
     $('#quote-form').addEventListener('submit', submitQuote);
+    /* Fetch the verification script once the visitor starts on the form, so
+       it is ready by the time they press Send - and not before. */
+    $('#quote-form').addEventListener('focusin', function () {
+      if (state.quoteUpload && state.quoteSiteKey) loadTurnstile().catch(function () {});
+    });
     $('#quote-reset').addEventListener('click', resetQuote);
     $('#quote-copy').addEventListener('click', copyQuote);
     $('#quote-copy-done').addEventListener('click', copyQuote);
@@ -1730,10 +1737,12 @@
       return { name: f.name, size: f.size, type: f.type || '' };
     });
 
-    return fetch('/api/upload-token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ files: manifest })
+    return turnstileToken('quote_upload').then(function (token) {
+      return fetch('/api/upload-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(Object.assign({ files: manifest, turnstileToken: token }, botFields()))
+      });
     }).then(function (r) {
       return r.json().catch(function () { return {}; })
         .then(function (d) { return { response: r, data: d }; });
@@ -1960,7 +1969,11 @@
       .then(function (info) {
         /* Both halves have to be live for the form to promise anything:
            a mailbox to send to, and storage to put the files in. */
-        state.quoteUpload = Boolean(info && info.ready && info.uploads);
+        state.quoteUpload = Boolean(info && info.ready && info.uploads &&
+                                    typeof info.turnstileSiteKey === 'string' &&
+                                    info.turnstileSiteKey);
+        state.quoteSiteKey = state.quoteUpload ? info.turnstileSiteKey : '';
+        state.quoteFormStamp = (info && typeof info.formStamp === 'string') ? info.formStamp : '';
         /* Swap the note under the send button to match what will really
            happen when it is pressed. */
         var form = $('#quote-form');
@@ -1968,6 +1981,117 @@
         renderDrawingList();
       })
       .catch(function () { state.quoteUpload = false; });
+  }
+
+  /* ---------------------------------------------------- bot verification
+   *
+   * Cloudflare Turnstile, in Managed mode with appearance "interaction-only":
+   * most visitors never see anything; a visitor Cloudflare is unsure about
+   * gets a single checkbox in the form. The script is the only third-party
+   * code on the site, so it is loaded ONLY on the quote form, ONLY when this
+   * deployment can send server-side, and only once the visitor starts using
+   * the form - never on any other page.
+   *
+   * Every token is single-use and lives five minutes, so a fresh widget is
+   * rendered for each request (one for the upload permission, another for
+   * the quote itself) and removed afterwards. The server verifies each token
+   * with Cloudflare; nothing here is trusted on its own.
+   */
+  var TURNSTILE_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+  var VERIFY_FAILED = "We couldn't verify this request. Please try again, or contact the shop directly.";
+  var turnstileLoading = null;
+
+  function loadTurnstile() {
+    if (window.turnstile) return Promise.resolve(window.turnstile);
+    if (turnstileLoading) return turnstileLoading;
+    turnstileLoading = new Promise(function (resolve, reject) {
+      var tag = document.createElement('script');
+      tag.src = TURNSTILE_SRC;
+      tag.async = true;
+      tag.onload = function () {
+        if (window.turnstile) resolve(window.turnstile);
+        else reject(new Error('turnstile missing'));
+      };
+      tag.onerror = function () { reject(new Error('turnstile blocked')); };
+      document.head.appendChild(tag);
+    }).catch(function (err) {
+      turnstileLoading = null;      /* allow a later retry */
+      throw err;
+    });
+    return turnstileLoading;
+  }
+
+  function verificationError() {
+    var e = new Error('verification');
+    e.customerMessage = VERIFY_FAILED;
+    return e;
+  }
+
+  /* Resolves a fresh token for `action`, or rejects with the customer-safe
+     message. Waits patiently if Cloudflare decides to show the checkbox. */
+  function turnstileToken(action) {
+    return loadTurnstile().then(function (ts) {
+      return new Promise(function (resolve, reject) {
+        var box = $('#quote-turnstile');
+        if (!box || !state.quoteSiteKey) { reject(verificationError()); return; }
+        var holder = document.createElement('div');
+        box.appendChild(holder);
+        var widget = null, done = false, errors = 0, timer = null;
+
+        function finish(fn, value) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          try { if (widget !== null) ts.remove(widget); } catch (e) { /* gone */ }
+          if (holder.parentNode) holder.parentNode.removeChild(holder);
+          box.classList.remove('is-asking');
+          fn(value);
+        }
+        function wait(ms) {
+          clearTimeout(timer);
+          timer = setTimeout(function () { finish(reject, verificationError()); }, ms);
+        }
+
+        try {
+          widget = ts.render(holder, {
+            sitekey: state.quoteSiteKey,
+            action: action,
+            appearance: 'interaction-only',
+            execution: 'execute',
+            theme: 'auto',
+            size: 'flexible',
+            'response-field': false,
+            'refresh-expired': 'never',
+            retry: 'auto',
+            'retry-interval': 2000,
+            callback: function (token) { finish(resolve, token); },
+            'error-callback': function () {
+              errors += 1;
+              if (errors >= 3) finish(reject, verificationError());
+              return true;    /* handled here; Turnstile keeps retrying */
+            },
+            'expired-callback': function () { finish(reject, verificationError()); },
+            'timeout-callback': function () { finish(reject, verificationError()); },
+            /* A checkbox is being shown: give the visitor time to use it. */
+            'before-interactive-callback': function () {
+              box.classList.add('is-asking');
+              wait(180000);
+            },
+            'unsupported-callback': function () { finish(reject, verificationError()); }
+          });
+          ts.execute(holder);
+          wait(30000);
+        } catch (err) {
+          finish(reject, verificationError());
+        }
+      });
+    }, function () { throw verificationError(); });
+  }
+
+  /* The supplemental signals the server checks alongside the token. */
+  function botFields() {
+    var hp = $('#q-hp');
+    return { formStamp: state.quoteFormStamp, hp: hp ? hp.value : '' };
   }
 
   function setQuoteSending(sending) {
@@ -2053,16 +2177,20 @@
     var uploaded = files.length ? uploadAll(files) : Promise.resolve([]);
 
     uploaded.then(function (stored) {
-      return fetch('/api/quote', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: $('#q-name').value.trim(),
-          email: $('#q-email').value.trim(),
-          subject: 'Quote request from ' + $('#q-name').value.trim(),
-          text: body,
-          files: stored
-        })
+      /* A SECOND, separate token: the upload's token is already spent. */
+      return turnstileToken('quote_submit').then(function (token) {
+        return fetch('/api/quote', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(Object.assign({
+            name: $('#q-name').value.trim(),
+            email: $('#q-email').value.trim(),
+            subject: 'Quote request from ' + $('#q-name').value.trim(),
+            text: body,
+            files: stored,
+            turnstileToken: token
+          }, botFields()))
+        });
       });
     }).then(function (response) {
       return response.json().catch(function () { return {}; })

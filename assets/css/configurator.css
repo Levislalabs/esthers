@@ -1542,6 +1542,20 @@
    wording is the default because that is what happens when it cannot; JS
    swaps to the direct-send wording once the endpoint says it is live. */
 .quote__note--server { display: none; }
+
+/* Bot-check container: takes no space unless Turnstile shows its checkbox. */
+.quote__turnstile:empty { display: none; }
+.quote__turnstile.is-asking { margin: 0 0 1rem; }
+
+/* Honeypot: off-screen, not display:none, so naive bots still see a field. */
+.field--hp {
+  position: absolute !important;
+  left: -10000px;
+  top: auto;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
 .quote__form.can-send .quote__note--mail { display: none; }
 .quote__form.can-send .quote__note--server { display: block; }
 
