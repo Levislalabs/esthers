@@ -162,20 +162,26 @@
                 </p>
               </div>
 
-              <div class="field field--wide">
-                <label class="field__label" for="q-drawing">Drawings or documents
-                  <span class="field__optional">optional</span></label>
+              <div class="field field--wide field--file">
+                <label class="field__label" for="q-drawing">Project photo, drawing or document
+                  <span class="field__req">required</span></label>
                 <div class="filedrop" id="q-drawing-drop">
-                  <input id="q-drawing" name="drawing" type="file" multiple>
+                  <input id="q-drawing" name="drawing" type="file" multiple
+                         aria-describedby="q-drawing-need q-drawing-error">
                   <span class="filedrop__icon">
                     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16.5V4m0 0L7.5 8.5M12 4l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 15.5v2.9A1.6 1.6 0 0 0 5.6 20h12.8a1.6 1.6 0 0 0 1.6-1.6v-2.9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
                   </span>
                   <span class="filedrop__text">
                     <strong>Choose files</strong>
-                    Site drawings, sketches, photos or a spec sheet. PDF, image, DWG or Word.
-                    <em class="filedrop__limits">Up to 5 files, 25 MB each.</em>
+                    <span id="q-drawing-need">At least one is needed: a site or project photo, a
+                    sketch, a PDF or drawing, a DWG/DXF file, or a specification or other
+                    document.</span>
+                    <em class="filedrop__limits">JPG, PNG, HEIC, WebP, PDF, DWG, DXF or Word. Up to 5 files, 25 MB each.</em>
                   </span>
                 </div>
+                <span class="field__error" id="q-drawing-error">Please attach at least one project
+                  photo, drawing, PDF, specification or other project file so we can review your
+                  quote request.</span>
                 <ul class="filelist" id="q-drawing-list"></ul>
                 <!-- Filled by renderDrawingList(). The wording depends on whether
                      this deployment can actually receive files, so it is not
@@ -215,7 +221,9 @@
               <button class="btn btn--ghost" type="button" id="quote-copy"><span>Copy as text</span></button>
               <p class="quote__note quote__note--mail">
                 This opens the request in your email app so you can see exactly what is being sent
-                before it leaves. No details are stored by this page.
+                before it leaves. Files cannot be attached automatically this way: please attach at
+                least one project photo, drawing or document to the email yourself before sending.
+                No details are stored by this page.
               </p>
               <p class="quote__note quote__note--server">
                 Your quote request and files are sent directly to Esther's. Files are stored
@@ -236,8 +244,10 @@
               </span>
               <h3 class="subhead quote__done-title" data-sent="Your request has been sent">Your request is ready to send</h3>
               <p class="quote__done-mail">
-                We have handed it to your email app with everything filled in. If nothing opened, copy the
-                request instead and send it to us however you like. We read every one.
+                We have handed it to your email app with everything filled in. <strong>Your files are
+                not attached automatically</strong> - please attach at least one project photo, drawing
+                or document to that email before you send it. If nothing opened, copy the request
+                instead and send it to us with your files however you like. We read every one.
               </p>
               <p class="quote__done-server">
                 It is with us now, drawings and all. We read every one and will come back to you at the

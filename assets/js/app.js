@@ -24,6 +24,8 @@
     quoteUpload: false,   /* true once /api/quote reports it can send mail */
     quoteSiteKey: '',     /* public Turnstile site key, from the same probe */
     quoteFormStamp: '',   /* signed page-load time, from the same probe */
+    quoteMissingFile: false, /* last validation failed only for want of a file */
+    quoteProbed: false,   /* true once the readiness probe has answered or failed */
     quoteSentCount: 0,    /* attachments on the request that just went */
     patina: 0,
     patinaAuto: false
@@ -1804,9 +1806,20 @@
       ]));
     });
 
+    /* A file has been chosen: clear the required-field error straight away. */
+    if (files.length) markInvalid(input, false);
+
     if (!hint) return;
-    hint.hidden = files.length === 0;
-    if (!files.length) { hint.classList.remove('field__hint--bad'); return; }
+    if (!files.length) {
+      hint.classList.remove('field__hint--bad');
+      /* Email-app fallback: say BEFORE they press Send that the file has to
+         go on the email by hand. */
+      var fallback = state.quoteProbed && !state.quoteUpload;
+      hint.hidden = !fallback;
+      if (fallback) hint.textContent = ATTACH_BY_HAND;
+      return;
+    }
+    hint.hidden = false;
 
     /* Say what will actually happen to these files. The answer differs
        depending on whether this deployment can send them, so it is read
@@ -1816,9 +1829,9 @@
     hint.textContent = problem ? problem
       : state.quoteUpload
         ? 'These will be sent with your request.'
-        : 'This deployment cannot receive files yet, so these will NOT be sent. ' +
-          'Attach them to the message that opens instead - they are listed in the ' +
-          'request so nothing gets missed.';
+        : 'Online sending is not available right now, so these will NOT be sent from ' +
+          'this page. Attach at least one of them to the email that opens before you ' +
+          'send it - they are listed in the request so nothing gets missed.';
   }
 
   /* Per-file upload state, shown in the list the customer is already looking
@@ -1889,7 +1902,27 @@
       if (!good) { ok = false; if (!firstBad) firstBad = input; }
     });
 
-    if (firstBad) firstBad.focus();
+    /* AT LEAST ONE PROJECT FILE for an online quote - checked here so the
+       customer hears it before anything is sent; the server enforces the
+       same rule regardless. (The email-app fallback cannot carry files at
+       all, so there the field explains how to attach them by hand instead.) */
+    state.quoteMissingFile = false;
+    var drawing = $('#q-drawing');
+    if (state.quoteUpload && drawing) {
+      var hasFile = Boolean(drawing.files && drawing.files.length);
+      markInvalid(drawing, !hasFile);
+      if (!hasFile) {
+        ok = false;
+        state.quoteMissingFile = true;
+        if (!firstBad) firstBad = drawing;
+      }
+    }
+
+    if (firstBad) {
+      var target = firstBad.closest('.field') || firstBad;
+      if (target.scrollIntoView) target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      firstBad.focus({ preventScroll: true });
+    }
     return ok;
   }
 
@@ -1937,9 +1970,23 @@
       favs.forEach(function (f) { lines.push('  · ' + f); });
     }
 
-    if (drawings.length) {
-      lines.push('', 'Drawings attached to this email:');
-      drawings.forEach(function (d) { lines.push('  · ' + d); });
+    if (state.quoteUpload) {
+      /* Server path: the files really are uploaded and linked below this
+         text by the server, which only sends once every one has passed. */
+      if (drawings.length) {
+        lines.push('', 'Project files sent with this request:');
+        drawings.forEach(function (d) { lines.push('  · ' + d); });
+      }
+    } else {
+      /* Email-app path: a mailto: link CANNOT attach anything. Say so, and
+         ask for at least one file to be attached by hand. */
+      lines.push('', 'PROJECT FILES - NOT ATTACHED AUTOMATICALLY:',
+        'Please attach at least one project photo, drawing, PDF, specification or',
+        'other project file to this email before you send it.');
+      if (drawings.length) {
+        lines.push('Files chosen on the website (attach these):');
+        drawings.forEach(function (d) { lines.push('  · ' + d); });
+      }
     }
 
     /* Optional since the field was relaxed. An empty box gets the same
@@ -1963,7 +2010,7 @@
    * is a boolean.
    */
   function probeQuoteUpload() {
-    if (!window.fetch) return;
+    if (!window.fetch) { state.quoteProbed = true; renderDrawingList(); return; }
     fetch('/api/quote', { method: 'GET', headers: { 'Accept': 'application/json' } })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (info) {
@@ -1974,13 +2021,18 @@
                                     info.turnstileSiteKey);
         state.quoteSiteKey = state.quoteUpload ? info.turnstileSiteKey : '';
         state.quoteFormStamp = (info && typeof info.formStamp === 'string') ? info.formStamp : '';
+        state.quoteProbed = true;
         /* Swap the note under the send button to match what will really
            happen when it is pressed. */
         var form = $('#quote-form');
         if (form) form.classList.toggle('can-send', state.quoteUpload);
         renderDrawingList();
       })
-      .catch(function () { state.quoteUpload = false; });
+      .catch(function () {
+        state.quoteUpload = false;
+        state.quoteProbed = true;
+        renderDrawingList();
+      });
   }
 
   /* ---------------------------------------------------- bot verification
@@ -1999,6 +2051,13 @@
    */
   var TURNSTILE_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
   var VERIFY_FAILED = "We couldn't verify this request. Please try again, or contact the shop directly.";
+  /* Same sentence the server uses (api/quote.js ATTACHMENT_REQUIRED). */
+  var ATTACHMENT_REQUIRED = 'Please attach at least one project photo, drawing, PDF, ' +
+    'specification or other project file so we can review your quote request.';
+  /* The email-app fallback cannot carry files, so it has to say so plainly. */
+  var ATTACH_BY_HAND = 'Online sending is not available right now, so files cannot be sent ' +
+    'from this page. When your email opens, attach at least one project photo, drawing or ' +
+    'document to it before you send.';
   var turnstileLoading = null;
 
   function loadTurnstile() {
@@ -2133,7 +2192,9 @@
   function submitQuote(ev) {
     ev.preventDefault();
     if (!validateQuote()) {
-      toast('#d4574f', false, 'Check the highlighted fields');
+      var onlyFile = state.quoteMissingFile &&
+        !document.querySelector('#quote-form .field.is-invalid:not(.field--file)');
+      toast('#d4574f', false, onlyFile ? ATTACHMENT_REQUIRED : 'Check the highlighted fields');
       return;
     }
 

@@ -1230,6 +1230,7 @@
   display: none;
 }
 .field.is-invalid .field__error { display: block; }
+.field--file.is-invalid .filedrop { border-color: #d4574f; background: rgba(212, 87, 79, 0.06); }
 
 /* Multi-select material picker: a disclosure button over a checkbox group.
    A native <select multiple> needs ctrl-click on desktop and collapses to an

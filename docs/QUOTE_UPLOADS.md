@@ -54,11 +54,61 @@ arrived.
 
 ---
 
+## Online quote submissions require at least one valid project attachment
+
+Every quote sent through the website (`POST /api/quote`) must carry **at least
+one** project file — a site or project photo, a sketch, a PDF or drawing, a
+DWG/DXF file, or a specification or other document. Any type on the existing
+allow-list counts (below); a photograph specifically is **not** required, so a
+contractor with drawings and specs is never turned away.
+
+Why:
+
+- **Estimating.** Esther's quotes physical sheet-metal work; a photo, drawing
+  or spec is what an estimate is actually made from.
+- **One more layer of spam friction.** A text-only request is the cheapest
+  thing for a bot to send. Requiring a real, verified upload raises that cost.
+  It is a *supplemental* layer only — the anti-bot boundary is still the
+  server-verified Turnstile check plus server-side validation (see *Automated
+  spam* below). It never replaces Turnstile, the rate limits, duplicate
+  suppression, the honeypot/form-age signals or any upload check.
+
+How it is enforced:
+
+- **Server (authoritative).** An omitted, empty or non-array `files` field is
+  refused with `400 { ok:false, attachmentRequired:true, error }`, before any
+  bot check, Turnstile call, rate limit, Blob lookup or email:
+  "Please attach at least one project photo, drawing, PDF, specification or
+  other project file so we can review your quote request." The message says
+  nothing about spam.
+- **No text-only email, ever.** The email is sent only after at least one file
+  — in fact *every* claimed file — has passed all the existing checks: a path
+  shaped like one we issued, an allowed extension, the Blob object exists, is
+  non-empty, within 25 MB, within 75 MB combined, and its first bytes match its
+  type. A final guard immediately before sending refuses again if, somehow, no
+  verified attachment is present.
+- **Readiness.** `GET /api/quote` reports `ready: true` only when the mailbox,
+  Turnstile **and** Blob storage are all configured: a deployment that cannot
+  take files cannot send quotes, and falls back to the email app instead.
+- **Browser (courtesy).** The field reads "Project photo, drawing or document —
+  required" with the accepted kinds listed beneath it. Pressing Send with no
+  file chosen stops in the browser — nothing is uploaded, verified or sent —
+  marks the field, shows the same sentence, scrolls to and focuses the file
+  picker, and keeps everything already typed.
+- **Email-app fallback.** A `mailto:` link cannot attach files. When the site
+  falls back to the visitor's email app, the page says so **before** Send
+  (under the file field and under the button), the composed email begins its
+  file section with "PROJECT FILES - NOT ATTACHED AUTOMATICALLY" and asks for
+  at least one to be attached by hand, and the confirmation panel repeats it.
+  Nothing on that path ever says the files were attached. (The fallback does
+  not block on an empty file picker, because nothing chosen there could travel
+  anyway; the customer attaches files in their email app.)
+
 ## Limits
 
 | | |
 | --- | --- |
-| Files per request | **5** |
+| Files per request | **1 – 5** (at least one is required) |
 | Each file | **25 MB** |
 | All files together | **75 MB** |
 
@@ -195,7 +245,8 @@ on our page** made the request.
 1. method → **Origin** (cross-site browser POST → 403)
 2. mailbox configured, **Turnstile configured** (else 503 `notConfigured` →
    the form falls back to the visitor's email app)
-3. parse and validate name, email, text, file count, each file's path and type
+3. parse and validate name, email, text, **at least one file** and no more
+   than five, each file's path and type
 4. **form signals** — honeypot empty, form stamp valid and ≥ 3 s old
 5. **Turnstile** — `quote_submit` token verified with Cloudflare Siteverify
 6. **rate limit** — burst + hourly together
@@ -231,10 +282,12 @@ customer needs to know to wait, or that the request already arrived.)
   `script-src` and `frame-src https://challenges.cloudflare.com`.
 - **Token lifecycle:** every token is single-use and expires after 300 s. The
   browser renders a fresh widget per request and removes it afterwards:
-  - with attachments: token A (`quote_upload`) → `/api/upload-token` (verified,
-    spent) → files uploaded → token B (`quote_submit`) → `/api/quote`;
-  - without attachments: token B only.
-  No token is ever sent twice. A retry after any failure gets new tokens.
+  token A (`quote_upload`) → `/api/upload-token` (verified, spent) → at least
+  one file uploaded → token B (`quote_submit`) → `/api/quote` → server verifies
+  ≥ 1 real uploaded file → duplicate reservation → Resend.
+  Because every online quote needs a file, there is no "quote token only"
+  path. No token is ever sent twice; a retry after any failure gets new
+  tokens.
 - **Server verification** (`api/_quote-guard.js` `verifyTurnstile`): POST to
   `https://challenges.cloudflare.com/turnstile/v0/siteverify` with `secret`,
   `response`, `remoteip` (the visitor's IP is sent to Cloudflare, as Cloudflare
@@ -332,12 +385,18 @@ Vercel — deleting the commit does not un-expose it.
 4. **Verify in production:**
    - `GET https://www.esthers.ca/api/quote` → `ready: true`,
      `turnstileSiteKey` = the public key, a `formStamp`;
-   - send one real quote from a phone and one from a desktop — expect one
-     email each, and no visible challenge for most visitors;
+   - send one real quote from a phone (with a photo) and one from a desktop
+     (with a PDF) — expect one email each with its file linked, and no visible
+     challenge for most visitors;
+   - press Send with no file chosen → the form stops and asks for a project
+     file; nothing is sent;
    - send the identical request again within 30 minutes → the "already
      received" message, no second email;
    - `curl -X POST https://www.esthers.ca/api/quote -H 'content-type: application/json' -d '{"name":"Bot","email":"b@x.yz","text":"x"}'`
-     → 403, generic message, no email;
+     → 400 `attachmentRequired`, no email;
+   - the same with a well-formed but fake file,
+     `"files":[{"pathname":"quotes/2026/10/00000000000000000000000000000000/1-a.pdf"}]`
+     → 403, generic "couldn't verify" message, no email;
    - Vercel logs: `quote-guard: … refused: …` lines with reasons only;
    - Cloudflare Turnstile analytics show solves for the widget.
 5. Optional: a Firestore TTL policy on `quoteDuplicates.expireAt` (Firebase
@@ -363,7 +422,12 @@ production; token and secret never logged or returned; burst, hourly,
 rollover, all-or-nothing, shared-across-instances limits; honeypot, form age,
 forged stamps, omission; origin; exact / normalised / distinct duplicates,
 window expiry, release on failure, stale pending, concurrent reservations;
-upload permissions only after verification; existing size/type/path checks.
+upload permissions only after verification; existing size/type/path checks;
+the attachment rule (`quote-attachments.test.mjs`): `files` empty, omitted or
+not an array refused before any other work, no reservation left behind, each
+allowed type (JPG, JPEG, PNG, HEIC, WebP, PDF, DWG, DXF, DOC, DOCX) accepted on
+its own, unsupported / missing / empty / mismatched / oversized files still
+refused, and the full two-token upload-then-quote flow.
 
 ---
 

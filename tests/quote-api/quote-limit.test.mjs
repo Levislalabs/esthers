@@ -292,10 +292,13 @@ describe('the endpoints', () => {
   test('/api/quote: once limited, a well-formed quote with an attachment is refused BEFORE any Blob lookup', async () => {
     const ip = freshIp();
     for (let i = 0; i < 2; i += 1) await call(quoteHandler, req(ip, { body: validQuote() }));
+    /* Every quote now carries a file, so the two allowed ones did look up
+       theirs; the limited one must add NO lookup of its own. */
+    const headsBefore = blob.calls.head.length;
     const out = await call(quoteHandler, req(ip, { body: validQuote({
       files: [{ pathname: 'quotes/2026/09/' + 'b'.repeat(32) + '/1-plan.pdf' }] }) }));
     assert.equal(out.statusCode, 429);
-    assert.equal(blob.calls.head.length, 0);
+    assert.equal(blob.calls.head.length, headsBefore);
   });
 
   test('/api/quote: readiness probe (GET) is never limited and publishes only public values', async () => {

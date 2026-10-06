@@ -33,6 +33,12 @@ const L = require('./_lib.js');
 const QL = require('./_quote-limit.js');
 const QG = require('./_quote-guard.js');
 
+/* Every ONLINE quote needs at least one project file. Worded for the
+   customer; it deliberately says nothing about spam. */
+const ATTACHMENT_REQUIRED =
+  'Please attach at least one project photo, drawing, PDF, specification or ' +
+  'other project file so we can review your quote request.';
+
 function bad(res, status, message, extra) {
   return res.status(status).json(Object.assign({ ok: false, error: message }, extra || {}));
 }
@@ -48,7 +54,10 @@ module.exports = async function handler(req, res) {
     /* Server sending needs a mailbox AND a working Turnstile configuration.
        Without Turnstile the form falls back to the customer's email app,
        which cannot be used to make this server send anything. */
-    const ready = Boolean(process.env.RESEND_API_KEY && process.env.QUOTE_TO && ts.ok);
+    /* ...and storage: every online quote now carries at least one file, so
+       a deployment that cannot take uploads cannot send quotes either. */
+    const ready = Boolean(process.env.RESEND_API_KEY && process.env.QUOTE_TO && ts.ok &&
+                          process.env.BLOB_READ_WRITE_TOKEN);
     res.setHeader('Cache-Control', 'no-store');
     return res.status(200).json({
       ok: true,
@@ -115,11 +124,24 @@ module.exports = async function handler(req, res) {
 
   // ---- files: metadata only, and every claim in it is checked ----
   const claimed = Array.isArray(body.files) ? body.files : [];
+
+  /* AT LEAST ONE PROJECT FILE. Esther's quotes physical work, so a photo,
+     drawing, sketch or spec is what an estimate is made from - and a
+     text-only request is also the cheapest thing for a spam bot to send.
+     Checked here, server-side, before any bot check, rate limit, Blob
+     lookup or email: an omitted, empty or non-array `files` is refused. The
+     browser checks first too, but this is the rule. */
+  if (claimed.length === 0) {
+    return bad(res, 400, ATTACHMENT_REQUIRED, { attachmentRequired: true });
+  }
   if (claimed.length > L.MAX_FILES) {
     return bad(res, 400, 'Please attach no more than ' + L.MAX_FILES + ' files.');
   }
-  if (claimed.length && !process.env.BLOB_READ_WRITE_TOKEN) {
-    return bad(res, 503, 'File uploads are not configured on this deployment.');
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    /* No storage means no way to carry the required file: fall back to the
+       customer's email app, exactly like a missing mailbox. */
+    return res.status(503).json({ ok: false, notConfigured: true,
+      error: 'File uploads are not configured on this deployment.' });
   }
 
   /* Cheap structural checks on every claimed file, done BEFORE the rate
@@ -171,7 +193,7 @@ module.exports = async function handler(req, res) {
   if (limit.limited) return QL.reject(res, limit);
 
   let attachments = [];
-  if (claimed.length) {
+  { /* every request reaching here claims 1..MAX_FILES files */
     let head, issueSignedToken, presignUrl;
     try {
       ({ head, issueSignedToken, presignUrl } = require('@vercel/blob'));
@@ -253,6 +275,17 @@ module.exports = async function handler(req, res) {
     }
   }
 
+  /* Belt and braces: nothing is emailed unless at least one file has passed
+     EVERY check above - our path shape, allowed type, the object exists, is
+     non-empty, within the per-file and combined limits, and its first bytes
+     match its type. The loop returns on any failure, so this cannot fire
+     today; it is here so a future edit cannot quietly reopen text-only
+     sending. */
+  if (attachments.length < 1 || attachments.length !== claimed.length) {
+    console.error('quote: refusing to send without verified attachments');
+    return bad(res, 400, ATTACHMENT_REQUIRED, { attachmentRequired: true });
+  }
+
   // ---- compose ----
   let fullText = text;
   if (attachments.length) {
@@ -267,8 +300,6 @@ module.exports = async function handler(req, res) {
                ' days. The files are stored privately and are removed after ' +
                L.RETENTION_DAYS + ' days.');
     fullText += lines.join('\n');
-  } else {
-    fullText += '\n\nATTACHMENTS / FILES\n\nNone sent with this request.';
   }
 
   const payload = {

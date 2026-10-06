@@ -111,6 +111,41 @@ export function captureLogs() {
 const API_DIR = fileURLToPath(new URL('../../api/', import.meta.url));
 const BLOB_PATH = require.resolve('@vercel/blob', { paths: [API_DIR] });
 
+/*
+ * Objects that "exist" in Blob storage: pathname -> { size, bytes }.
+ * head() reports size; the signature read (a GET of the presigned URL,
+ * answered by installFakeFetch) returns bytes. Anything not registered does
+ * not exist.
+ */
+export const blobObjects = new Map();
+
+/* First bytes of each supported type, as the server's sniff() expects. */
+export const MAGIC = {
+  pdf: Buffer.from('%PDF-1.7\n%fake drawing\n'),
+  jpg: Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 0, 16, 0x4A, 0x46, 0x49, 0x46]),
+  png: Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13]),
+  webp: Buffer.concat([Buffer.from('RIFF'), Buffer.from([0, 0, 0, 0]), Buffer.from('WEBPVP8 ')]),
+  heic: Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypheic'), Buffer.alloc(8)]),
+  dwg: Buffer.from('AC1032\0\0\0\0'),
+  dxf: Buffer.from('  0\r\nSECTION\r\n  2\r\nHEADER\r\n'),
+  doc: Buffer.from([0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 0, 0]),
+  docx: Buffer.from([0x50, 0x4B, 0x03, 0x04, 20, 0, 6, 0])
+};
+
+let blobSeq = 0;
+/* Registers an uploaded object and returns its pathname, shaped exactly like
+   one /api/upload-token would issue. `bytes` defaults to the right magic. */
+export function storedFile(filename, opts) {
+  const o = opts || {};
+  blobSeq += 1;
+  const id = (blobSeq.toString(16) + 'f'.repeat(32)).slice(0, 32);
+  const pathname = 'quotes/2026/10/' + id + '/' + (o.index || 1) + '-' + filename;
+  const ext = filename.split('.').pop().toLowerCase();
+  const bytes = o.bytes || MAGIC[ext === 'jpeg' ? 'jpg' : ext] || Buffer.from('????');
+  blobObjects.set(pathname, { size: o.size != null ? o.size : bytes.length + 1000, bytes });
+  return pathname;
+}
+
 export function installFakeBlob() {
   const calls = { issue: [], presign: [], head: [] };
   const saved = require.cache[BLOB_PATH];
@@ -122,7 +157,12 @@ export function installFakeBlob() {
         calls.presign.push(opts);
         return { presignedUrl: 'https://blob.invalid/' + opts.pathname };
       },
-      async head(pathname) { calls.head.push(pathname); throw new Error('not used'); }
+      async head(pathname) {
+        calls.head.push(pathname);
+        const o = blobObjects.get(pathname);
+        if (!o) throw new Error('BlobNotFoundError');
+        return { size: o.size, pathname };
+      }
     }
   };
   return { calls, restore() { if (saved) require.cache[BLOB_PATH] = saved; else delete require.cache[BLOB_PATH]; } };
@@ -197,6 +237,12 @@ export function installFakeFetch() {
       }
       return { ok: true, status: 200, json: async () => ({ success: false, 'error-codes': ['invalid-input-response'] }) };
     }
+    if (u.startsWith('https://blob.invalid/')) {   /* signature read via the presigned URL */
+      const o = blobObjects.get(u.slice('https://blob.invalid/'.length));
+      if (!o) return { ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0) };
+      return { ok: true, status: 206, arrayBuffer: async () => o.bytes.buffer.slice(
+        o.bytes.byteOffset, o.bytes.byteOffset + Math.min(o.bytes.length, 512)) };
+    }
     if (u === 'https://api.resend.com/emails') {
       fake.sent.push(JSON.parse(init.body));
       if (fake.resendStatus !== 200) {
@@ -240,13 +286,16 @@ export function stamp(ageMs) {
 }
 
 let quoteSeq = 0;
-/* A complete, valid, verifiable quote body. Each one has distinct text so the
-   duplicate layer does not interfere unless a test means it to. */
+/* A complete, valid, verifiable quote body - now WITH one uploaded project
+   file, because every online quote must carry at least one. Each body has
+   distinct text so the duplicate layer does not interfere unless a test
+   means it to. */
 export function validQuote(over) {
   quoteSeq += 1;
   return Object.assign({
     name: 'Pat Customer', email: 'pat@example.test',
     text: 'Flashing for a garage roof, 20 ft. Request #' + quoteSeq + '-' + Math.random(),
+    files: [{ pathname: storedFile('plan.pdf') }],
     turnstileToken: passToken(QG.ACTIONS.quote),
     formStamp: stamp(),
     hp: ''
