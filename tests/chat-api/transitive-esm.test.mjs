@@ -42,6 +42,8 @@ import { createRequire } from 'module';
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { fileURLToPath as __rootFileURLToPath } from 'node:url';
 /* Repository root, from this file's own location - portable across
    machines and operating systems. Forward slashes on Windows too, which
@@ -126,13 +128,77 @@ describe('the installed dependency tree', () => {
       'the upstream CommonJS require of jose - the exact failing statement');
   });
 
-  test('jwks-rsa is reached eagerly from firebase-admin/auth', () => {
-    const out = execFileSync(process.execPath, ['-e',
-      "require('firebase-admin/auth');"
-      + "const f=Object.keys(require.cache).filter(k=>k.split(require('path').sep).join('/').includes('node_modules/jwks-rsa'));"
-      + "console.log(f.length);"], { cwd: ROOT, encoding: 'utf8' }).trim();
-    assert.ok(Number(out) > 0,
-      'auth loads jwks-rsa at import time, which is why the failure was at load');
+  /*
+   * The capability that actually matters, tested directly - not WHEN
+   * firebase-admin happens to load jwks-rsa (an implementation detail that
+   * differs between platforms and versions; the old "eagerly reached" check
+   * failed on Windows while the real gate below passed).
+   *
+   * In a child Node with require(esm) DISABLED (Vercel's Node 22 < 22.12),
+   * load the INSTALLED jwks-rsa/src/utils.js - the CommonJS file whose first
+   * line is `const jose = require('jose')` - and make it do real work:
+   * retrieveSigningKeys() imports an RSA JWK with jose.importJWK and exports
+   * it with jose.exportSPKI. The PEM must equal the one Node's own crypto
+   * produces for the same key. If jwks-rsa resolved an ESM-only jose again,
+   * the require() throws ERR_REQUIRE_ESM and this fails; if jose loaded but
+   * the functions were missing, the key would be dropped and this fails.
+   */
+  function probeJwksUtils(utilsFile) {
+    return JSON.parse(inLegacyNode(
+      "import { createRequire } from 'module';"
+      + "import crypto from 'node:crypto';"
+      + "const file = " + JSON.stringify(utilsFile) + ";"
+      + "const req = createRequire(file);"
+      + "let utils;"
+      + "try { utils = req(file); }"
+      + "catch (e) { console.log(JSON.stringify({ loaded: false, code: e.code || e.name })); process.exit(0); }"
+      + "const { publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });"
+      + "const jwk = Object.assign(publicKey.export({ format: 'jwk' }), { kid: 'probe-key', use: 'sig', alg: 'RS256' });"
+      + "const expected = publicKey.export({ format: 'pem', type: 'spki' });"
+      + "const keys = await utils.retrieveSigningKeys([jwk]);"
+      + "const josePkg = (() => { let d = req.resolve('jose'); const path = req('path');"
+      + "  while (!req('fs').existsSync(path.join(d, 'package.json')) || JSON.parse(req('fs').readFileSync(path.join(d, 'package.json'), 'utf8')).name !== 'jose') d = path.dirname(d);"
+      + "  return JSON.parse(req('fs').readFileSync(path.join(d, 'package.json'), 'utf8')); })();"
+      + "console.log(JSON.stringify({ loaded: true, keys: keys.length,"
+      + "  kid: keys[0] && keys[0].kid, alg: keys[0] && keys[0].alg,"
+      + "  pemMatches: Boolean(keys[0]) && keys[0].getPublicKey().trim() === expected.trim(),"
+      + "  joseVersion: josePkg.version, joseType: josePkg.type || 'commonjs' }));"));
+  }
+
+  test('jwks-rsa\'s own `require(\'jose\')` path works with require(esm) DISABLED', () => {
+    const result = probeJwksUtils(ROOT + '/node_modules/jwks-rsa/src/utils.js');
+    assert.equal(result.loaded, true,
+      'jwks-rsa/src/utils.js must load without require(esm); got ' + JSON.stringify(result));
+    assert.match(result.joseVersion, /^5\./, 'jwks-rsa must resolve the scoped jose 5');
+    assert.notEqual(result.joseType, 'module', 'the jose jwks-rsa loads must be CommonJS');
+    assert.equal(result.keys, 1, 'retrieveSigningKeys must turn the JWK into a signing key');
+    assert.equal(result.kid, 'probe-key');
+    assert.equal(result.alg, 'RS256');
+    assert.equal(result.pemMatches, true,
+      'jose.importJWK + jose.exportSPKI must reproduce the exact SPKI PEM');
+  });
+
+  test('...and the same probe FAILS against an ESM-only jose (the defect it guards)', () => {
+    /* A throwaway copy of jwks-rsa's real src/ beside an ESM-only "jose 6".
+       Proves the probe above would catch a regression rather than pass
+       vacuously. Lives in the OS temp directory; the repo is not touched. */
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jwks-esm-control-'));
+    try {
+      const jose = path.join(tmp, 'node_modules', 'jose');
+      fs.mkdirSync(jose, { recursive: true });
+      fs.writeFileSync(path.join(jose, 'package.json'), JSON.stringify(
+        { name: 'jose', version: '6.0.0-esm-only-control', type: 'module', main: './index.js' }));
+      fs.writeFileSync(path.join(jose, 'index.js'),
+        'export async function importJWK() {} export async function exportSPKI() {}\n');
+      fs.cpSync(path.join(ROOT, 'node_modules', 'jwks-rsa', 'src'),
+        path.join(tmp, 'node_modules', 'jwks-rsa', 'src'), { recursive: true });
+
+      const result = probeJwksUtils(path.join(tmp, 'node_modules', 'jwks-rsa', 'src', 'utils.js'));
+      assert.equal(result.loaded, false, 'an ESM-only jose must make the probe fail');
+      assert.equal(result.code, 'ERR_REQUIRE_ESM');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
 
