@@ -264,7 +264,73 @@ async function verifySignature(presignedGetUrl, expectedExt) {
   // jpg and jpeg are the same thing; everything else must match exactly.
   const want = expectedExt === 'jpeg' ? 'jpg' : expectedExt;
   if (kind !== want) return { ok: false, reason: 'mismatch', found: kind };
-  return { ok: true, kind: kind };
+  /* The bytes already read are handed back so contentDigest() below does
+     not have to fetch them a second time. */
+  return { ok: true, kind: kind, head: head };
+}
+
+// ---------------------------------------------------------- content digest
+//
+// WHY THIS EXISTS. Duplicate suppression (api/_quote-guard.js) must tell a
+// REVISED drawing from a re-upload of the same one, even when both are called
+// plan.pdf. The random storage path cannot be used (it differs on every
+// upload) and Vercel Blob offers no documented content hash: its ETag is
+// described only as an opaque version token for conditional writes.
+//
+// So the server derives its own signal from the stored bytes: SHA-256 over
+// the exact stored size plus three 512-byte samples - the first bytes (already
+// read for the signature check), the middle, and the end. Files of 1536 bytes
+// or less are hashed in full. About 1 KB extra is read per file, never the
+// whole file.
+//
+// It is a SAMPLED digest, not a full hash: two different files with the same
+// size and identical bytes in all three windows would collide. Real revisions
+// almost never do - the size changes, and the formats here keep changing data
+// at both ends (PDF trailer / xref offsets and /ID, the ZIP central directory
+// with per-entry CRCs in DOCX, JPEG/PNG headers and image data, DWG/DXF
+// headers). If a sample cannot be read, null is returned and the caller must
+// treat the file as NOT a duplicate - failing towards sending, never towards
+// silently dropping a customer's request.
+
+const SAMPLE_BYTES = 512;
+
+async function readRange(url, start, end) {          /* end inclusive */
+  let res;
+  try {
+    res = await fetch(url, { headers: { Range: 'bytes=' + start + '-' + end } });
+  } catch (err) {
+    return null;
+  }
+  /* 206 only: a server that ignored Range would send the WHOLE file, and
+     this function must never download one. */
+  if (!res || res.status !== 206) return null;
+  let buf;
+  try { buf = Buffer.from(await res.arrayBuffer()); } catch (e) { return null; }
+  return buf.length === end - start + 1 ? buf : null;
+}
+
+async function contentDigest(presignedGetUrl, size, head) {
+  if (!Number.isSafeInteger(size) || size <= 0 || !Buffer.isBuffer(head)) return null;
+  const firstLen = Math.min(SAMPLE_BYTES, size);
+  if (head.length < firstLen) return null;
+  const first = head.subarray(0, firstLen);
+
+  let rest = [];
+  if (size > SAMPLE_BYTES && size <= 3 * SAMPLE_BYTES) {
+    rest = [await readRange(presignedGetUrl, SAMPLE_BYTES, size - 1)];   /* the remainder: a full hash */
+  } else if (size > 3 * SAMPLE_BYTES) {
+    const midStart = Math.floor(size / 2) - SAMPLE_BYTES / 2;
+    rest = await Promise.all([
+      readRange(presignedGetUrl, midStart, midStart + SAMPLE_BYTES - 1),
+      readRange(presignedGetUrl, size - SAMPLE_BYTES, size - 1)
+    ]);
+  }
+  if (rest.some(function (b) { return b === null; })) return null;
+
+  const h = crypto.createHash('sha256').update('esthers-content-v1|' + size + '|');
+  h.update(first);
+  rest.forEach(function (b) { h.update('|'); h.update(b); });
+  return h.digest('hex');
 }
 
 module.exports = {
@@ -273,5 +339,6 @@ module.exports = {
   ALLOWED, ALLOWED_CONTENT_TYPES,
   sniff, extensionOf, safeName,
   newRequestId, blobPrefix, blobPath, isOurBlobPath,
-  checkManifest, mb, humanSize, oneLine, isEmail, verifySignature
+  checkManifest, mb, humanSize, oneLine, isEmail, verifySignature,
+  SAMPLE_BYTES, contentDigest
 };

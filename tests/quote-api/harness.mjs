@@ -127,14 +127,43 @@ export const MAGIC = {
   webp: Buffer.concat([Buffer.from('RIFF'), Buffer.from([0, 0, 0, 0]), Buffer.from('WEBPVP8 ')]),
   heic: Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypheic'), Buffer.alloc(8)]),
   dwg: Buffer.from('AC1032\0\0\0\0'),
-  dxf: Buffer.from('  0\r\nSECTION\r\n  2\r\nHEADER\r\n'),
+  /* A text DXF must be printable for its first 256 bytes (see sniff()). */
+  dxf: Buffer.from('  0\r\nSECTION\r\n  2\r\nHEADER\r\n' + '  9\r\n$ACADVER\r\n  1\r\nAC1032\r\n'.repeat(12)),
   doc: Buffer.from([0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 0, 0]),
   docx: Buffer.from([0x50, 0x4B, 0x03, 0x04, 20, 0, 6, 0])
 };
 
+/*
+ * Stored objects are virtual: `bytes` is the real prefix (the file's magic),
+ * and every byte after it is generated from `seed`, so a 25 MB object costs
+ * nothing and any byte range can be served. SAME seed + same size = the SAME
+ * content (a re-upload); a different seed = different content (a revision).
+ */
+export function byteAt(o, i) {
+  if (i < o.bytes.length) return o.bytes[i];
+  /* Optional regions with their own seed: lets a test change ONLY the middle
+     or ONLY the end of a file while everything else stays byte-identical. */
+  let seedNum = o.seedNum;
+  for (const r of o.regions) if (i >= r.from && i < r.to) seedNum = r.seedNum;
+  let x = (seedNum ^ Math.imul(i + 1, 2654435761)) >>> 0;
+  x = Math.imul(x ^ (x >>> 15), 2246822507) >>> 0;
+  return (x ^ (x >>> 13)) & 255;
+}
+export function readBytes(o, start, end) {           /* end inclusive */
+  const out = Buffer.alloc(end - start + 1);
+  for (let i = start; i <= end; i++) out[i - start] = byteAt(o, i);
+  return out;
+}
+function seedNumber(seed) {
+  let h = 2166136261;
+  for (const ch of String(seed)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+  return h;
+}
+
 let blobSeq = 0;
 /* Registers an uploaded object and returns its pathname, shaped exactly like
-   one /api/upload-token would issue. `bytes` defaults to the right magic. */
+   one /api/upload-token would issue. `bytes` defaults to the right magic;
+   `seed` defaults to something unique, i.e. distinct content per upload. */
 export function storedFile(filename, opts) {
   const o = opts || {};
   blobSeq += 1;
@@ -142,7 +171,14 @@ export function storedFile(filename, opts) {
   const pathname = 'quotes/2026/10/' + id + '/' + (o.index || 1) + '-' + filename;
   const ext = filename.split('.').pop().toLowerCase();
   const bytes = o.bytes || MAGIC[ext === 'jpeg' ? 'jpg' : ext] || Buffer.from('????');
-  blobObjects.set(pathname, { size: o.size != null ? o.size : bytes.length + 1000, bytes });
+  const seed = o.seed != null ? o.seed : 'unique-' + blobSeq + '-' + Math.random();
+  /* opts.regions: [{ from, to, seed }] - byte ranges generated from their
+     own seed instead of the file's. */
+  blobObjects.set(pathname, {
+    size: o.size != null ? o.size : bytes.length + 3000,
+    bytes, seedNum: seedNumber(seed),
+    regions: (o.regions || []).map((r) => ({ from: r.from, to: r.to, seedNum: seedNumber(r.seed) }))
+  });
   return pathname;
 }
 
@@ -195,9 +231,12 @@ export function installFakeFetch() {
     mode: 'normal',
     siteverify: [],       /* URLSearchParams of every Siteverify call */
     sent: [],             /* every Resend payload */
+    ranges: [],           /* every Range header sent to Blob */
+    rangeMode: 'normal',  /* 'normal' | 'ignore' | 'fail-samples' */
     resendStatus: 200,
     used: new Set(),
-    challengeTs: null,    /* override challenge_ts */
+    challengeTs: null,    /* override challenge_ts (an ISO string), or fake.OMIT */
+    OMIT: Symbol('omit'),
     restore() { globalThis.fetch = orig; }
   };
   globalThis.fetch = async (url, init) => {
@@ -226,22 +265,34 @@ export function installFakeFetch() {
       fake.lastIdem.set(token, idem);
       const parts = token.split('~');
       if (parts[0] === 'pass') {
-        return { ok: true, status: 200, json: async () => ({
-          success: true,
-          challenge_ts: fake.challengeTs || new Date().toISOString(),
-          hostname: parts[2], 'error-codes': [], action: parts[1], cdata: ''
-        }) };
+        const body = { success: true, hostname: parts[2], 'error-codes': [], action: parts[1], cdata: '' };
+        /* challengeTs: null/undefined -> now; fake.OMIT -> no field at all;
+           anything else (string, null via tsValue, number...) -> sent as-is. */
+        if (fake.challengeTs === fake.OMIT) { /* omitted */ }
+        else if ('tsValue' in fake) body.challenge_ts = fake.tsValue;
+        else body.challenge_ts = fake.challengeTs || new Date().toISOString();
+        return { ok: true, status: 200, json: async () => body };
       }
       if (parts[0] === 'fail') {
         return { ok: true, status: 200, json: async () => ({ success: false, 'error-codes': [parts[1]] }) };
       }
       return { ok: true, status: 200, json: async () => ({ success: false, 'error-codes': ['invalid-input-response'] }) };
     }
-    if (u.startsWith('https://blob.invalid/')) {   /* signature read via the presigned URL */
+    if (u.startsWith('https://blob.invalid/')) {   /* reads via the presigned URL, Range honoured */
       const o = blobObjects.get(u.slice('https://blob.invalid/'.length));
+      fake.ranges.push((init && init.headers && init.headers.Range) || null);
       if (!o) return { ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0) };
-      return { ok: true, status: 206, arrayBuffer: async () => o.bytes.buffer.slice(
-        o.bytes.byteOffset, o.bytes.byteOffset + Math.min(o.bytes.length, 512)) };
+      if (fake.rangeMode === 'ignore') {           /* a server that ignores Range */
+        return { ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(0) };
+      }
+      const m = /^bytes=(\d+)-(\d+)$/.exec((init && init.headers && init.headers.Range) || '');
+      if (!m) return { ok: false, status: 416, arrayBuffer: async () => new ArrayBuffer(0) };
+      const start = Number(m[1]);
+      const end = Math.min(Number(m[2]), o.size - 1);
+      if (start > end) return { ok: false, status: 416, arrayBuffer: async () => new ArrayBuffer(0) };
+      if (fake.rangeMode === 'fail-samples' && start > 0) throw new Error('ECONNRESET');
+      const buf = readBytes(o, start, end);
+      return { ok: true, status: 206, arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.length) };
     }
     if (u === 'https://api.resend.com/emails') {
       fake.sent.push(JSON.parse(init.body));

@@ -345,17 +345,28 @@ describe('duplicate suppression', () => {
     assert.equal(net.sent.length, 2);
   });
 
-  test('fingerprint rules: file NAMES count, storage paths and order do not', () => {
+  test('fingerprint rules (v2): name AND content digest count; storage path and order do not', () => {
     const key = Buffer.alloc(32, 7);
     const q = { name: 'A', email: 'a@b.cd', text: 't' };
-    const p = (id, n, name) => 'quotes/2026/10/' + id.repeat(32) + '/' + n + '-' + name;
-    const one = QG.fingerprint(key, Object.assign({ files: [p('a', 1, 'plan.pdf'), p('a', 2, 'photo.jpg')] }, q));
-    const reup = QG.fingerprint(key, Object.assign({ files: [p('b', 1, 'photo.jpg'), p('b', 2, 'plan.pdf')] }, q));
-    const added = QG.fingerprint(key, Object.assign({ files: [p('c', 1, 'plan.pdf'), p('c', 2, 'photo.jpg'), p('c', 3, 'roof.jpg')] }, q));
-    assert.equal(one, reup, 'same files re-uploaded in another order');
+    const D = (c) => c.repeat(64);                        /* a 64-hex digest */
+    const one = QG.fingerprint(key, Object.assign({ files: [{ name: 'plan.pdf', digest: D('a') }, { name: 'photo.jpg', digest: D('b') }] }, q));
+    const reup = QG.fingerprint(key, Object.assign({ files: [{ name: 'photo.jpg', digest: D('b') }, { name: 'plan.pdf', digest: D('a') }] }, q));
+    const revised = QG.fingerprint(key, Object.assign({ files: [{ name: 'plan.pdf', digest: D('c') }, { name: 'photo.jpg', digest: D('b') }] }, q));
+    const renamed = QG.fingerprint(key, Object.assign({ files: [{ name: 'plan-v2.pdf', digest: D('a') }, { name: 'photo.jpg', digest: D('b') }] }, q));
+    const added = QG.fingerprint(key, Object.assign({ files: [{ name: 'plan.pdf', digest: D('a') }, { name: 'photo.jpg', digest: D('b') }, { name: 'roof.jpg', digest: D('d') }] }, q));
+    assert.equal(one, reup, 'same files (same bytes) re-uploaded, in another order');
+    assert.notEqual(one, revised, 'same name, CHANGED content');
+    assert.notEqual(one, renamed, 'same content, different name');
     assert.notEqual(one, added, 'a forgotten photo added');
     assert.match(one, /^[0-9a-f]{40}$/);
-    assert.notEqual(one, QG.fingerprint(Buffer.alloc(32, 8), Object.assign({ files: [] }, q)), 'keyed');
+    assert.notEqual(one, QG.fingerprint(Buffer.alloc(32, 8), Object.assign({ files: [{ name: 'plan.pdf', digest: D('a') }, { name: 'photo.jpg', digest: D('b') }] }, q)), 'keyed');
+    /* An unreadable digest never matches anything - not even itself. */
+    const u1 = QG.fingerprint(key, Object.assign({ files: [{ name: 'plan.pdf', digest: null }] }, q));
+    const u2 = QG.fingerprint(key, Object.assign({ files: [{ name: 'plan.pdf', digest: null }] }, q));
+    assert.notEqual(u1, u2);
+    /* A digest that is not 64 hex characters is treated as unreadable. */
+    assert.notEqual(QG.fingerprint(key, Object.assign({ files: [{ name: 'p', digest: 'x' }] }, q)),
+                    QG.fingerprint(key, Object.assign({ files: [{ name: 'p', digest: 'x' }] }, q)));
   });
 
   test('the window expires: the same request may be sent again later', async () => {

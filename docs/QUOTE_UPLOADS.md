@@ -95,8 +95,13 @@ How it is enforced:
   file chosen stops in the browser — nothing is uploaded, verified or sent —
   marks the field, shows the same sentence, scrolls to and focuses the file
   picker, and keeps everything already typed.
-- **Email-app fallback.** A `mailto:` link cannot attach files. When the site
-  falls back to the visitor's email app, the page says so **before** Send
+- **Email-app fallback.** A `mailto:` link cannot attach files. The email
+  text is **always rebuilt for the email app at the moment of falling back**
+  (`buildQuoteText({ delivery: 'mail' })` inside `sendQuoteByMail()`), never
+  reused from the server path — including the late cases where the probe said
+  the server could send but `/api/upload-token` or `/api/quote` then answered
+  503 `notConfigured`. After any fallback the page stays in email-app mode.
+  When the site falls back to the visitor's email app, the page says so **before** Send
   (under the file field and under the button), the composed email begins its
   file section with "PROJECT FILES - NOT ATTACHED AUTOMATICALLY" and asks for
   at least one to be attached by hand, and the confirmation panel repeats it.
@@ -288,6 +293,15 @@ customer needs to know to wait, or that the request already arrived.)
   Because every online quote needs a file, there is no "quote token only"
   path. No token is ever sent twice; a retry after any failure gets new
   tokens.
+- **Client retry:** `retry: 'auto'` (Turnstile retries a failed challenge by
+  itself, `retry-interval` 2 s). Per Cloudflare's documented pattern the
+  `error-callback` returns **false** while retries continue and **true** once
+  the page gives up; the return value only controls Turnstile's own console
+  logging, it does not start or stop retries. The page gives up on the
+  **third** error for a widget: it removes the widget (which stops further
+  retries) and shows the generic "couldn't verify" message. A widget that
+  produces no token within 30 s (180 s once a checkbox is shown) also gives
+  up. *Needs confirming against the real widget* — the tests use a stand-in.
 - **Server verification** (`api/_quote-guard.js` `verifyTurnstile`): POST to
   `https://challenges.cloudflare.com/turnstile/v0/siteverify` with `secret`,
   `response`, `remoteip` (the visitor's IP is sent to Cloudflare, as Cloudflare
@@ -295,7 +309,19 @@ customer needs to know to wait, or that the request already arrived.)
   1–2048 printable characters or Cloudflare is not asked. 5-second timeout,
   one retry with the same idempotency key on a network error or 5xx. Success
   requires `success === true`, the expected `action`, an allowed `hostname`,
-  and a `challenge_ts` no older than 330 s.
+  and a valid `challenge_ts`.
+- **`challenge_ts` fails closed.** With a real secret it must be present, a
+  non-empty string that `Date.parse` accepts, no more than **330 s** old
+  (Cloudflare's 300 s plus 30 s skew) and no more than **60 s** in the future.
+  Missing, `null`, empty, a number, an object, unparseable or implausibly
+  future → refused (`turnstile_bad_timestamp`); too old → refused
+  (`turnstile_stale`). The customer sees only the generic "couldn't verify"
+  message. With a Cloudflare **dummy** secret (preview/local only — refused in
+  production) a timestamp that is present gets the same checks, but an
+  *absent* one is tolerated, because Cloudflare does not document the dummy
+  response body and requiring it could break preview testing while
+  protecting nothing real. (Unverified against Cloudflare's live dummy
+  service.)
 - **Fails closed.** Siteverify unreachable, timing out, 5xx, malformed JSON,
   `internal-error` or `bad-request` → 503 and **no email, no upload
   permission**. An outage stops server-sent quotes; the page still offers both
@@ -325,21 +351,53 @@ cost something, at no cost to people.
 
 ### Duplicate suppression
 
-- **Fingerprint:** HMAC-SHA-256 (key derived from `CHAT_RATE_LIMIT_SECRET`,
-  label `esthers-quote-guard-v1`) over: name, email, request text and the
-  sorted attachment **file names**. Normalisation: text fields are Unicode
-  NFKC, lower-cased, whitespace runs collapsed to one space, trimmed; email is
-  trimmed and lower-cased; storage paths (new on every upload) are ignored.
-  First 40 hex characters are the id.
+- **Fingerprint (v2):** HMAC-SHA-256 (key derived from `CHAT_RATE_LIMIT_SECRET`,
+  label `esthers-quote-guard-v1`) over: `v2`, name, email, request text, and
+  for every attachment the pair **(original file name, server-derived content
+  digest)**, the pairs sorted. First 40 hex characters are the id.
+  Normalisation: text fields (including file names) are Unicode NFKC,
+  lower-cased, whitespace runs collapsed to one space, trimmed; email is
+  trimmed and lower-cased.
+- **Content digest** (`api/_lib.js` `contentDigest`): SHA-256 over the exact
+  stored size plus three 512-byte samples of the stored file — the first 512
+  bytes (already read for the signature check), 512 from the middle and the
+  last 512. Files of 1536 bytes or less are hashed in full. That is at most
+  two extra ranged reads (~1 KB) per file; the whole file is never
+  downloaded, and a server that ignores `Range` yields no digest rather than a
+  full download.
+  - *Why not the Blob ETag:* Vercel documents `etag` only as an opaque version
+    token for conditional writes (`ifMatch`), not as a content hash, and the
+    SDK offers no checksum option. Nothing says two identical uploads share
+    an ETag, so it cannot recognise a re-upload.
+  - *Why not the storage path:* it is random and new on every upload, so it
+    would make every re-upload look new.
+  - *Nothing from the browser* is used: the digest is computed by the server
+    from the bytes actually stored.
+  - **Result:** the same file re-uploaded (new path, same bytes) → duplicate;
+    a **revised file under the same name** (different bytes) → *not* a
+    duplicate; a renamed or added file → not a duplicate.
+  - **Known limit:** it is a sampled digest. A revision with exactly the same
+    size *and* byte-identical start, middle and end would collide and be
+    treated as a duplicate for 30 minutes. Real revisions of the accepted
+    formats almost never do (the size changes, and PDF trailers/xref, DOCX
+    ZIP directories with per-file CRCs, image headers and data all change),
+    and the customer's "already received" message tells them to edit the
+    request text, which makes it new.
+  - **If a sample cannot be read**, that file contributes a random nonce, so
+    the request is **never** treated as a duplicate (logged as
+    `content digest unavailable`): failing towards sending, never towards
+    silently dropping a customer's quote.
 - **Window:** a request already emailed is not emailed again for **30
   minutes** — 409 with "We already received this exact request…", and the
   form is not marked sent. One still in flight blocks a copy for at most **2
   minutes** (so a crashed attempt never blocks for long). A *changed* request
-  (different text, an added file, a different email) is a new request and
-  goes immediately. A failed send releases its reservation at once.
+  (different text, a revised or added file, a different email) is a new
+  request and goes immediately. A failed send releases its reservation at
+  once.
 - **Storage:** Firestore collection `quoteDuplicates`, document id = the
   fingerprint, fields `status` (`pending`/`sent`), `at` (ms) and `expireAt`
-  (Date, for an optional TTL policy). Nothing else: no text, name or email.
+  (Date, for an optional TTL policy). Nothing else: no text, name, email,
+  file name, file content or digest — only the HMAC is the id.
   Reserved in a **transaction**, so two copies arriving together cannot both
   send. If Firestore is unconfigured or failing, a per-instance in-memory copy
   of the same logic still applies and `duplicate_store_unavailable` is logged.
@@ -423,6 +481,14 @@ rollover, all-or-nothing, shared-across-instances limits; honeypot, form age,
 forged stamps, omission; origin; exact / normalised / distinct duplicates,
 window expiry, release on failure, stale pending, concurrent reservations;
 upload permissions only after verification; existing size/type/path checks;
+`quote-r2-content-and-timestamp.test.mjs`: same name + same content →
+duplicate; same name + changed content (including changes only in the
+middle or only at the end, same size, same first 512 bytes) → allowed;
+identical re-upload at a new path → duplicate; renamed / added files →
+allowed; unreadable samples → never a duplicate; never more than a 1 KB
+range read; no customer data in Firestore; `challenge_ts` missing / null /
+empty / non-string / unparseable / stale / future → refused, recent →
+accepted, dummy-secret rules;
 the attachment rule (`quote-attachments.test.mjs`): `files` empty, omitted or
 not an array refused before any other work, no reservation left behind, each
 allowed type (JPG, JPEG, PNG, HEIC, WebP, PDF, DWG, DXF, DOC, DOCX) accepted on

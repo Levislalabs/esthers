@@ -266,11 +266,19 @@ module.exports = async function handler(req, res) {
           'Please check the file and try again.', { failedIndex: i });
       }
 
+      /* A sampled content digest, so duplicate suppression can tell a
+         revised drawing from a re-upload of the same one (see _lib.js
+         contentDigest). Null when unreadable: then this request is simply
+         not treated as a duplicate. */
+      const digest = await L.contentDigest(link, info.size, verdict.head);
+      if (!digest) console.warn('quote: content digest unavailable at index ' + i);
+
       attachments.push({
         filename: pathname.split('/').pop().replace(/^\d+-/, ''),
         size: info.size,
         human: L.humanSize(info.size),
-        url: link
+        url: link,
+        digest: digest
       });
     }
   }
@@ -315,7 +323,9 @@ module.exports = async function handler(req, res) {
      and that path releases it. A duplicate is never reported as sent. */
   const dup = await QG.reserveDuplicate({
     name: name, email: email, text: text,
-    files: claimed.map(function (f) { return f.pathname; })
+    /* Original file name + server-derived content digest per file. Never
+       the random storage path, never anything the browser asserted. */
+    files: attachments.map(function (a) { return { name: a.filename, digest: a.digest }; })
   });
   if (dup.duplicate) {
     QG.logReason('quote', 'duplicate');

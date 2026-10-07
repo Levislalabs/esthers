@@ -55,6 +55,8 @@ const VERIFY_ATTEMPTS = 2;                 /* one retry, same idempotency key */
 /* Cloudflare already refuses a token older than 300 s. This is a second,
    local check on challenge_ts, with 30 s of slack for clock skew. */
 const TOKEN_MAX_AGE_MS = 330 * 1000;
+/* A challenge_ts this far in the future is not clock skew, it is wrong. */
+const TOKEN_FUTURE_SKEW_MS = 60 * 1000;
 
 /* A person cannot read and fill this form in under three seconds. */
 const MIN_FORM_AGE_MS = 3000;
@@ -83,7 +85,7 @@ const REASONS = new Set([
   'turnstile_not_configured', 'turnstile_test_key_in_production',
   'turnstile_missing', 'turnstile_malformed', 'turnstile_rejected',
   'turnstile_expired_or_reused', 'turnstile_wrong_action', 'turnstile_wrong_hostname',
-  'turnstile_stale', 'turnstile_unavailable', 'turnstile_bad_response',
+  'turnstile_stale', 'turnstile_bad_timestamp', 'turnstile_unavailable', 'turnstile_bad_response',
   'turnstile_secret_rejected', 'turnstile_bad_request',
   'duplicate', 'duplicate_store_unavailable', 'form_stamp_unconfigured'
 ]);
@@ -217,13 +219,29 @@ async function verifyTurnstile(token, opts) {
     }
   }
 
-  if (typeof data.challenge_ts === 'string') {
-    const ts = Date.parse(data.challenge_ts);
-    const now = o.now != null ? o.now : Date.now();
-    if (Number.isFinite(ts) && now - ts > TOKEN_MAX_AGE_MS) {
-      return { ok: false, reason: 'turnstile_stale', status: 403 };
-    }
+  /*
+   * challenge_ts - FAIL CLOSED. Cloudflare already refuses a token older than
+   * 300 s; this is a local, defensive check on the success response itself.
+   * With a REAL secret it is mandatory: missing, non-string, unparseable,
+   * older than TOKEN_MAX_AGE_MS or more than TOKEN_FUTURE_SKEW_MS in the
+   * future -> refused.
+   *
+   * With a Cloudflare DUMMY secret (preview/local only - refused in
+   * production by turnstileConfig) a timestamp that IS present is checked the
+   * same way, but an absent one is tolerated: Cloudflare does not document
+   * the dummy response body, so requiring it there could break preview
+   * testing without protecting anything real.
+   */
+  const now = o.now != null ? o.now : Date.now();
+  const rawTs = data.challenge_ts;
+  if (rawTs === undefined && cfg.testMode) return { ok: true };
+  if (typeof rawTs !== 'string' || rawTs === '') {
+    return { ok: false, reason: 'turnstile_bad_timestamp', status: 403 };
   }
+  const ts = Date.parse(rawTs);
+  if (!Number.isFinite(ts)) return { ok: false, reason: 'turnstile_bad_timestamp', status: 403 };
+  if (ts - now > TOKEN_FUTURE_SKEW_MS) return { ok: false, reason: 'turnstile_bad_timestamp', status: 403 };
+  if (now - ts > TOKEN_MAX_AGE_MS) return { ok: false, reason: 'turnstile_stale', status: 403 };
 
   return { ok: true };
 }
@@ -293,10 +311,20 @@ function checkFormSignals(body, env, now) {
  * NORMALISATION. A text field is Unicode-NFKC normalised, lower-cased, every
  * run of whitespace collapsed to one space, and trimmed. So "Flashing  20FT"
  * and "flashing 20ft\n" are the same request; "flashing 22ft" is not.
- * The email is trimmed and lower-cased. Attachments contribute their
- * original file NAMES, sorted - not their storage paths, which are new on
- * every upload, so a bot re-uploading the same files is still a duplicate,
- * while a customer who adds a forgotten photo is not.
+ * The email is trimmed and lower-cased.
+ *
+ * ATTACHMENTS (v2). Each file contributes its original file NAME (normalised
+ * as above) AND a server-derived CONTENT DIGEST (L.contentDigest: SHA-256 of
+ * the stored size plus 512-byte samples from the start, middle and end), and
+ * the pairs are sorted. Consequences:
+ *   - the same file re-uploaded (new random storage path, same bytes)  -> same
+ *   - a REVISED file under the same name (different bytes)             -> differs
+ *   - a forgotten photo added, or a file renamed                        -> differs
+ * The random storage path is never used (it would defeat suppression), and
+ * nothing the browser asserts is used either - the digest is computed by the
+ * server from what is actually stored. A file whose digest could not be read
+ * contributes a random nonce instead, so that request is NEVER treated as a
+ * duplicate: failing towards sending, not towards dropping a real quote.
  *
  * Only the HMAC of that material is ever stored. No quote text, name or
  * email address is kept for this purpose.
@@ -305,19 +333,24 @@ function normaliseText(v) {
   return String(v == null ? '' : v).normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
-function fileNamesOf(pathnames) {
-  return (pathnames || []).map(function (p) {
-    return normaliseText(String(p).split('/').pop().replace(/^\d+-/, ''));
+/* files: [{ name, digest }]. A missing digest becomes a fresh random nonce. */
+function fileEntriesOf(files) {
+  return (files || []).map(function (f) {
+    const name = normaliseText(f && f.name);
+    const digest = (f && typeof f.digest === 'string' && /^[0-9a-f]{64}$/.test(f.digest))
+      ? f.digest
+      : 'unknown:' + crypto.randomBytes(16).toString('hex');
+    return name + '\u0002' + digest;
   }).sort();
 }
 
 function fingerprint(key, q) {
   const material = [
-    'v1',
+    'v2',
     normaliseText(q.name),
     String(q.email == null ? '' : q.email).trim().toLowerCase(),
     normaliseText(q.text),
-    fileNamesOf(q.files).join('\u0000')
+    fileEntriesOf(q.files).join('\u0000')
   ].join('\u0001');
   return crypto.createHmac('sha256', key).update(material).digest('hex').slice(0, 40);
 }
@@ -447,6 +480,7 @@ function refuseDuplicate(res) {
 
 module.exports = {
   SITEVERIFY_URL, ACTIONS, DEFAULT_HOSTNAMES, TOKEN_MAX_CHARS, TOKEN_MAX_AGE_MS,
+  TOKEN_FUTURE_SKEW_MS,
   MIN_FORM_AGE_MS, DUPLICATE_WINDOW_MS, PENDING_STALE_MS, DUPLICATE_COLLECTION,
   VERIFY_MESSAGE, DUPLICATE_MESSAGE, REASONS,
   isTestSecret, isTestSiteKey, turnstileConfig, verifyTurnstile,

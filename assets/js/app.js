@@ -1752,6 +1752,7 @@
       if (!res.response.ok || !res.data.ok) {
         var err = new Error(res.data.error || '');
         err.customerMessage = res.data.error || '';
+        err.notConfigured = res.response.status === 503 && res.data.notConfigured === true;
         throw err;
       }
 
@@ -1931,7 +1932,15 @@
    * an email the visitor's client opens, and offers the same text on the
    * clipboard as a fallback. Nothing is silently swallowed.
    */
-  function buildQuoteText() {
+  /*
+   * opts.delivery is 'server' (the request and its files go through our API)
+   * or 'mail' (handed to the visitor's email app, which CANNOT carry files).
+   * The two say different things about the files, so every caller that sends
+   * passes the mode explicitly; only the copy button falls back to the
+   * page's current mode.
+   */
+  function buildQuoteText(opts) {
+    var delivery = (opts && opts.delivery) || (state.quoteUpload ? 'server' : 'mail');
     var form = $('#quote-form');
     var val = function (id) { return ($(id).value || '').trim(); };
     var choices = materialChoices();
@@ -1970,7 +1979,7 @@
       favs.forEach(function (f) { lines.push('  · ' + f); });
     }
 
-    if (state.quoteUpload) {
+    if (delivery === 'server') {
       /* Server path: the files really are uploaded and linked below this
          text by the server, which only sends once every one has passed. */
       if (drawings.length) {
@@ -2059,6 +2068,7 @@
     'from this page. When your email opens, attach at least one project photo, drawing or ' +
     'document to it before you send.';
   var turnstileLoading = null;
+  var MAX_TURNSTILE_ERRORS = 3;   /* automatic retries allowed before giving up */
 
   function loadTurnstile() {
     if (window.turnstile) return Promise.resolve(window.turnstile);
@@ -2124,10 +2134,19 @@
             retry: 'auto',
             'retry-interval': 2000,
             callback: function (token) { finish(resolve, token); },
+            /* Cloudflare's documented pattern: with retry:'auto' Turnstile
+               retries by itself and may call this once per failed attempt.
+               Return FALSE while we are still letting it retry; on the
+               third failure give up - remove the widget (stopping further
+               retries), show the generic message - and return TRUE to say
+               the error has been handled. The return value only controls
+               Turnstile's own console logging; it does not start or stop
+               retries. */
             'error-callback': function () {
               errors += 1;
-              if (errors >= 3) finish(reject, verificationError());
-              return true;    /* handled here; Turnstile keeps retrying */
+              if (errors < MAX_TURNSTILE_ERRORS) return false;
+              finish(reject, verificationError());
+              return true;
             },
             'expired-callback': function () { finish(reject, verificationError()); },
             'timeout-callback': function () { finish(reject, verificationError()); },
@@ -2175,7 +2194,21 @@
    * mailbox wired up. It cannot carry files - a mailto: URI has no
    * attachment field - which is exactly why it is no longer the main path.
    */
-  function sendQuoteByMail(body) {
+  function sendQuoteByMail() {
+    /* ALWAYS rebuilt here for the email app, never handed in: a body built
+       for the server path says the files were sent, and a mailto: link
+       cannot send them. This matters most for the late fallback - the probe
+       said the server could send, the body was built for it, and then the
+       deployment answered "not configured". */
+    var body = buildQuoteText({ delivery: 'mail' });
+
+    /* From now on this page is in email-app mode: hints and the note under
+       Send must say so if the visitor starts another request. */
+    state.quoteUpload = false;
+    var form = $('#quote-form');
+    if (form) form.classList.remove('can-send');
+    renderDrawingList();
+
     var subject = 'Quote request from ' + $('#q-name').value.trim();
     /* Several addresses are allowed; a comma-separated list is what a mailto:
        To field takes, so every one of them is on the message. */
@@ -2209,22 +2242,28 @@
       return;
     }
 
-    var body = buildQuoteText();
-    state.quoteText = body;
-
     /* No endpoint on this deployment: compose the email as before. The done
        panel and the drawing hint both say plainly that the files are not
        coming with it. */
     if (!state.quoteUpload || !window.fetch) {
-      sendQuoteByMail(body);
+      sendQuoteByMail();
       return;
     }
+
+    var body = buildQuoteText({ delivery: 'server' });
+    state.quoteText = body;
 
     setQuoteSending(true);
     clearFileStatuses();
 
     var fail = function (err) {
       setQuoteSending(false);
+      /* Upload storage or verification disappeared between the probe and
+         now: the same honest fallback as a missing mailbox. */
+      if (err && err.notConfigured) {
+        sendQuoteByMail();
+        return;
+      }
       /* Everything the customer typed stays exactly where it is, so they can
          retry or copy the request instead of starting again. */
       var message = (err && err.customerMessage) ? err.customerMessage : '';
@@ -2263,7 +2302,7 @@
          rather than telling the customer their request failed. */
       if (result.response.status === 503 && data.notConfigured) {
         setQuoteSending(false);
-        sendQuoteByMail(body);
+        sendQuoteByMail();      /* rebuilds the text for the email app */
         return;
       }
 
